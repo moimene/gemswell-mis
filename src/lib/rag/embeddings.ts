@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai'
 
 // ─── Gemini Embedding ───────────────────────────────────────────────
-const MODEL = 'gemini-embedding-exp-03-07'
+const MODEL = 'gemini-embedding-001'
 const DIMENSIONS = 768
 
 let genai: GoogleGenAI | null = null
