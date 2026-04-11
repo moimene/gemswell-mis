@@ -7,7 +7,7 @@ import { readFile } from 'fs/promises'
 const DMS_ROOT = process.env.DMS_ROOT || '/Users/moisesmenendez/Dropbox/DESARROLLO/GEMSWELL_MIS/DMS_GEMSWELL'
 
 // Next.js config: allow long-running requests for ingestion
-export const maxDuration = 900 // 15 minutes (Vercel Pro limit)
+export const maxDuration = 800 // Vercel Pro max (13.3 min)
 
 /**
  * POST /api/ingest/process
