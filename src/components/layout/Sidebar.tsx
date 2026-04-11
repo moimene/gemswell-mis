@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, Briefcase, Building2, GitBranch,
   Banknote, Shield, Utensils, Tag, BarChart3,
-  AlertTriangle, FileText, MessageSquare, ChevronLeft, ChevronRight
+  AlertTriangle, FileText, MessageSquare, Upload, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -22,6 +22,7 @@ const navItems = [
   { label: 'Risks & Actions', href: '/risks', icon: AlertTriangle },
   { label: 'Decisions', href: '/decisions', icon: FileText },
   { label: 'AI Assistant', href: '/chat', icon: MessageSquare },
+  { label: 'Ingestion', href: '/admin/ingest', icon: Upload },
 ]
 
 export function Sidebar() {
