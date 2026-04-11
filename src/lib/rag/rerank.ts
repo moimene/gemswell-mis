@@ -1,11 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { CohereClient } from 'cohere-ai'
 
-let client: Anthropic | null = null
+let client: CohereClient | null = null
 function getClient() {
   if (!client) {
-    const key = process.env.ANTHROPIC_API_KEY
-    if (!key) throw new Error('ANTHROPIC_API_KEY not set')
-    client = new Anthropic({ apiKey: key })
+    const key = process.env.COHERE_API_KEY
+    if (!key) throw new Error('COHERE_API_KEY not set')
+    client = new CohereClient({ token: key })
   }
   return client
 }
@@ -21,26 +21,10 @@ type RankedChunk = ChunkForRerank & {
   relevanceScore: number
 }
 
-const RERANK_PROMPT = `You are a financial data relevance expert for Gemswell Ventures, a wave park development company managing projects in Madrid (MAD) and Birmingham (BHX).
-
-Score each document chunk's relevance to the user's question on a scale of 0-10:
-- 10: Directly answers the question with specific financial data (amounts, dates, percentages)
-- 8-9: Contains closely related financial information for the correct project/period
-- 5-7: Contains relevant context but not the specific data asked about
-- 3-4: Tangentially related (same project but different financial domain)
-- 0-2: Irrelevant or about the wrong project/period
-
-Key financial domains:
-- CapEx: Budget baseline, approved budget, committed, invoiced, paid, EAC, variance
-- Cash Flow: 13-week rolling, inflows, outflows, net position, confidence levels
-- Funding: Debt facilities (CESCE), equity, drawn/undrawn, utilization
-- BP Model: IRR, NPV, revenue projections, opening dates, construction milestones
-
-Return ONLY a JSON array of scores in the same order as the chunks, e.g. [8, 3, 10, 1]
-No explanation, just the array.`
-
 /**
- * Rerank chunks using Claude as a cross-encoder.
+ * Rerank chunks using Cohere rerank-v3.5.
+ * Purpose-built neural reranker — faster, cheaper, and more accurate
+ * than using an LLM as cross-encoder. $0.002 per query (up to 100 docs).
  * Falls back to similarity-based ordering if reranking fails.
  */
 export async function rerankChunks(
@@ -54,44 +38,30 @@ export async function rerankChunks(
   }
 
   try {
-    const anthropic = getClient()
+    const cohere = getClient()
 
-    const chunkDescriptions = chunks.map((c, i) => {
+    // Cohere rerank accepts documents with text field, max ~500 tokens each
+    const documents = chunks.map(c => {
       const meta = c.metadata || {}
-      const metaStr = Object.entries(meta)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(', ')
-      return `[Chunk ${i}] ${metaStr ? `(${metaStr}) ` : ''}${c.content.slice(0, 500)}`
-    }).join('\n\n')
-
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      messages: [{
-        role: 'user',
-        content: `Question: ${query}\n\nChunks to score:\n\n${chunkDescriptions}`
-      }],
-      system: RERANK_PROMPT,
+      const prefix = [meta.project_id, meta.doc_type, meta.period]
+        .filter(Boolean).join(' | ')
+      return { text: (prefix ? `[${prefix}] ` : '') + c.content.slice(0, 1500) }
     })
 
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : ''
-    const jsonMatch = text.match(/\[[\d,\s.]+\]/)
-    if (!jsonMatch) throw new Error('No JSON array in rerank response')
+    const result = await cohere.rerank({
+      model: 'rerank-v3.5',
+      query,
+      documents,
+      topN: topK,
+    })
 
-    const scores: number[] = JSON.parse(jsonMatch[0])
-
-    const ranked = chunks.map((c, i) => ({
-      ...c,
-      relevanceScore: (scores[i] ?? 0) / 10  // normalize to 0-1
+    return result.results.map(r => ({
+      ...chunks[r.index],
+      relevanceScore: r.relevanceScore,
     }))
 
-    return ranked
-      .sort((a, b) => b.relevanceScore - a.relevanceScore)
-      .slice(0, topK)
-
   } catch (err) {
-    console.warn('Reranking failed, falling back to similarity:', err)
+    console.warn('Cohere reranking failed, falling back to similarity:', err)
     return chunks
       .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
       .slice(0, topK)
