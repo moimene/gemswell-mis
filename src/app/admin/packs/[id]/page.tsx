@@ -4,7 +4,8 @@ import { useParams } from 'next/navigation'
 import { cn, formatCompact } from '@/lib/utils'
 import {
   FileText, ChevronDown, ChevronUp, AlertTriangle,
-  CheckCircle, Clock, ArrowLeft, BookOpen
+  CheckCircle, Clock, ArrowLeft, BookOpen,
+  GitMerge, CircleDot, Ban, Hourglass, Link2
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -239,6 +240,243 @@ function MetricRow({ candidate, index }: { candidate: Candidate; index: number }
   )
 }
 
+// ─── Reconciliation types ─────────────────────────────────────────────────────
+
+type Contradiction = {
+  id: string
+  metric_id: string
+  value_a: number
+  value_b: number
+  delta_pct: number
+  severity: string
+  resolution_note: string | null
+  period_label: string | null
+}
+
+type MissingMetric = {
+  id: string
+  display_name: string
+  domain: string
+}
+
+type Publication = {
+  metric_id: string
+  target_table: string
+  target_column: string
+  published_value: number
+  published_at: string
+}
+
+type Reconciliation = {
+  contradictions: Contradiction[]
+  provisional: Candidate[]
+  missing_metrics: MissingMetric[]
+  stale: Candidate[]
+  publications: Publication[]
+  summary: {
+    total_items: number
+    contradictions_open: number
+    provisional_count: number
+    missing_count: number
+    stale_count: number
+    published_count: number
+  }
+}
+
+// ─── Reconciliation Panel ─────────────────────────────────────────────────────
+
+const SEV_STYLES: Record<string, string> = {
+  high:   'border-red-400 bg-red-50 text-red-800',
+  medium: 'border-amber-400 bg-amber-50 text-amber-800',
+  low:    'border-slate-300 bg-slate-50 text-slate-700',
+}
+
+const SEV_DOT: Record<string, string> = {
+  high: 'bg-red-500', medium: 'bg-amber-500', low: 'bg-slate-400',
+}
+
+function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
+  const [open, setOpen] = useState(true)
+  const { summary } = rec
+  if (summary.total_items === 0 && summary.published_count > 0) return null
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-white shadow-sm overflow-hidden">
+      {/* Header */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 hover:bg-amber-100 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <GitMerge className="h-4 w-4 text-amber-600" />
+          <span className="text-sm font-semibold text-amber-900">
+            Puntos de Reconciliación
+          </span>
+          {summary.total_items > 0 && (
+            <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-medium text-amber-800">
+              {summary.total_items}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-4 text-xs text-amber-700">
+          {summary.contradictions_open > 0 && (
+            <span className="flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{summary.contradictions_open} contradicciones</span>
+          )}
+          {summary.provisional_count > 0 && (
+            <span className="flex items-center gap-1"><CircleDot className="h-3 w-3" />{summary.provisional_count} provisionales</span>
+          )}
+          {summary.missing_count > 0 && (
+            <span className="flex items-center gap-1"><Ban className="h-3 w-3" />{summary.missing_count} sin datos</span>
+          )}
+          {summary.stale_count > 0 && (
+            <span className="flex items-center gap-1"><Hourglass className="h-3 w-3" />{summary.stale_count} obsoletos</span>
+          )}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </div>
+      </button>
+
+      {open && (
+        <div className="divide-y">
+
+          {/* Contradictions */}
+          {rec.contradictions.length > 0 && (
+            <div className="p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-red-700">
+                <AlertTriangle className="h-3.5 w-3.5" /> Contradicciones entre fuentes
+              </p>
+              <div className="space-y-2">
+                {rec.contradictions.map(c => (
+                  <div key={c.id} className={cn('rounded border-l-4 p-3', SEV_STYLES[c.severity] || SEV_STYLES.low)}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('h-2 w-2 rounded-full shrink-0', SEV_DOT[c.severity] || SEV_DOT.low)} />
+                          <p className="text-xs font-mono font-medium">{c.metric_id}</p>
+                          {c.period_label && <span className="text-xs opacity-70">{c.period_label}</span>}
+                        </div>
+                        {c.resolution_note && (
+                          <p className="mt-1 text-xs opacity-80 leading-relaxed">{c.resolution_note}</p>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs font-mono">
+                          {(c.value_a / 1e6).toFixed(2)}M vs {(c.value_b / 1e6).toFixed(2)}M
+                        </p>
+                        <p className="text-xs font-semibold">
+                          Δ {(c.delta_pct * 100).toFixed(1)}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Provisional */}
+          {rec.provisional.length > 0 && (
+            <div className="p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                <CircleDot className="h-3.5 w-3.5" /> Valores provisionales (requieren confirmación)
+              </p>
+              <div className="space-y-1.5">
+                {rec.provisional.map(c => {
+                  const def = c.intel_metric_definition
+                  return (
+                    <div key={c.id} className="flex items-center justify-between rounded bg-amber-50 border border-amber-200 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-medium text-slate-800">{def?.display_name || c.metric_id}</p>
+                        <p className="text-xs text-slate-500">{c.validation_notes}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-amber-700 tabular-nums">
+                          {c.extracted_value != null ? formatCompact(c.extracted_value, c.currency === 'GBP' ? 'GBP' : 'EUR') : '—'}
+                        </p>
+                        <p className="text-xs text-slate-500">{c.period_label || '—'}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Missing metrics */}
+          {rec.missing_metrics.length > 0 && (
+            <div className="p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <Ban className="h-3.5 w-3.5" /> Métricas sin evidencia documental
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {rec.missing_metrics.map(m => (
+                  <span key={m.id} className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                    <span className="font-mono">{m.id.replace(/^[A-Z]+\./,'')}</span>
+                    <span className="ml-1 text-slate-400">({m.domain})</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Stale */}
+          {rec.stale.length > 0 && (
+            <div className="p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <Hourglass className="h-3.5 w-3.5" /> Datos con antigüedad &gt;90 días
+              </p>
+              <div className="space-y-1.5">
+                {rec.stale.map(c => {
+                  const def = c.intel_metric_definition
+                  const ageMonths = c.period_date
+                    ? Math.round((Date.now() - new Date(c.period_date).getTime()) / (1000 * 3600 * 24 * 30))
+                    : null
+                  return (
+                    <div key={c.id} className="flex items-center justify-between rounded bg-slate-50 border border-slate-200 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-medium text-slate-700">{def?.display_name || c.metric_id}</p>
+                        <p className="text-xs text-slate-500">Período: {c.period_label || c.period_date?.slice(0,7) || '—'}</p>
+                      </div>
+                      {ageMonths !== null && (
+                        <span className="rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-600 font-medium">
+                          {ageMonths}m de antigüedad
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Publication trail */}
+          {rec.publications.length > 0 && (
+            <div className="p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-green-700">
+                <Link2 className="h-3.5 w-3.5" /> Publicaciones en fact tables ({rec.publications.length})
+              </p>
+              <div className="space-y-1">
+                {rec.publications.map((p, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs text-slate-600">
+                    <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                    <span className="font-mono">{p.metric_id.replace(/^[A-Z]+\./,'')}</span>
+                    <span className="text-slate-400">→</span>
+                    <span className="text-slate-500">{p.target_table}.{p.target_column}</span>
+                    <span className="ml-auto tabular-nums text-slate-400">
+                      {new Date(p.published_at).toLocaleDateString('es-ES', {day:'numeric',month:'short'})}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Pack Header ──────────────────────────────────────────────────────────────
 
 function PackHeader({ pack }: { pack: Pack }) {
@@ -296,6 +534,7 @@ export default function PackGroundingPage() {
   const params = useParams<{ id: string }>()
   const [pack, setPack] = useState<Pack | null>(null)
   const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -311,6 +550,7 @@ export default function PackGroundingPage() {
       const data = await res.json()
       setPack(data.pack)
       setCandidates(data.candidates)
+      setReconciliation(data.reconciliation ?? null)
       setLoading(false)
     }
     load()
@@ -376,6 +616,9 @@ export default function PackGroundingPage() {
           </div>
         ))}
       </div>
+
+      {/* Reconciliation panel */}
+      {reconciliation && <ReconciliationPanel rec={reconciliation} />}
 
       {/* Accepted metrics with grounding — grouped by domain */}
       {orderedDomains.map(domain => (
