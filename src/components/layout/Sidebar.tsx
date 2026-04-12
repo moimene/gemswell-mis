@@ -5,7 +5,8 @@ import { cn } from '@/lib/utils'
 import {
   LayoutDashboard, Briefcase, Building2, GitBranch,
   Banknote, Shield, Utensils, Tag, BarChart3,
-  AlertTriangle, FileText, MessageSquare, Upload, ChevronLeft, ChevronRight
+  AlertTriangle, FileText, MessageSquare, Upload, ChevronLeft, ChevronRight,
+  FlaskConical, Layers
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -23,6 +24,8 @@ const navItems = [
   { label: 'Decisions', href: '/decisions', icon: FileText },
   { label: 'AI Assistant', href: '/chat', icon: MessageSquare },
   { label: 'Ingestion', href: '/admin/ingest', icon: Upload },
+  { label: 'Evidence Review', href: '/admin/review', icon: FlaskConical },
+  { label: 'Pack Grounding',  href: '/admin/packs',  icon: Layers },
 ]
 
 export function Sidebar() {
@@ -36,7 +39,7 @@ export function Sidebar() {
     )}>
       <div className="flex h-14 items-center justify-between border-b px-4">
         {!collapsed && <span className="text-lg font-bold text-slate-900">Gemswell MIS</span>}
-        <button onClick={() => setCollapsed(!collapsed)} className="rounded p-1 hover:bg-slate-200">
+        <button type="button" onClick={() => setCollapsed(!collapsed)} className="rounded p-1 hover:bg-slate-200">
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </button>
       </div>

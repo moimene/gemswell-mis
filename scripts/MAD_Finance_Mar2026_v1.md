@@ -1,0 +1,106 @@
+# Madrid Playa Surf — Finance Snapshot Mar-2026
+## v1 · For CEO Confirmation/Correction
+
+| | |
+|---|---|
+| **Pack** | `e264957c` |
+| **Status** | Submitted |
+| **Generated** | 2026-04-12 |
+| **Completeness** | 80% (8/10 metrics) |
+| **Provisional** | 1 metric require correction |
+| **Open gaps** | 3 reconciliation issues |
+| **Due** | 2026-04-15 |
+
+---
+
+> **HOW TO USE THIS DOCUMENT**
+>
+> This is the first automated extraction of Gemswell MIS — values are drawn from the documentary corpus
+> (financial statements, CapEx monitoring, financing contracts).
+>
+> - ✅ = value accepted from primary evidence — please confirm or correct
+> - ⚠️ PROVISIONAL = value is a proxy or estimate — **correction required**
+> - Strike-through or annotate corrections directly and return
+> - For gaps: provide the document listed in the Required Action column
+
+---
+
+## Metric Snapshot
+
+### CAPEX & Budget
+
+| # | Metric | Value | Period | Conf. | Status | Notes |
+|---|--------|-------|--------|-------|--------|-------|
+| 1 | MAD CapEx Budget Baseline Total | **€57.131M** | Budget Baseline | 95% | ✅ | budget baseline €57 |
+| 2 | MAD CapEx Committed Total | **€48.919M** | March 2025 | 85% | ✅ | Total Contratado €48 |
+| 3 | MAD CapEx EAC Total | **€64.809M** | March 2025 | 85% | ✅ | EAC €64 |
+| 4 | MAD CapEx Paid Total | **€21.072M** | December 2025 | 80% | ✅ | paid YTD €21 |
+
+### Funding & Facility
+
+| # | Metric | Value | Period | Conf. | Status | Notes |
+|---|--------|-------|--------|-------|--------|-------|
+| 1 | MAD Total Funding Committed | **€48.157M** | February 2026 | 95% | ✅ | committed €48 |
+| 2 | MAD Total Funding Drawn | **€715.0K** | Financing Contract Date | 95% | ✅ | drawn €715K = first contractual drawdown |
+| 3 | MAD Total Funding Undrawn | **€31.000M** | February 2026 | 80% | ⚠️ PROVISIONAL | PROVISIONAL: €31M proxy = senior facility |
+
+### CASH_FLOW
+
+| # | Metric | Value | Period | Conf. | Status | Notes |
+|---|--------|-------|--------|-------|--------|-------|
+| 1 | MAD Cash 13W Net Position | **€94.7K** | December 2024 | 95% | ✅ | cash €94 |
+
+
+---
+
+## Reconciliation Gaps (3 Open)
+
+These gaps must be resolved before the pack can be **Published**:
+
+| # | Severity | Metric | Type | Issue | Required Action |
+|---|----------|--------|------|-------|-----------------|
+| 1 | 🔴 High | `cash.net_position` | Staleness | Cash balance is Dec-2024 (balance sheet). No Mar-2026 bank balance found. Gap ≈ 15 months. | Provide extracto bancario or saldo bancario as of 31-Mar-2026 (or most recent date). |
+| 2 | 🟡 Medium | `funding.drawn.total` | Completeness | Only first drawdown documented (€715K, Oct-2024). Subsequent disposiciones not in corpus. | Provide certificado bancario de disposiciones acumuladas or Caixabank utilisation statement. |
+| 3 | 🟡 Medium | `funding.undrawn.total` | Proxy value | Undrawn = total facility (€31M) − first drawdown (€715K) = €30,285K. Proxy only. | Same as funding.drawn — utilisation statement resolves both simultaneously. |
+
+---
+
+## Missing Metrics (2 — No Evidence Found)
+
+| Metric | Why Missing | Document Needed |
+|--------|-------------|-----------------|
+| `cash.total_inflow` | CapEx Monitoring CF has granular line items but no aggregated cobros total | Estado de Flujos de Efectivo or 13W cash flow |
+| `cash.total_outflow` | Same — no aggregated pagos total in corpus | Estado de Flujos de Efectivo or 13W cash flow |
+
+---
+
+## Evidence Summary
+
+All accepted values were extracted from the following documents in the MIS corpus:
+
+| Document | Metrics Sourced | Type | Authority |
+|----------|-----------------|------|-----------|
+| MPSCIERREDEF2024.xlsx | cash.net_position | Financial Statements | 92 |
+| Cost Allocation MPS_Hard and Soft Costs.xlsx | capex.budget_baseline, capex.committed, capex.eac | CapEx | 85 |
+| 20260324_CapEx Monitoring CF.xlsx | capex.paid | Cash Flow/CapEx | 85 |
+| Contrato de Financiación (Caixabank) | funding.committed, funding.drawn, funding.undrawn | Funding | 90 |
+
+---
+
+## CEO Review Checklist
+
+- [ ] **cash.net_position** — Confirm Dec-2024 balance (€94.7K) or provide current date
+- [ ] **capex.budget_baseline** — Confirm €57.13M Budget UW figure
+- [ ] **capex.committed** — Confirm €48.92M contracted (Mar-2025) or provide latest figure
+- [ ] **capex.eac** — Confirm €64.81M EAC (Mar-2025) or provide latest figure
+- [ ] **capex.paid** — Confirm €21.07M paid YTD through Dec-2025
+- [ ] **funding.committed** — Confirm €48.16M = senior €31M + participativo €15.66M + IVA €1.50M
+- [ ] **funding.drawn** — Correct €715K first drawdown only → provide total drawn to date
+- [ ] **funding.undrawn** — Correct €30,285K proxy → provide net undrawn from bank statement
+- [ ] Provide **extracto bancario / saldo bancario** Mar-2026 → resolves cash.net_position
+- [ ] Provide **certificado de disposiciones** Caixabank → resolves funding.drawn + funding.undrawn
+- [ ] Provide **Estado de Flujos de Efectivo** or **13W cash flow** → resolves cash.total_inflow + outflow
+
+---
+*Generated by Gemswell MIS · Layer 3 Extraction Engine · 2026-04-12*
+*Pack `e264957c-9947-420a-b37a-0890069ff3c7` · Project MAD · Cycle Mar-2026*
