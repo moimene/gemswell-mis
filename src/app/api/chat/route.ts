@@ -17,16 +17,41 @@ type StructuredContext = {
 const SYSTEM_PROMPT = `You are the Gemswell MIS AI Assistant — an expert financial analyst for Gemswell Ventures' wave park development portfolio.
 
 ## Portfolio Overview
-Gemswell Ventures develops Wavegarden-technology wave parks across Europe. The current portfolio consists of:
-- **Madrid Playa Surf (MAD)**: Located in Madrid, Spain. Currency: EUR.
-- **Birmingham (BHX)**: Located in Birmingham/Coventry, UK. Currency: GBP.
+Gemswell Ventures (OPCO) is the management company for wave parks developed by Teras Capital (fund manager) and Stoneweg (co-promoter / infrasports). Technology: Wavegarden.
+
+### Projects
+- **Madrid Playa Surf (MAD)**: Madrid, Spain. SPV: Madrid Playa Surf S.L. Currency: EUR. Concession: Ayuntamiento de Madrid (75 years).
+- **Birmingham Wave (BHX)**: Birmingham/Coventry, UK. SPV: Urban Surf Company Ltd (USCL). Currency: GBP.
+
+### Financing Structure — Madrid (EUR)
+- Teras Fund Equity: €18.4M (via Kelpa Expansión S.L.)
+- Buenavista Quasi-Equity: €13.9M (cuasi-capital — subordinated hybrid instrument)
+- Santander + BBVA Senior Debt: €31.0M (Euribor3M + 325bps)
+- Sponsor Upfront Rights (Mahou + Cantabria): €6.0M
+- Memberships: €9.2M
+- Total: ~€78.6M
+
+### Financing Structure — Birmingham (GBP)
+- Teras Fund Equity: ~£10M
+- WMCA Public Grant: ~£3M
+- CESCE-backed Senior Debt (Buyer Credit): ~£22M (SONIA + 350bps)
+- Wavegarden Vendor Finance: ~£1.5M
+- Total: ~£36.5M
+
+### Key People
+- CEO: Íñigo Garayar
+- CFO: Ana Ruiz
+- COO: Lucia Delgado
+- PD Madrid: Carlos Mendez
+- PD Birmingham: Sarah Whitaker
 
 ## Your Capabilities
 You have access to real-time financial data from the MIS database, including:
 1. **CapEx Tracking**: Budget baselines, approved budgets, committed amounts, invoiced, paid, and Estimate at Completion (EAC) by category
 2. **Cash Flow**: 13-week rolling cash flow with inflows, outflows, confidence levels (Actual/Forecast/Budget)
-3. **Funding**: Debt facilities (CESCE loans), equity positions, drawn/undrawn amounts, utilization rates
+3. **Funding**: Debt facilities, equity positions, drawn/undrawn amounts, utilization rates
 4. **Business Plan Model**: IRR, NPV, revenue projections, opening target dates
+5. **Document Search**: Access to 2,600+ indexed documents (contracts, board packs, monthly reports, due diligence, etc.)
 
 ## Response Guidelines
 - Always cite specific numbers from the provided context — never invent financial data
@@ -35,7 +60,8 @@ You have access to real-time financial data from the MIS database, including:
 - Use the format: €12.5M or £8.3M for amounts, 67.2% for percentages
 - If data is not available in the context, say so explicitly — don't extrapolate
 - Respond in the same language as the user's question (Spanish or English)
-- Keep answers focused and actionable — this is a CEO-level tool`
+- Keep answers focused and actionable — this is a CEO-level tool
+- When you have knowledge from the system prompt (e.g., financing structure, key entities), USE IT — don't say "not found in context" for things you already know`
 
 // ─── Financial Entity Detection ─────────────────────────────────────
 type DetectedEntity = {
@@ -102,27 +128,26 @@ async function getStructuredContext(entities: DetectedEntity[]): Promise<Structu
   if (fetchAll || domains.includes('capex')) {
     const { data } = await supabase
       .from('fct_capex_snapshot')
-      .select('project_id, category_id, budget_baseline, budget_approved_current, committed_amount, invoiced_amount, paid_amount, eac, dim_capex_category(category_name, category_type)')
+      .select('project_id, capex_category_id, budget_baseline, budget_approved_current, committed_amount, invoiced_amount, paid_amount, eac, contingency_allocated, contingency_used, period_end_date, dim_capex_category(category_name, category_type)')
       .in('project_id', projects)
       .order('budget_baseline', { ascending: false })
     context.capex = data || []
   }
 
   if (fetchAll || domains.includes('cash_flow')) {
-    // For cash flow, aggregate by quarter to keep context manageable
     const { data } = await supabase
       .from('fct_cash_13w')
-      .select('project_id, week_start, cash_flow_type, category, amount_eur, confidence_level')
+      .select('project_id, week_start, cash_flow_type, cash_line_category, amount_eur, confidence_level')
       .in('project_id', projects)
-      .order('week_start', { ascending: true })
-      .limit(200) // latest entries
+      .order('week_start', { ascending: false })
+      .limit(200)
     context.cashFlow = data || []
   }
 
   if (fetchAll || domains.includes('funding')) {
     const { data } = await supabase
       .from('fct_funding_snapshot')
-      .select('project_id, committed_amount, drawn_to_date, undrawn_available, next_drawdown_date, dim_funding_instrument(instrument_name, instrument_type, currency, total_facility)')
+      .select('project_id, instrument_id, committed_amount, drawn_to_date, undrawn_available, accrued_fees_interest, next_draw_expected_date, next_draw_expected_amt, cp_status, covenant_overall_status, default_risk_flag, period_end_date, dim_funding_instrument(instrument_name, instrument_type, currency, facility_limit)')
       .in('project_id', projects)
     context.funding = data || []
   }
@@ -162,7 +187,7 @@ function formatStructuredContext(ctx: StructuredContext): string {
       const sorted = [...rows].sort((a, b) => Number(b.budget_baseline) - Number(a.budget_baseline)).slice(0, 5)
       for (const r of sorted) {
         const cat = (r as any).dim_capex_category
-        const catName = cat?.category_name || r.category_id
+        const catName = cat?.category_name || r.capex_category_id
         capexText += `  - ${catName}: Budget ${fmt(Number(r.budget_baseline))} → Paid ${fmt(Number(r.paid_amount))} (EAC ${fmt(Number(r.eac))})\n`
       }
     }
@@ -175,7 +200,13 @@ function formatStructuredContext(ctx: StructuredContext): string {
       const inst = (row as any).dim_funding_instrument
       const ccy = inst?.currency === 'GBP' ? '£' : '€'
       const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
-      fundingText += `- **${inst?.instrument_name || 'Unknown'}** (${inst?.instrument_type || '?'}, ${row.project_id}): Committed ${fmt(Number(row.committed_amount))} | Drawn ${fmt(Number(row.drawn_to_date))} | Available ${fmt(Number(row.undrawn_available))}\n`
+      const utilization = Number(row.committed_amount) > 0
+        ? ((Number(row.drawn_to_date) / Number(row.committed_amount)) * 100).toFixed(1)
+        : '0.0'
+      fundingText += `- **${inst?.instrument_name || row.instrument_id || 'Unknown'}** (${inst?.instrument_type || '?'}, ${row.project_id}): Facility ${fmt(Number(inst?.facility_limit || row.committed_amount))} | Committed ${fmt(Number(row.committed_amount))} | Drawn ${fmt(Number(row.drawn_to_date))} | Available ${fmt(Number(row.undrawn_available))} | Utilization: ${utilization}%`
+      if (row.covenant_overall_status) fundingText += ` | Covenant: ${row.covenant_overall_status}`
+      if (row.default_risk_flag) fundingText += ` | ⚠️ DEFAULT RISK`
+      fundingText += '\n'
     }
     sections.push(fundingText)
   }
@@ -215,20 +246,25 @@ function formatStructuredContext(ctx: StructuredContext): string {
 async function vectorSearch(
   query: string,
   entities: DetectedEntity[],
-  matchCount = 15
-): Promise<{ id: string; content: string; metadata: Record<string, unknown>; similarity: number }[]> {
+  matchCount = 20
+): Promise<{ id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity: number }[]> {
   try {
     const supabase = createApiClient()
     const queryEmbedding = await embedText(query)
 
-    const projectFilter = entities.find(e => e.projectFilter)?.projectFilter || null
-    const docTypeFilter = entities.find(e => e.docTypeFilter)?.docTypeFilter || null
+    const projects = entities.filter(e => e.projectFilter).map(e => e.projectFilter!)
+    // If 2+ projects detected (comparison query), search ALL to avoid missing one side
+    // If 1 project detected, filter to that project
+    // If 0 projects, search all
+    const projectFilter = projects.length === 1 ? projects[0] : null
 
+    // Don't filter by doc_type in vector search — let reranking handle relevance
+    // This prevents missing useful context in adjacent doc types
     const { data, error } = await supabase.rpc('match_chunks', {
       query_embedding: queryEmbedding,
       match_count: matchCount,
       filter_project: projectFilter,
-      filter_doc_type: docTypeFilter,
+      filter_doc_type: null,
     })
 
     if (error) {
@@ -238,6 +274,7 @@ async function vectorSearch(
 
     return (data || []).map((row: any) => ({
       id: row.id,
+      document_id: row.document_id,
       content: row.content,
       metadata: row.metadata || {},
       similarity: row.similarity,
@@ -276,7 +313,7 @@ export async function POST(request: NextRequest) {
       getStructuredContext(entities),
     ])
 
-    // Step 3: Rerank vector results
+    // Step 3: Rerank vector results (8 chunks for richer context)
     const reranked = await rerankChunks(
       query,
       vectorResults.map(r => ({
@@ -285,15 +322,22 @@ export async function POST(request: NextRequest) {
         metadata: r.metadata,
         similarity: r.similarity,
       })),
-      5
+      8
     )
 
-    // Step 4: Build context
+    // Step 4: Build context with rich source metadata
     const ragContext = reranked.length > 0
       ? '\n\n## Retrieved Document Chunks\n' +
-        reranked.map((c, i) =>
-          `[Source ${i + 1}] (relevance: ${(c.relevanceScore * 100).toFixed(0)}%)\n${c.content}`
-        ).join('\n\n')
+        reranked.map((c, i) => {
+          const meta = c.metadata || {}
+          const source = (meta as any).source_file || 'unknown'
+          const project = (meta as any).project_id || '?'
+          const docType = (meta as any).doc_type || '?'
+          const period = (meta as any).period || ''
+          const currency = (meta as any).currency || ''
+          const header = `[Source ${i + 1}] ${project} | ${docType}${period ? ' | ' + period : ''}${currency ? ' | ' + currency : ''} | ${source} (relevance: ${(c.relevanceScore * 100).toFixed(0)}%)`
+          return `${header}\n${c.content}`
+        }).join('\n\n')
       : ''
 
     const structuredText = formatStructuredContext(structuredCtx)
