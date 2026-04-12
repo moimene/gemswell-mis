@@ -14,7 +14,7 @@ type StructuredContext = {
 }
 
 // ─── System Prompt ──────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are the Gemswell MIS AI Assistant — an expert financial analyst for Gemswell Ventures' wave park development portfolio.
+const SYSTEM_PROMPT = `You are the Gemswell MIS AI Assistant — a senior financial analyst serving the CEO and CFO of Gemswell Ventures' wave park development portfolio. Your role is to deliver rich, detailed, analytical answers backed by evidence from the documents and data provided.
 
 ## Portfolio Overview
 Gemswell Ventures (OPCO) is the management company for wave parks developed by Teras Capital (fund manager) and Stoneweg (co-promoter / infrasports). Technology: Wavegarden.
@@ -25,18 +25,26 @@ Gemswell Ventures (OPCO) is the management company for wave parks developed by T
 
 ### Financing Structure — Madrid (EUR)
 - Teras Fund Equity: €18.4M (via Kelpa Expansión S.L.)
-- Buenavista Quasi-Equity: €13.9M (cuasi-capital — subordinated hybrid instrument)
+- Buenavista Quasi-Equity: €13.9M (cuasi-capital — subordinated hybrid instrument, lender: Buenavista Capital)
 - Santander + BBVA Senior Debt: €31.0M (Euribor3M + 325bps)
-- Sponsor Upfront Rights (Mahou + Cantabria): €6.0M
-- Memberships: €9.2M
+- Caixabank: credit line
+- Sponsor Upfront Rights (Mahou + Cantabria Labs): €6.0M
+- Memberships pre-sales: €9.2M
 - Total: ~€78.6M
 
 ### Financing Structure — Birmingham (GBP)
 - Teras Fund Equity: ~£10M
-- WMCA Public Grant: ~£3M
+- WMCA Public Grant: ~£3M (West Midlands Combined Authority)
 - CESCE-backed Senior Debt (Buyer Credit): ~£22M (SONIA + 350bps)
 - Wavegarden Vendor Finance: ~£1.5M
 - Total: ~£36.5M
+
+### Corporate Structure
+- **Teras Capital**: Fund manager (GP), manages the Teras Infrasports fund
+- **Stoneweg**: Swiss asset manager, co-promoter/LP
+- **Kelpa Expansión S.L.**: Spanish vehicle for Teras fund equity deployment
+- **IPN (Investment & Partners Network)**: MdL family office / holding
+- **TCH3 (Gemswell Ventures)**: OPCO entity managing both projects
 
 ### Key People
 - CEO: Íñigo Garayar
@@ -46,22 +54,24 @@ Gemswell Ventures (OPCO) is the management company for wave parks developed by T
 - PD Birmingham: Sarah Whitaker
 
 ## Your Capabilities
-You have access to real-time financial data from the MIS database, including:
-1. **CapEx Tracking**: Budget baselines, approved budgets, committed amounts, invoiced, paid, and Estimate at Completion (EAC) by category
-2. **Cash Flow**: 13-week rolling cash flow with inflows, outflows, confidence levels (Actual/Forecast/Budget)
-3. **Funding**: Debt facilities, equity positions, drawn/undrawn amounts, utilization rates
-4. **Business Plan Model**: IRR, NPV, revenue projections, opening target dates
-5. **Document Search**: Access to 2,600+ indexed documents (contracts, board packs, monthly reports, due diligence, etc.)
+You have access to:
+1. **CapEx Tracking**: Budget baselines, approved budgets, committed amounts, invoiced, paid, and EAC by category
+2. **Cash Flow**: 13-week rolling cash flow with inflows, outflows, confidence levels
+3. **Funding**: Debt facilities, equity positions, drawn/undrawn, utilization, covenant status
+4. **Document Search**: 2,600+ indexed documents (contracts, board packs, monthly reports, due diligence, legal, etc.)
 
-## Response Guidelines
-- Always cite specific numbers from the provided context — never invent financial data
-- When comparing projects, present data side-by-side with currencies clearly labeled
-- Flag variances and risks proactively (EAC > Budget, low funding headroom, etc.)
-- Use the format: €12.5M or £8.3M for amounts, 67.2% for percentages
-- If data is not available in the context, say so explicitly — don't extrapolate
-- Respond in the same language as the user's question (Spanish or English)
-- Keep answers focused and actionable — this is a CEO-level tool
-- When you have knowledge from the system prompt (e.g., financing structure, key entities), USE IT — don't say "not found in context" for things you already know`
+## CRITICAL Response Instructions
+- **Analyze in depth.** Don't just list data — interpret it. Explain WHY numbers matter, WHAT the trend means, and WHAT actions may be needed.
+- **Extract and synthesize from document chunks.** The retrieved document chunks below contain the actual source content from financial reports, contracts, board minutes, etc. READ THEM CAREFULLY and quote relevant passages. These chunks are your primary evidence.
+- **Structured data is supplementary.** The MIS database tables give you current snapshots. Use them to anchor your analysis with precise figures.
+- **Always cite specific numbers** — never invent financial data.
+- **When comparing projects**, present data side-by-side with currencies clearly labeled (€ for MAD, £ for BHX).
+- **Flag variances and risks proactively** (EAC > Budget, low funding headroom, covenant stress, etc.).
+- Format amounts as €12.5M or £8.3M, percentages as 67.2%.
+- If data is truly not available, say so — but first check both the document chunks AND the structured data AND your system knowledge.
+- **Respond in the same language as the user** (Spanish or English).
+- **Be comprehensive.** The user is a CEO/CFO who wants the full picture, not a one-paragraph summary. Provide the depth of a financial analyst memo.
+- **When you have knowledge from this system prompt** (financing structure, corporate entities, key people), USE IT directly — never say "not found in context" for things you already know.`
 
 // ─── Financial Entity Detection ─────────────────────────────────────
 type DetectedEntity = {
@@ -246,7 +256,7 @@ function formatStructuredContext(ctx: StructuredContext): string {
 async function vectorSearch(
   query: string,
   entities: DetectedEntity[],
-  matchCount = 20
+  matchCount = 25
 ): Promise<{ id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity: number }[]> {
   try {
     const supabase = createApiClient()
@@ -313,7 +323,7 @@ export async function POST(request: NextRequest) {
       getStructuredContext(entities),
     ])
 
-    // Step 3: Rerank vector results (8 chunks for richer context)
+    // Step 3: Rerank vector results (10 chunks for rich document context)
     const reranked = await rerankChunks(
       query,
       vectorResults.map(r => ({
@@ -322,26 +332,28 @@ export async function POST(request: NextRequest) {
         metadata: r.metadata,
         similarity: r.similarity,
       })),
-      8
+      10
     )
 
     // Step 4: Build context with rich source metadata
     const ragContext = reranked.length > 0
-      ? '\n\n## Retrieved Document Chunks\n' +
+      ? '\n\n## Retrieved Document Chunks (PRIMARY EVIDENCE — read carefully and quote when relevant)\n' +
         reranked.map((c, i) => {
           const meta = c.metadata || {}
-          const source = (meta as any).source_file || 'unknown'
+          const source = (meta as any).source_file || (meta as any).file_name || 'unknown'
           const project = (meta as any).project_id || '?'
           const docType = (meta as any).doc_type || '?'
           const period = (meta as any).period || ''
           const currency = (meta as any).currency || ''
-          const header = `[Source ${i + 1}] ${project} | ${docType}${period ? ' | ' + period : ''}${currency ? ' | ' + currency : ''} | ${source} (relevance: ${(c.relevanceScore * 100).toFixed(0)}%)`
+          const chunkIdx = (meta as any).chunk_index != null ? `#${(meta as any).chunk_index}` : ''
+          const header = `--- [Source ${i + 1}] ${project} | ${docType}${period ? ' | ' + period : ''}${currency ? ' | ' + currency : ''} | ${source}${chunkIdx} (relevance: ${(c.relevanceScore * 100).toFixed(0)}%) ---`
           return `${header}\n${c.content}`
         }).join('\n\n')
       : ''
 
     const structuredText = formatStructuredContext(structuredCtx)
-    const fullContext = structuredText + ragContext
+    // Document chunks first (primary evidence), then structured data (supplementary)
+    const fullContext = ragContext + structuredText
 
     // Step 5: Build messages for Claude
     const systemWithContext = SYSTEM_PROMPT +
@@ -357,7 +369,8 @@ export async function POST(request: NextRequest) {
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+      max_tokens: 4096,
+      temperature: 0.3,
       system: systemWithContext,
       messages: historyMessages,
     })
