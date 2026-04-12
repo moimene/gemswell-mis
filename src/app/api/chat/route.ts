@@ -145,13 +145,19 @@ async function getStructuredContext(entities: DetectedEntity[]): Promise<Structu
   }
 
   if (fetchAll || domains.includes('cash_flow')) {
+    // Only fetch Actual data and recent forecasts (last 9 months) to avoid poisoned forecast data
+    const nineMonthsAgo = new Date()
+    nineMonthsAgo.setMonth(nineMonthsAgo.getMonth() - 9)
     const { data } = await supabase
       .from('fct_cash_13w')
       .select('project_id, week_start, cash_flow_type, cash_line_category, amount_eur, confidence_level')
       .in('project_id', projects)
+      .gte('week_start', nineMonthsAgo.toISOString().slice(0, 10))
       .order('week_start', { ascending: false })
       .limit(200)
-    context.cashFlow = data || []
+    // Sanity filter: exclude any single row with |amount| > project total budget (data quality guard)
+    const MAX_SANE_AMOUNT = 50_000_000 // €50M — no single cash flow line should exceed this
+    context.cashFlow = (data || []).filter(r => Math.abs(Number(r.amount_eur)) < MAX_SANE_AMOUNT)
   }
 
   if (fetchAll || domains.includes('funding')) {
