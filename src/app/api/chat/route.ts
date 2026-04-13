@@ -4,13 +4,25 @@ import { createApiClient } from '@/lib/supabase-server'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
 
+export const maxDuration = 800
+
 // ─── Types ──────────────────────────────────────────────────────────
 type Message = { role: 'user' | 'assistant'; content: string }
 
-type StructuredContext = {
-  capex: Record<string, unknown>[]
-  cashFlow: Record<string, unknown>[]
-  funding: Record<string, unknown>[]
+type Source = {
+  id: string
+  relevance: number
+  metadata: Record<string, unknown>
+  preview: string
+}
+
+type ToolResult = { result: string; sources?: Source[] }
+
+type DetectedEntity = {
+  type: 'project' | 'financial_domain' | 'period' | 'instrument'
+  value: string
+  projectFilter?: string
+  docTypeFilter?: string
 }
 
 // ─── System Prompt ──────────────────────────────────────────────────
@@ -54,46 +66,38 @@ Gemswell Ventures (OPCO) is the management company for wave parks developed by T
 - PD Birmingham: Sarah Whitaker
 
 ## Your Capabilities
-You have access to:
-1. **CapEx Tracking**: Budget baselines, approved budgets, committed amounts, invoiced, paid, and EAC by category
-2. **Cash Flow**: 13-week rolling cash flow with inflows, outflows, confidence levels
-3. **Funding**: Debt facilities, equity positions, drawn/undrawn, utilization, covenant status
-4. **Document Search**: 2,600+ indexed documents (contracts, board packs, monthly reports, due diligence, legal, etc.)
+You have tools to access live MIS data and search 102K+ indexed documents:
+- **search_documents**: Full-text + semantic search over contracts, board packs, BPs, reports, permits, due diligence
+- **get_capex_summary**: Live CapEx tracking by category (budget, committed, paid, EAC)
+- **get_funding_status**: Live funding facility status (drawn, undrawn, covenants, CPs)
+- **get_cash_runway**: 13-week rolling cash flow (inflows, outflows, net by week)
+- **get_covenant_status**: Covenant test results with breach/warning flags and headroom
+- **get_risk_register**: Risk register with severity scores and mitigations
+- **compare_projects**: Side-by-side MAD vs BHX comparison for any metric
 
 ## CRITICAL Response Instructions
+- **Use your tools.** Call the appropriate tool(s) before answering. Don't guess at data you can retrieve.
 - **Analyze in depth.** Don't just list data — interpret it. Explain WHY numbers matter, WHAT the trend means, and WHAT actions may be needed.
-- **Extract and synthesize from document chunks.** The retrieved document chunks below contain the actual source content from financial reports, contracts, board minutes, etc. READ THEM CAREFULLY and quote relevant passages. These chunks are your primary evidence.
-- **Structured data is supplementary.** The MIS database tables give you current snapshots. Use them to anchor your analysis with precise figures.
 - **Always cite specific numbers** — never invent financial data.
 - **When comparing projects**, present data side-by-side with currencies clearly labeled (€ for MAD, £ for BHX).
 - **Flag variances and risks proactively** (EAC > Budget, low funding headroom, covenant stress, etc.).
 - Format amounts as €12.5M or £8.3M, percentages as 67.2%.
-- If data is truly not available, say so — but first check both the document chunks AND the structured data AND your system knowledge.
+- If data is truly not available, say so — but first check both the document search AND the structured data tools.
 - **Respond in the same language as the user** (Spanish or English).
 - **Be comprehensive.** The user is a CEO/CFO who wants the full picture, not a one-paragraph summary. Provide the depth of a financial analyst memo.
 - **When you have knowledge from this system prompt** (financing structure, corporate entities, key people), USE IT directly — never say "not found in context" for things you already know.`
 
-// ─── Financial Entity Detection ─────────────────────────────────────
-type DetectedEntity = {
-  type: 'project' | 'financial_domain' | 'period' | 'instrument'
-  value: string
-  projectFilter?: string
-  docTypeFilter?: string
-}
-
+// ─── Entity Detection (kept for UI badges in response) ───────────────
 function detectEntities(query: string): DetectedEntity[] {
   const entities: DetectedEntity[] = []
   const q = query.toLowerCase()
 
-  // Projects
   if (/\b(madrid|mad|playa\s*surf|spain|españa)\b/i.test(q)) {
     entities.push({ type: 'project', value: 'MAD', projectFilter: 'MAD' })
   }
   if (/\b(birmingham|bhx|uk|england|coventry|reino\s*unido)\b/i.test(q)) {
     entities.push({ type: 'project', value: 'BHX', projectFilter: 'BHX' })
   }
-
-  // Financial domains
   if (/\b(capex|capital|presupuesto|budget|eac|gasto|spent|cost)\b/i.test(q)) {
     entities.push({ type: 'financial_domain', value: 'capex', docTypeFilter: 'capex' })
   }
@@ -106,14 +110,10 @@ function detectEntities(query: string): DetectedEntity[] {
   if (/\b(irr|npv|business\s*plan|bp|revenue|ingresos|apertura|opening)\b/i.test(q)) {
     entities.push({ type: 'financial_domain', value: 'bp_model', docTypeFilter: 'bp_model' })
   }
-
-  // Periods
   const periodMatch = q.match(/\b(q[1-4])\s*(20\d{2})\b/i) || q.match(/\b(fy)\s*(20\d{2})\b/i)
   if (periodMatch) {
     entities.push({ type: 'period', value: periodMatch[0].toUpperCase() })
   }
-
-  // Instruments
   if (/\bcesce\b/i.test(q)) {
     entities.push({ type: 'instrument', value: 'CESCE' })
   }
@@ -121,190 +121,591 @@ function detectEntities(query: string): DetectedEntity[] {
   return entities
 }
 
-// ─── Structured Data Injection ──────────────────────────────────────
-async function getStructuredContext(entities: DetectedEntity[]): Promise<StructuredContext> {
+// ─── Tool Definitions ───────────────────────────────────────────────
+const TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'search_documents',
+    description: 'Search the document corpus (102K+ chunks from contracts, board packs, business plans, reports, permits, due diligence). Performs hybrid vector + keyword search. Use for any question about document content, terms, conditions, contract clauses, board minutes, or narrative context.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query. Use exact financial terms (DSCR, CESCE, covenant, conditions precedent, Wavegarden, Santander) for better keyword matches.',
+        },
+        project_id: {
+          type: 'string',
+          enum: ['MAD', 'BHX'],
+          description: 'Filter to one project. Omit for cross-project queries.',
+        },
+        doc_type: {
+          type: 'string',
+          description: 'Optional filter: capex, cash_flow, funding, bp_model, contract, minutes, permit',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_capex_summary',
+    description: 'Query live CapEx data from the MIS database: budget baseline, approved budget, committed, invoiced, paid amounts, EAC, contingency by category. Use for CapEx tracking, variance analysis, and spend questions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: { type: 'string', enum: ['MAD', 'BHX'] },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'get_funding_status',
+    description: 'Query live funding facility data: committed amounts, drawn-to-date, undrawn available, accrued fees, conditions precedent status, covenant status, default risk flags per instrument.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: { type: 'string', enum: ['MAD', 'BHX'] },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'get_cash_runway',
+    description: 'Query 13-week rolling cash flow: inflows, outflows, net positions by week. Safeguards applied: last 9 months only, ±€50M per-line sanity cap. Use for liquidity, runway, and cash management questions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: { type: 'string', enum: ['MAD', 'BHX'] },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'get_covenant_status',
+    description: 'Query covenant test results: actual vs threshold values, breach flags, warning flags, headroom percentages, test frequency per instrument. Use for covenant compliance, lender reporting, and financial health questions.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: { type: 'string', enum: ['MAD', 'BHX'] },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'get_risk_register',
+    description: 'Query the risk register: risk titles, descriptions, probability scores (1-5), impact costs (EUR), severity scores (probability × impact, max 25), mitigation summaries, escalation flags.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: { type: 'string', enum: ['MAD', 'BHX'] },
+        severity_min: {
+          type: 'number',
+          description: 'Minimum severity score (1-25). Use 15 for high severity only, 10 for medium+. Omit for all risks.',
+        },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'compare_projects',
+    description: 'Side-by-side comparison of both MAD and BHX for a specific metric. More efficient than calling individual project tools twice.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        metric: {
+          type: 'string',
+          enum: ['capex', 'funding', 'cash_flow', 'covenant', 'risk'],
+        },
+      },
+      required: ['metric'],
+    },
+  },
+]
+
+// ─── Tool Executor: search_documents ────────────────────────────────
+async function executeSearchDocuments(
+  input: { query: string; project_id?: string; doc_type?: string }
+): Promise<ToolResult> {
   const supabase = createApiClient()
-  const projectIds = entities.filter(e => e.type === 'project').map(e => e.value)
-  const domains = entities.filter(e => e.type === 'financial_domain').map(e => e.value)
+  const projectFilter = input.project_id || null
 
-  const context: StructuredContext = { capex: [], cashFlow: [], funding: [] }
+  // Parallel: vector search + keyword search
+  const [vectorResults, keywordResults] = await Promise.all([
+    (async () => {
+      try {
+        const embedding = await embedText(input.query)
+        const { data } = await supabase.rpc('match_chunks', {
+          query_embedding: embedding,
+          match_count: 25,
+          filter_project: projectFilter,
+          filter_doc_type: null,
+        })
+        return (data || []).map((r: any) => ({
+          id: r.id,
+          document_id: r.document_id,
+          content: r.content,
+          metadata: r.metadata || {},
+          similarity: r.similarity,
+        }))
+      } catch {
+        return []
+      }
+    })(),
+    (async () => {
+      try {
+        const { data } = await supabase.rpc('keyword_search_chunks', {
+          query_text: input.query,
+          filter_project: projectFilter,
+          match_count: 15,
+        })
+        return (data || []).map((r: any) => ({
+          id: r.id,
+          document_id: r.document_id,
+          content: r.content,
+          metadata: r.metadata || {},
+          similarity: r.rank,
+        }))
+      } catch {
+        return []
+      }
+    })(),
+  ])
 
-  // If no specific project detected, fetch both
-  const projects = projectIds.length > 0 ? projectIds : ['MAD', 'BHX']
-
-  // Fetch relevant structured data based on detected domains
-  const fetchAll = domains.length === 0 // no specific domain = fetch overview of all
-
-  if (fetchAll || domains.includes('capex')) {
-    const { data } = await supabase
-      .from('fct_capex_snapshot')
-      .select('project_id, capex_category_id, budget_baseline, budget_approved_current, committed_amount, invoiced_amount, paid_amount, eac, contingency_allocated, contingency_used, period_end_date, dim_capex_category(category_name, category_type)')
-      .in('project_id', projects)
-      .order('budget_baseline', { ascending: false })
-    context.capex = data || []
+  // Merge + dedup by id (vector results take precedence for similarity score)
+  const merged = new Map<string, typeof vectorResults[0]>()
+  for (const r of [...vectorResults, ...keywordResults]) {
+    if (!merged.has(r.id)) merged.set(r.id, r)
   }
 
-  if (fetchAll || domains.includes('cash_flow')) {
-    // Only fetch Actual data and recent forecasts (last 9 months) to avoid poisoned forecast data
-    const nineMonthsAgo = new Date()
-    nineMonthsAgo.setMonth(nineMonthsAgo.getMonth() - 9)
-    const { data } = await supabase
-      .from('fct_cash_13w')
-      .select('project_id, week_start, cash_flow_type, cash_line_category, amount_eur, confidence_level')
-      .in('project_id', projects)
-      .gte('week_start', nineMonthsAgo.toISOString().slice(0, 10))
-      .order('week_start', { ascending: false })
-      .limit(200)
-    // Sanity filter: exclude any single row with |amount| > project total budget (data quality guard)
-    const MAX_SANE_AMOUNT = 50_000_000 // €50M — no single cash flow line should exceed this
-    context.cashFlow = (data || []).filter(r => Math.abs(Number(r.amount_eur)) < MAX_SANE_AMOUNT)
-  }
+  const pool = Array.from(merged.values())
+  if (pool.length === 0) return { result: 'No relevant documents found.', sources: [] }
 
-  if (fetchAll || domains.includes('funding')) {
-    const { data } = await supabase
-      .from('fct_funding_snapshot')
-      .select('project_id, instrument_id, committed_amount, drawn_to_date, undrawn_available, accrued_fees_interest, next_draw_expected_date, next_draw_expected_amt, cp_status, covenant_overall_status, default_risk_flag, period_end_date, dim_funding_instrument(instrument_name, instrument_type, currency, facility_limit)')
-      .in('project_id', projects)
-    context.funding = data || []
-  }
+  // Cohere rerank on combined pool
+  const reranked = await rerankChunks(input.query, pool, 10)
 
-  return context
+  // Resolve Storage URLs: source_file is a bare filename; construct path via project_id + doc_type
+  const sources: Source[] = reranked.map(c => {
+    const meta = c.metadata as any
+    let publicUrl: string | undefined
+    const srcFile = meta?.source_file || meta?.file_name
+    const projectId = meta?.project_id
+    const domain = meta?.doc_type || 'general'
+    if (srcFile && projectId) {
+      const { data } = supabase.storage
+        .from('documents')
+        .getPublicUrl(`${projectId}/${domain}/${srcFile}`)
+      publicUrl = data?.publicUrl
+    }
+    return {
+      id: c.id,
+      relevance: c.relevanceScore,
+      metadata: { ...c.metadata, public_url: publicUrl },
+      preview: c.content.slice(0, 200),
+    }
+  })
+
+  // Format chunks for Claude consumption
+  const formatted = reranked
+    .map((c, i) => {
+      const meta = c.metadata as any
+      const project = meta?.project_id || '?'
+      const docType = meta?.doc_type || '?'
+      const source = meta?.source_file || meta?.file_name || 'unknown'
+      const period = meta?.period ? ` | ${meta.period}` : ''
+      const header = `[Source ${i + 1}] ${project} | ${docType}${period} | ${source} (${(c.relevanceScore * 100).toFixed(0)}%)`
+      return `${header}\n${c.content}`
+    })
+    .join('\n\n---\n\n')
+
+  return { result: formatted, sources }
 }
 
-function formatStructuredContext(ctx: StructuredContext): string {
-  const sections: string[] = []
+// ─── Tool Executor: get_capex_summary ───────────────────────────────
+async function executeGetCapexSummary(input: { project_id: string }): Promise<ToolResult> {
+  const supabase = createApiClient()
+  const { data, error } = await supabase
+    .from('fct_capex_snapshot')
+    .select(
+      'project_id, capex_category_id, budget_baseline, budget_approved_current, committed_amount, invoiced_amount, paid_amount, eac, contingency_allocated, contingency_used, period_end_date, dim_capex_category(category_name, category_type)'
+    )
+    .eq('project_id', input.project_id)
+    .order('budget_baseline', { ascending: false })
 
-  if (ctx.capex.length > 0) {
-    // Group by project and summarize
-    const byProject: Record<string, typeof ctx.capex> = {}
-    for (const row of ctx.capex) {
-      const pid = row.project_id as string
-      if (!byProject[pid]) byProject[pid] = []
-      byProject[pid].push(row)
-    }
+  if (error) return { result: `Error fetching CapEx data: ${error.message}` }
+  if (!data || data.length === 0) return { result: `No CapEx data found for ${input.project_id}.` }
 
-    let capexText = '### CapEx Data (from fct_capex_snapshot)\n'
-    for (const [pid, rows] of Object.entries(byProject)) {
-      type Totals = { budget: number; approved: number; committed: number; paid: number; eac: number }
-      const totals = rows.reduce<Totals>(
-        (acc, r) => ({
-          budget: acc.budget + (Number(r.budget_baseline) || 0),
-          approved: acc.approved + (Number(r.budget_approved_current) || 0),
-          committed: acc.committed + (Number(r.committed_amount) || 0),
-          paid: acc.paid + (Number(r.paid_amount) || 0),
-          eac: acc.eac + (Number(r.eac) || 0),
-        }),
-        { budget: 0, approved: 0, committed: 0, paid: 0, eac: 0 }
-      )
-      const ccy = pid === 'BHX' ? '£' : '€'
-      const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
-      capexText += `\n**${pid}** — Budget: ${fmt(totals.budget)} | Approved: ${fmt(totals.approved)} | Committed: ${fmt(totals.committed)} | Paid: ${fmt(totals.paid)} | EAC: ${fmt(totals.eac)} | Variance: ${((totals.eac - totals.budget) / totals.budget * 100).toFixed(1)}%\n`
-      // Top categories
-      const sorted = [...rows].sort((a, b) => Number(b.budget_baseline) - Number(a.budget_baseline)).slice(0, 5)
-      for (const r of sorted) {
-        const cat = (r as any).dim_capex_category
-        const catName = cat?.category_name || r.capex_category_id
-        capexText += `  - ${catName}: Budget ${fmt(Number(r.budget_baseline))} → Paid ${fmt(Number(r.paid_amount))} (EAC ${fmt(Number(r.eac))})\n`
-      }
-    }
-    sections.push(capexText)
+  const ccy = input.project_id === 'BHX' ? '£' : '€'
+  const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
+
+  const totals = data.reduce(
+    (acc, r) => ({
+      budget: acc.budget + (Number(r.budget_baseline) || 0),
+      approved: acc.approved + (Number(r.budget_approved_current) || 0),
+      committed: acc.committed + (Number(r.committed_amount) || 0),
+      paid: acc.paid + (Number(r.paid_amount) || 0),
+      eac: acc.eac + (Number(r.eac) || 0),
+    }),
+    { budget: 0, approved: 0, committed: 0, paid: 0, eac: 0 }
+  )
+
+  const variance = totals.budget > 0
+    ? ((totals.eac - totals.budget) / totals.budget * 100).toFixed(1)
+    : '0.0'
+  const paidPct = totals.budget > 0
+    ? (totals.paid / totals.budget * 100).toFixed(1)
+    : '0.0'
+
+  let result = `### CapEx Summary — ${input.project_id}\n`
+  result += `Period: ${data[0]?.period_end_date || 'latest snapshot'}\n\n`
+  result += `**Totals:** Budget ${fmt(totals.budget)} | Approved ${fmt(totals.approved)} | Committed ${fmt(totals.committed)} | Paid ${fmt(totals.paid)} (${paidPct}%) | EAC ${fmt(totals.eac)} | Variance: ${Number(variance) >= 0 ? '+' : ''}${variance}%\n\n`
+  result += `**By Category:**\n`
+
+  for (const r of data) {
+    const cat = (r as any).dim_capex_category
+    const catName = cat?.category_name || r.capex_category_id
+    const catType = cat?.category_type ? ` (${cat.category_type})` : ''
+    const bgt = Number(r.budget_baseline) || 0
+    const paid = Number(r.paid_amount) || 0
+    const eac = Number(r.eac) || 0
+    const varPct = bgt > 0 ? ((eac - bgt) / bgt * 100).toFixed(1) : '0.0'
+    result += `- ${catName}${catType}: Budget ${fmt(bgt)} | Committed ${fmt(Number(r.committed_amount) || 0)} | Paid ${fmt(paid)} | EAC ${fmt(eac)} | Var ${Number(varPct) >= 0 ? '+' : ''}${varPct}%\n`
   }
 
-  if (ctx.funding.length > 0) {
-    let fundingText = '### Funding Data (from fct_funding_snapshot)\n'
-    for (const row of ctx.funding) {
-      const inst = (row as any).dim_funding_instrument
-      const ccy = inst?.currency === 'GBP' ? '£' : '€'
-      const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
-      const utilization = Number(row.committed_amount) > 0
-        ? ((Number(row.drawn_to_date) / Number(row.committed_amount)) * 100).toFixed(1)
-        : '0.0'
-      fundingText += `- **${inst?.instrument_name || row.instrument_id || 'Unknown'}** (${inst?.instrument_type || '?'}, ${row.project_id}): Facility ${fmt(Number(inst?.facility_limit || row.committed_amount))} | Committed ${fmt(Number(row.committed_amount))} | Drawn ${fmt(Number(row.drawn_to_date))} | Available ${fmt(Number(row.undrawn_available))} | Utilization: ${utilization}%`
-      if (row.covenant_overall_status) fundingText += ` | Covenant: ${row.covenant_overall_status}`
-      if (row.default_risk_flag) fundingText += ` | ⚠️ DEFAULT RISK`
-      fundingText += '\n'
-    }
-    sections.push(fundingText)
-  }
-
-  if (ctx.cashFlow.length > 0) {
-    // Summarize cash flow by project and quarter
-    const byProjectQ: Record<string, Record<string, { inflow: number; outflow: number }>> = {}
-    for (const row of ctx.cashFlow) {
-      const pid = row.project_id as string
-      const ws = new Date(row.week_start as string)
-      const q = `Q${Math.ceil((ws.getMonth() + 1) / 3)} ${ws.getFullYear()}`
-      if (!byProjectQ[pid]) byProjectQ[pid] = {}
-      if (!byProjectQ[pid][q]) byProjectQ[pid][q] = { inflow: 0, outflow: 0 }
-      const amt = Number(row.amount_eur) || 0
-      if (amt > 0) byProjectQ[pid][q].inflow += amt
-      else byProjectQ[pid][q].outflow += amt
-    }
-
-    let cfText = '### Cash Flow Summary (from fct_cash_13w)\n'
-    for (const [pid, quarters] of Object.entries(byProjectQ)) {
-      const ccy = pid === 'BHX' ? '£' : '€'
-      const fmt = (v: number) => `${ccy}${(Math.abs(v) / 1_000_000).toFixed(2)}M`
-      cfText += `\n**${pid}**:\n`
-      for (const [q, vals] of Object.entries(quarters).slice(-6)) {
-        cfText += `  ${q}: +${fmt(vals.inflow)} / -${fmt(Math.abs(vals.outflow))} = net ${vals.inflow + vals.outflow >= 0 ? '+' : '-'}${fmt(Math.abs(vals.inflow + vals.outflow))}\n`
-      }
-    }
-    sections.push(cfText)
-  }
-
-  return sections.length > 0
-    ? '\n\n## Live MIS Data\n' + sections.join('\n')
-    : ''
+  return { result }
 }
 
-// ─── RAG Vector Search ──────────────────────────────────────────────
-async function vectorSearch(
-  query: string,
-  entities: DetectedEntity[],
-  matchCount = 25
-): Promise<{ id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity: number }[]> {
-  try {
-    const supabase = createApiClient()
-    const queryEmbedding = await embedText(query)
+// ─── Tool Executor: get_funding_status ──────────────────────────────
+async function executeGetFundingStatus(input: { project_id: string }): Promise<ToolResult> {
+  const supabase = createApiClient()
+  const { data, error } = await supabase
+    .from('fct_funding_snapshot')
+    .select(
+      'project_id, instrument_id, committed_amount, drawn_to_date, undrawn_available, accrued_fees_interest, next_draw_expected_date, next_draw_expected_amt, cp_status, covenant_overall_status, default_risk_flag, period_end_date, dim_funding_instrument(instrument_name, instrument_type, currency, facility_limit)'
+    )
+    .eq('project_id', input.project_id)
 
-    const projects = entities.filter(e => e.projectFilter).map(e => e.projectFilter!)
-    // If 2+ projects detected (comparison query), search ALL to avoid missing one side
-    // If 1 project detected, filter to that project
-    // If 0 projects, search all
-    const projectFilter = projects.length === 1 ? projects[0] : null
+  if (error) return { result: `Error fetching funding data: ${error.message}` }
+  if (!data || data.length === 0) return { result: `No funding data found for ${input.project_id}.` }
 
-    // Don't filter by doc_type in vector search — let reranking handle relevance
-    // This prevents missing useful context in adjacent doc types
-    const { data, error } = await supabase.rpc('match_chunks', {
-      query_embedding: queryEmbedding,
-      match_count: matchCount,
-      filter_project: projectFilter,
-      filter_doc_type: null,
+  let result = `### Funding Status — ${input.project_id}\n`
+  result += `Period: ${data[0]?.period_end_date || 'latest snapshot'}\n\n`
+
+  for (const r of data) {
+    const inst = (r as any).dim_funding_instrument
+    const ccy = inst?.currency === 'GBP' ? '£' : '€'
+    const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
+    const utilization = Number(r.committed_amount) > 0
+      ? ((Number(r.drawn_to_date) / Number(r.committed_amount)) * 100).toFixed(1)
+      : '0.0'
+
+    result += `**${inst?.instrument_name || r.instrument_id}** (${inst?.instrument_type || '?'})\n`
+    result += `  Facility: ${fmt(Number(inst?.facility_limit || r.committed_amount))} | Committed: ${fmt(Number(r.committed_amount))} | Drawn: ${fmt(Number(r.drawn_to_date))} | Available: ${fmt(Number(r.undrawn_available))} | Utilization: ${utilization}%\n`
+    if (r.accrued_fees_interest) result += `  Accrued fees/interest: ${fmt(Number(r.accrued_fees_interest))}\n`
+    if (r.next_draw_expected_date) result += `  Next draw: ${r.next_draw_expected_date} (${fmt(Number(r.next_draw_expected_amt) || 0)})\n`
+    if (r.cp_status) result += `  CP Status: ${r.cp_status}\n`
+    if (r.covenant_overall_status) result += `  Covenant: ${r.covenant_overall_status}\n`
+    if (r.default_risk_flag) result += `  ⚠️ DEFAULT RISK FLAG ACTIVE\n`
+    result += '\n'
+  }
+
+  return { result }
+}
+
+// ─── Tool Executor: get_cash_runway ─────────────────────────────────
+async function executeGetCashRunway(input: { project_id: string }): Promise<ToolResult> {
+  const supabase = createApiClient()
+  const nineMonthsAgo = new Date()
+  nineMonthsAgo.setMonth(nineMonthsAgo.getMonth() - 9)
+
+  const { data, error } = await supabase
+    .from('fct_cash_13w')
+    .select('project_id, week_start, cash_flow_type, cash_line_category, amount_eur, confidence_level')
+    .eq('project_id', input.project_id)
+    .gte('week_start', nineMonthsAgo.toISOString().slice(0, 10))
+    .order('week_start', { ascending: true })
+
+  if (error) return { result: `Error fetching cash flow data: ${error.message}` }
+  if (!data || data.length === 0) return { result: `No cash flow data found for ${input.project_id} in the last 9 months.` }
+
+  // Sanity filter: exclude any single row with |amount_eur| > €50M
+  const safe = data.filter(r => Math.abs(Number(r.amount_eur)) < 50_000_000)
+
+  const ccy = input.project_id === 'BHX' ? '£' : '€'
+  const fmt = (v: number) => `${ccy}${(Math.abs(v) / 1_000_000).toFixed(2)}M`
+
+  // Aggregate by quarter
+  const byQuarter: Record<string, { inflow: number; outflow: number; confidence: string }> = {}
+  for (const r of safe) {
+    const ws = new Date(r.week_start as string)
+    const q = `Q${Math.ceil((ws.getMonth() + 1) / 3)} ${ws.getFullYear()}`
+    if (!byQuarter[q]) byQuarter[q] = { inflow: 0, outflow: 0, confidence: r.confidence_level as string || 'actual' }
+    const amt = Number(r.amount_eur) || 0
+    if (amt > 0) byQuarter[q].inflow += amt
+    else byQuarter[q].outflow += amt
+    // Use lowest confidence as quarter confidence
+    if (r.confidence_level === 'low' || byQuarter[q].confidence === 'low') byQuarter[q].confidence = 'low'
+    else if (r.confidence_level === 'medium' || byQuarter[q].confidence === 'medium') byQuarter[q].confidence = 'medium'
+  }
+
+  let result = `### 13-Week Cash Flow (last 9 months) — ${input.project_id}\n`
+  result += `Rows: ${safe.length} | Filtered out ${data.length - safe.length} rows exceeding ±€50M sanity cap\n\n`
+
+  for (const [q, vals] of Object.entries(byQuarter)) {
+    const net = vals.inflow + vals.outflow
+    const netStr = net >= 0 ? `+${fmt(net)}` : `-${fmt(Math.abs(net))}`
+    result += `${q}: Inflow +${fmt(vals.inflow)} | Outflow -${fmt(Math.abs(vals.outflow))} | Net ${netStr} [${vals.confidence}]\n`
+  }
+
+  return { result }
+}
+
+// ─── Tool Executor: get_covenant_status ─────────────────────────────
+async function executeGetCovenantStatus(input: { project_id: string }): Promise<ToolResult> {
+  const supabase = createApiClient()
+  const oneYearAgo = new Date()
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+
+  const { data, error } = await supabase
+    .from('fct_covenant_snapshot')
+    .select(
+      'project_id, instrument_id, covenant_id, test_date, actual_value, threshold_value, headroom_value, headroom_pct, breach_flag, warning_flag, comment, dim_covenant(covenant_name, test_frequency, test_type, operator), dim_funding_instrument(instrument_name)'
+    )
+    .eq('project_id', input.project_id)
+    .gte('test_date', oneYearAgo.toISOString().slice(0, 10))
+    .order('test_date', { ascending: false })
+
+  if (error) return { result: `Error fetching covenant data: ${error.message}` }
+  if (!data || data.length === 0) return { result: `No covenant data found for ${input.project_id}.` }
+
+  let result = `### Covenant Status — ${input.project_id}\n\n`
+
+  // Group by covenant_id, take most recent test
+  const latest = new Map<string, typeof data[0]>()
+  for (const r of data) {
+    if (!latest.has(r.covenant_id)) latest.set(r.covenant_id, r)
+  }
+
+  let breachCount = 0
+  let warningCount = 0
+
+  for (const r of latest.values()) {
+    const cov = (r as any).dim_covenant
+    const inst = (r as any).dim_funding_instrument
+    const status = r.breach_flag ? '🔴 BREACH' : r.warning_flag ? '🟡 WARNING' : '🟢 OK'
+    if (r.breach_flag) breachCount++
+    if (r.warning_flag) warningCount++
+
+    result += `**${cov?.covenant_name || r.covenant_id}** (${inst?.instrument_name || r.instrument_id})\n`
+    result += `  Status: ${status} | Test date: ${r.test_date} | Frequency: ${cov?.test_frequency || '?'}\n`
+    result += `  Actual: ${Number(r.actual_value).toFixed(4)} ${cov?.operator || ''} Threshold: ${Number(r.threshold_value).toFixed(4)}\n`
+    if (r.headroom_value != null) result += `  Headroom: ${Number(r.headroom_value).toFixed(4)} (${Number(r.headroom_pct).toFixed(2)}%)\n`
+    if (r.comment) result += `  Comment: ${r.comment}\n`
+    result += '\n'
+  }
+
+  result = `**Summary:** ${breachCount} breach(es), ${warningCount} warning(s), ${latest.size - breachCount - warningCount} compliant\n\n` + result
+
+  return { result }
+}
+
+// ─── Tool Executor: get_risk_register ───────────────────────────────
+async function executeGetRiskRegister(
+  input: { project_id: string; severity_min?: number }
+): Promise<ToolResult> {
+  const supabase = createApiClient()
+  // Order by as_of_date DESC so Map dedup always keeps the most recent snapshot per risk_id
+  const oneYearAgo = new Date()
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+
+  const { data, error } = await supabase
+    .from('fct_risk_snapshot')
+    .select(
+      'risk_id, project_id, as_of_date, risk_title, risk_description, probability_score, impact_cost_eur, impact_days, severity_score, mitigation_summary, status_code, escalation_flag, dim_risk_category(category_name)'
+    )
+    .eq('project_id', input.project_id)
+    .gte('as_of_date', oneYearAgo.toISOString().slice(0, 10))
+    .order('as_of_date', { ascending: false })
+
+  if (error) return { result: `Error fetching risk data: ${error.message}` }
+  if (!data || data.length === 0) {
+    return {
+      result: `No risks found for ${input.project_id}${input.severity_min ? ` with severity ≥ ${input.severity_min}` : ''}.`,
+    }
+  }
+
+  // Take most recent snapshot per risk_id, then filter + sort by severity
+  const latest = new Map<string, typeof data[0]>()
+  for (const r of data) {
+    if (!latest.has(r.risk_id)) latest.set(r.risk_id, r)
+  }
+
+  // Apply severity filter and sort after dedup (DB was sorted by date, not severity)
+  let risks = Array.from(latest.values())
+  if (input.severity_min) {
+    risks = risks.filter(r => Number(r.severity_score) >= input.severity_min!)
+  }
+  risks.sort((a, b) => Number(b.severity_score) - Number(a.severity_score))
+
+  if (risks.length === 0) {
+    return {
+      result: `No risks found for ${input.project_id}${input.severity_min ? ` with severity ≥ ${input.severity_min}` : ''} in the last year.`,
+    }
+  }
+
+  let result = `### Risk Register — ${input.project_id} (${risks.length} risks${input.severity_min ? `, severity ≥ ${input.severity_min}` : ''})\n`
+  result += `As of: ${risks[0]?.as_of_date || 'latest snapshot'}\n\n`
+
+  let i = 1
+  for (const r of risks) {
+    const cat = (r as any).dim_risk_category
+    const escalated = r.escalation_flag ? ' [ESCALATED]' : ''
+    const impactCost = Number(r.impact_cost_eur) > 0 ? `, Impact Cost: €${(Number(r.impact_cost_eur) / 1_000_000).toFixed(2)}M` : ''
+    const impactDays = Number(r.impact_days) > 0 ? `, Delay: ${r.impact_days} days` : ''
+
+    result += `${i}.${escalated} **${r.risk_title}** (${cat?.category_name || '?'})\n`
+    result += `   Severity: ${r.severity_score}/25 | Probability: ${r.probability_score}/5${impactCost}${impactDays}\n`
+    result += `   ${r.risk_description}\n`
+    result += `   Mitigation: ${r.mitigation_summary}\n`
+    result += `   Status: ${r.status_code}\n\n`
+    i++
+  }
+
+  return { result }
+}
+
+// ─── Tool Executor: compare_projects ────────────────────────────────
+async function executeCompareProjects(input: { metric: string }): Promise<ToolResult> {
+  const toolMap: Record<string, string> = {
+    capex: 'get_capex_summary',
+    funding: 'get_funding_status',
+    cash_flow: 'get_cash_runway',
+    covenant: 'get_covenant_status',
+    risk: 'get_risk_register',
+  }
+  const toolName = toolMap[input.metric]
+  if (!toolName) return { result: `Unknown metric for comparison: ${input.metric}. Use: capex, funding, cash_flow, covenant, risk` }
+
+  const [mad, bhx] = await Promise.all([
+    executeTool(toolName, { project_id: 'MAD' }),
+    executeTool(toolName, { project_id: 'BHX' }),
+  ])
+
+  return {
+    result: `## MAD (Madrid Playa Surf — EUR)\n${mad.result}\n\n---\n\n## BHX (Birmingham Wave — GBP)\n${bhx.result}`,
+    sources: [...(mad.sources ?? []), ...(bhx.sources ?? [])],
+  }
+}
+
+// ─── Tool Dispatcher ─────────────────────────────────────────────────
+const ALLOWED_PROJECTS = new Set(['MAD', 'BHX'])
+
+async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolResult> {
+  // Validate project_id scope on all per-project tools
+  const projectId = input.project_id as string | undefined
+  if (projectId && !ALLOWED_PROJECTS.has(projectId)) {
+    return { result: `project_id must be MAD or BHX. Got: ${projectId}` }
+  }
+
+  switch (name) {
+    case 'search_documents':
+      return executeSearchDocuments(input as { query: string; project_id?: string; doc_type?: string })
+    case 'get_capex_summary':
+      return executeGetCapexSummary(input as { project_id: string })
+    case 'get_funding_status':
+      return executeGetFundingStatus(input as { project_id: string })
+    case 'get_cash_runway':
+      return executeGetCashRunway(input as { project_id: string })
+    case 'get_covenant_status':
+      return executeGetCovenantStatus(input as { project_id: string })
+    case 'get_risk_register':
+      return executeGetRiskRegister(input as { project_id: string; severity_min?: number })
+    case 'compare_projects':
+      return executeCompareProjects(input as { metric: string })
+    default:
+      return { result: `Unknown tool: ${name}` }
+  }
+}
+
+// ─── Agent Loop ──────────────────────────────────────────────────────
+async function runAgentLoop(
+  messages: Anthropic.MessageParam[],
+  systemPrompt: string,
+  anthropic: Anthropic
+): Promise<{ message: string; sources: Source[] }> {
+  const allSources = new Map<string, Source>() // keyed by chunk id for dedup
+  const loopMessages: Anthropic.MessageParam[] = [...messages]
+
+  for (let _iteration = 0; _iteration < 5; _iteration++) {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      temperature: 0.3,
+      system: systemPrompt,
+      tools: TOOLS,
+      messages: loopMessages,
     })
 
-    if (error) {
-      console.error('Vector search error:', error)
-      return []
+    if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
+      const text = response.content.find(b => b.type === 'text')?.text ?? 'No response generated.'
+      return { message: text, sources: Array.from(allSources.values()) }
     }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      document_id: row.document_id,
-      content: row.content,
-      metadata: row.metadata || {},
-      similarity: row.similarity,
-    }))
-  } catch (err) {
-    console.error('Vector search failed:', err)
-    return []
+    if (response.stop_reason === 'tool_use') {
+      // Append Claude's response (with tool_use blocks) to the message history
+      loopMessages.push({ role: 'assistant', content: response.content })
+
+      // Execute all tool calls in parallel
+      const toolBlocks = response.content.filter(b => b.type === 'tool_use') as Anthropic.ToolUseBlock[]
+
+      // Guard: if stop_reason is tool_use but no tool_use blocks exist (malformed response),
+      // the API rejects an empty content array — treat as end_turn instead
+      if (toolBlocks.length === 0) {
+        const text = response.content.find(b => b.type === 'text')?.text ?? ''
+        return { message: text || 'No response generated.', sources: Array.from(allSources.values()) }
+      }
+      const toolResults = await Promise.all(
+        toolBlocks.map(async block => {
+          try {
+            const { result, sources } = await executeTool(
+              block.name,
+              block.input as Record<string, unknown>
+            )
+            if (sources) {
+              for (const s of sources) {
+                if (!allSources.has(s.id)) allSources.set(s.id, s)
+              }
+            }
+            return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
+          } catch (err: any) {
+            console.error(`Tool ${block.name} failed:`, err)
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: block.id,
+              content: `Error executing ${block.name}: ${err.message}`,
+              is_error: true,
+            }
+          }
+        })
+      )
+
+      // Append tool results as user message
+      loopMessages.push({ role: 'user', content: toolResults })
+    } else {
+      // Unexpected stop reason (stop_sequence, etc.) — extract any text and return
+      const text = response.content.find(b => b.type === 'text')?.text ?? ''
+      return { message: text || 'Unexpected stop.', sources: Array.from(allSources.values()) }
+    }
+  }
+
+  return {
+    message: 'Maximum tool iterations reached. Please rephrase your question or ask about a specific aspect.',
+    sources: Array.from(allSources.values()),
   }
 }
 
-// ─── Main Chat Handler ──────────────────────────────────────────────
+// ─── Main Chat Handler ───────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    const { messages, conversationId } = await request.json() as {
+    const { messages, conversationId } = (await request.json()) as {
       messages: Message[]
       conversationId?: string
     }
@@ -319,73 +720,24 @@ export async function POST(request: NextRequest) {
     }
 
     const query = lastUserMessage.content
-
-    // Step 1: Detect financial entities
-    const entities = detectEntities(query)
-
-    // Step 2: Parallel — vector search + structured data fetch
-    const [vectorResults, structuredCtx] = await Promise.all([
-      vectorSearch(query, entities),
-      getStructuredContext(entities),
-    ])
-
-    // Step 3: Rerank vector results (10 chunks for rich document context)
-    const reranked = await rerankChunks(
-      query,
-      vectorResults.map(r => ({
-        id: r.id,
-        content: r.content,
-        metadata: r.metadata,
-        similarity: r.similarity,
-      })),
-      10
-    )
-
-    // Step 4: Build context with rich source metadata
-    const ragContext = reranked.length > 0
-      ? '\n\n## Retrieved Document Chunks (PRIMARY EVIDENCE — read carefully and quote when relevant)\n' +
-        reranked.map((c, i) => {
-          const meta = c.metadata || {}
-          const source = (meta as any).source_file || (meta as any).file_name || 'unknown'
-          const project = (meta as any).project_id || '?'
-          const docType = (meta as any).doc_type || '?'
-          const period = (meta as any).period || ''
-          const currency = (meta as any).currency || ''
-          const chunkIdx = (meta as any).chunk_index != null ? `#${(meta as any).chunk_index}` : ''
-          const header = `--- [Source ${i + 1}] ${project} | ${docType}${period ? ' | ' + period : ''}${currency ? ' | ' + currency : ''} | ${source}${chunkIdx} (relevance: ${(c.relevanceScore * 100).toFixed(0)}%) ---`
-          return `${header}\n${c.content}`
-        }).join('\n\n')
-      : ''
-
-    const structuredText = formatStructuredContext(structuredCtx)
-    // Document chunks first (primary evidence), then structured data (supplementary)
-    const fullContext = ragContext + structuredText
-
-    // Step 5: Build messages for Claude
-    const systemWithContext = SYSTEM_PROMPT +
-      (fullContext ? `\n\n## Context for this query\n${fullContext}` : '')
+    const entities = detectEntities(query) // for UI entity badges only
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
-    // Keep last 10 messages for conversation history
-    const historyMessages = messages.slice(-10).map(m => ({
+    // Build conversation history (last 10 messages, string content only for history)
+    const historyMessages: Anthropic.MessageParam[] = messages.slice(-10).map(m => ({
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }))
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      temperature: 0.3,
-      system: systemWithContext,
-      messages: historyMessages,
-    })
+    // Run agent loop
+    const { message: assistantContent, sources } = await runAgentLoop(
+      historyMessages,
+      SYSTEM_PROMPT,
+      anthropic
+    )
 
-    const assistantContent = response.content[0]?.type === 'text'
-      ? response.content[0].text
-      : 'No response generated.'
-
-    // Step 6: Save to conversation history
+    // Save conversation to DB (only final user query + final assistant response, not tool calls)
     const supabase = createApiClient()
     let convId = conversationId
 
@@ -399,22 +751,16 @@ export async function POST(request: NextRequest) {
     }
 
     if (convId) {
-      // Save both user message and assistant response
       await supabase.from('rag_messages').insert([
-        {
-          conversation_id: convId,
-          role: 'user',
-          content: query,
-          sources: null,
-        },
+        { conversation_id: convId, role: 'user', content: query, sources: null },
         {
           conversation_id: convId,
           role: 'assistant',
           content: assistantContent,
-          sources: reranked.map(c => ({
-            chunk_id: c.id,
-            relevance: c.relevanceScore,
-            metadata: c.metadata,
+          sources: sources.map(s => ({
+            chunk_id: s.id,
+            relevance: s.relevance,
+            metadata: s.metadata,
           })),
         },
       ])
@@ -423,15 +769,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       message: assistantContent,
       conversationId: convId,
-      sources: reranked.map(c => ({
-        id: c.id,
-        relevance: c.relevanceScore,
-        metadata: c.metadata,
-        preview: c.content.slice(0, 200),
-      })),
+      sources,
       entities,
     })
-
   } catch (err: any) {
     console.error('Chat API error:', err)
     return NextResponse.json(
