@@ -1,9 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createApiClient } from '@/lib/supabase-server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+type ReviewDecision = 'accept' | 'reject' | 'override' | 'defer'
+
+type ReviewRequestBody = {
+  candidate_id?: string
+  decision?: ReviewDecision
+  override_value?: number
+  override_reason?: string
+  decided_by?: string
+}
+
+type CandidateForReview = {
+  id: string
+  status: string
+  metric_id: string
+  extracted_value: number | null
+  period_date: string | null
+  period_label: string | null
+}
+
+type DecisionRecord = {
+  id: string
+}
+
+type MetricPublishTarget = {
+  target_table: string
+  target_column: string
+  target_filter: Record<string, unknown> | null
+  project_id: string
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Internal server error'
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
+    const body = await request.json() as ReviewRequestBody
     const {
       candidate_id,
       decision,          // 'accept' | 'reject' | 'override' | 'defer'
@@ -32,10 +67,11 @@ export async function POST(request: NextRequest) {
     if (candidateError || !candidate) {
       return NextResponse.json({ error: 'Candidate not found' }, { status: 404 })
     }
+    const reviewCandidate = candidate as CandidateForReview
 
-    if (!['pending_review', 'auto_accepted', 'validation_failed'].includes(candidate.status)) {
+    if (!['pending_review', 'auto_accepted', 'validation_failed'].includes(reviewCandidate.status)) {
       return NextResponse.json(
-        { error: `Candidate status '${candidate.status}' cannot be reviewed` },
+        { error: `Candidate status '${reviewCandidate.status}' cannot be reviewed` },
         { status: 400 }
       )
     }
@@ -89,7 +125,13 @@ export async function POST(request: NextRequest) {
     // 5. If accepted/overridden, publish to the appropriate fact table
     let publication = null
     if (decision === 'accept' || decision === 'override') {
-      publication = await publishToFactTable(supabase, candidate, decisionRecord, decided_by, override_value)
+      publication = await publishToFactTable(
+        supabase,
+        reviewCandidate,
+        decisionRecord as DecisionRecord | null,
+        decided_by,
+        override_value
+      )
     }
 
     return NextResponse.json({
@@ -100,16 +142,16 @@ export async function POST(request: NextRequest) {
       decision_id: decisionRecord?.id || null,
       publication,
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Review API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
   }
 }
 
 async function publishToFactTable(
-  supabase: any,
-  candidate: any,
-  decisionRecord: any,
+  supabase: SupabaseClient,
+  candidate: CandidateForReview,
+  decisionRecord: DecisionRecord | null,
   decidedBy: string,
   overrideValue?: number
 ) {
@@ -122,42 +164,45 @@ async function publishToFactTable(
       .single()
 
     if (metricError || !metric) return null
+    const publishTarget = metric as MetricPublishTarget
 
     const publishedValue = overrideValue != null ? overrideValue : candidate.extracted_value
 
     // Upsert into the fact table (append-only snapshot pattern)
-    const factRow: Record<string, any> = {
-      project_id: metric.project_id,
-      ...(metric.target_filter || {}),
-      [metric.target_column]: publishedValue,
+    const factRow: Record<string, unknown> = {
+      project_id: publishTarget.project_id,
+      ...(publishTarget.target_filter || {}),
+      [publishTarget.target_column]: publishedValue,
       source_file: `intel:${candidate.metric_id}`,
     }
 
     // Set the date field based on table type
-    if (metric.target_table === 'fct_cash_13w') {
+    if (publishTarget.target_table === 'fct_cash_13w') {
       factRow.week_start = candidate.period_date
     } else {
       factRow.period_end_date = candidate.period_date
     }
 
     const { data: factRowResult, error: factError } = await supabase
-      .from(metric.target_table)
+      .from(publishTarget.target_table)
       .insert(factRow)
       .select('id')
       .single()
 
     if (factError) {
-      console.error(`Fact publish error (${metric.target_table}):`, factError)
+      console.error(`Fact publish error (${publishTarget.target_table}):`, factError)
       return null
     }
+    const insertedFact = factRowResult as { id: string } | null
+    if (!insertedFact) return null
 
     // Record the publication receipt
     const { data: pub } = await supabase
       .from('intel_fact_publication')
       .insert({
-        target_table: metric.target_table,
-        target_row_id: factRowResult.id,
-        target_column: metric.target_column,
+        target_table: publishTarget.target_table,
+        target_row_id: insertedFact.id,
+        target_column: publishTarget.target_column,
         published_value: publishedValue,
         candidate_id: candidate.id,
         decision_id: decisionRecord?.id || null,
@@ -169,7 +214,7 @@ async function publishToFactTable(
       .single()
 
     return pub
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Publish error:', err)
     return null
   }

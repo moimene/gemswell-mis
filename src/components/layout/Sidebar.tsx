@@ -10,22 +10,32 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 
-const navItems = [
-  { label: 'CEO Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Portfolio', href: '/portfolio', icon: Briefcase },
-  { label: 'Critical Path', href: '/critical-path', icon: GitBranch },
-  { label: 'Funding & Cash', href: '/funding', icon: Banknote },
-  { label: 'Ops Readiness', href: '/ops-readiness', icon: Shield },
-  { label: 'F&B Readiness', href: '/fnb-readiness', icon: Utensils },
-  { label: 'Pricing', href: '/pricing', icon: Tag },
-  { label: 'Commercial', href: '/commercial', icon: BarChart3 },
-  { label: 'BP & Budget', href: '/bp-budget', icon: Building2 },
-  { label: 'Risks & Actions', href: '/risks', icon: AlertTriangle },
-  { label: 'Decisions', href: '/decisions', icon: FileText },
-  { label: 'AI Assistant', href: '/chat', icon: MessageSquare },
-  { label: 'Ingestion', href: '/admin/ingest', icon: Upload },
-  { label: 'Evidence Review', href: '/admin/review', icon: FlaskConical },
-  { label: 'Pack Grounding',  href: '/admin/packs',  icon: Layers },
+const navSections = [
+  {
+    label: 'Tower Control',
+    items: [
+      { label: 'CEO Dashboard', href: '/', icon: LayoutDashboard },
+      { label: 'Portfolio', href: '/portfolio', icon: Briefcase },
+      { label: 'Critical Path', href: '/critical-path', icon: GitBranch },
+      { label: 'Funding & Cash', href: '/funding', icon: Banknote },
+      { label: 'Ops Readiness', href: '/ops-readiness', icon: Shield },
+      { label: 'F&B Readiness', href: '/fnb-readiness', icon: Utensils },
+      { label: 'Pricing', href: '/pricing', icon: Tag },
+      { label: 'Commercial', href: '/commercial', icon: BarChart3 },
+      { label: 'BP & Budget', href: '/bp-budget', icon: Building2 },
+      { label: 'Risks & Actions', href: '/risks', icon: AlertTriangle },
+      { label: 'Decisions', href: '/decisions', icon: FileText },
+    ],
+  },
+  {
+    label: 'Knowledge System',
+    items: [
+      { label: 'Document Bot', href: '/chat', icon: MessageSquare },
+      { label: 'Document Ingestion', href: '/admin/ingest', icon: Upload },
+      { label: 'Evidence Review', href: '/admin/review', icon: FlaskConical },
+      { label: 'Pack Grounding',  href: '/admin/packs',  icon: Layers },
+    ],
+  },
 ]
 
 export function Sidebar() {
@@ -43,25 +53,34 @@ export function Sidebar() {
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </button>
       </div>
-      <nav className="flex-1 space-y-1 p-2">
-        {navItems.map(item => {
-          const isActive = pathname === item.href
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
-                isActive
-                  ? 'bg-slate-200 font-medium text-slate-900'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              )}
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
-          )
-        })}
+      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+        {navSections.map(section => (
+          <div key={section.label} className="space-y-1">
+            {!collapsed && (
+              <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+                {section.label}
+              </p>
+            )}
+            {section.items.map(item => {
+              const isActive = pathname === item.href
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors',
+                    isActive
+                      ? 'bg-slate-200 font-medium text-slate-900'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  )}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {!collapsed && <span>{item.label}</span>}
+                </Link>
+              )
+            })}
+          </div>
+        ))}
       </nav>
     </aside>
   )

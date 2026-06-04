@@ -22,7 +22,6 @@ const sb = createClient(
 );
 
 function log(msg) { console.log(msg); }
-function fmt(msg) { return msg; }
 
 log('\n════════════════════════════════════════════════════════════');
 log('PACK REPORT GENERATOR — MAD Finance Mar-2026');

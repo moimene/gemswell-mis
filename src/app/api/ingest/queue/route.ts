@@ -11,6 +11,10 @@ type QueueItem = {
   relevance: number
 }
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Internal server error'
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { files } = await request.json() as { files: QueueItem[] }
@@ -46,9 +50,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ queued: data?.length || 0 })
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Queue API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
   }
 }
 
@@ -74,7 +78,7 @@ export async function GET() {
     }
 
     return NextResponse.json({ summary, items: data })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
   }
 }

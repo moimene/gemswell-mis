@@ -152,8 +152,6 @@ const { data: cashRows } = await sb
 // Summary row for capex totals — use latest period, null category
 const capexTotalRow = capexRows?.find(r => !r.capex_category_id) || capexRows?.[0]
 const fundingDebtRow = fundingRows?.find(r => r.instrument_id === 'MAD-DBT-01')
-const fundingParRow  = fundingRows?.find(r => r.instrument_id === 'MAD-PAR-01')
-const fundingEquRow  = fundingRows?.find(r => r.instrument_id === 'MAD-EQU-01')
 const cashLatestRow  = cashRows?.[0]
 
 // Map metric_id → target fact row id
@@ -227,8 +225,6 @@ const capexTotalFromFacts = capexRows?.reduce((s, r) => ({
 }), { budget: 0, paid: 0, eac: 0 })
 
 const capexIntelBaseline  = candidates.find(c => c.metric_id === 'MAD.capex.budget_baseline.total')?.extracted_value
-const capexIntelPaid      = candidates.find(c => c.metric_id === 'MAD.capex.paid.total')?.extracted_value
-const capexIntelEac       = candidates.find(c => c.metric_id === 'MAD.capex.eac.total')?.extracted_value
 
 log(`  CapEx Monitoring CF total budget : €${(capexTotalFromFacts?.budget/1e6).toFixed(2)}M`)
 log(`  Intel Budget UW (Cost Allocation): €${(capexIntelBaseline/1e6).toFixed(2)}M`)

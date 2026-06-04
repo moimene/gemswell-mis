@@ -64,11 +64,12 @@ GENERAL RULES:
  * Parse a document — always prefer LlamaParse for maximum quality.
  */
 export async function parseDocument(
-  filePath: string,
+  _filePath: string,
   fileBuffer: Buffer,
   fileName: string,
-  mimeType: string
+  _mimeType: string
 ): Promise<ParseResult> {
+  void _mimeType
   const apiKey = process.env.LLAMA_CLOUD_API_KEY
 
   if (apiKey) {
@@ -77,8 +78,9 @@ export async function parseDocument(
       const result = await parseLlama(fileBuffer, fileName, apiKey)
       console.log(`[parse] ✅ LlamaParse completed: ${fileName} → ${result.content.length} chars`)
       return result
-    } catch (err: any) {
-      console.error(`[parse] ❌ LlamaParse failed for ${fileName}:`, err.message)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown parse error'
+      console.error(`[parse] ❌ LlamaParse failed for ${fileName}:`, message)
       // For xlsx, fall back to local parser
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         console.log(`[parse] 🔄 Falling back to local xlsx parser for ${fileName}`)

@@ -141,11 +141,13 @@ export default function CriticalPathPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
+    let cancelled = false
     fetchLatestSnapshots(tab).then(data => {
+      if (cancelled) return
       setSnapshots(data)
       setLoading(false)
     })
+    return () => { cancelled = true }
   }, [tab])
 
   // ── KPI derivations ──────────────────────────────────────────────────────

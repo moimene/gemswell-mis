@@ -3,26 +3,161 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient } from '@/lib/supabase-server'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
+import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
 
 export const maxDuration = 800
 
 // ─── Types ──────────────────────────────────────────────────────────
 type Message = { role: 'user' | 'assistant'; content: string }
 
-type Source = {
-  id: string
-  relevance: number
-  metadata: Record<string, unknown>
-  preview: string
-}
+type Source = KnowledgeSource
 
 type ToolResult = { result: string; sources?: Source[] }
+
+type RetrievedChunk = {
+  id: string
+  document_id: string
+  content: string
+  metadata: Record<string, unknown>
+  similarity?: number
+}
+
+type ToolCallAudit = {
+  iteration: number
+  name: string
+  input: unknown
+  is_error: boolean
+  source_count: number
+  result_preview: string
+}
+
+type MaybeJoined<T> = T | T[] | null | undefined
+
+type NumericValue = number | string | null
+
+type CapexSnapshotRow = {
+  capex_category_id: string | null
+  budget_baseline: NumericValue
+  budget_approved_current: NumericValue
+  committed_amount: NumericValue
+  paid_amount: NumericValue
+  eac: NumericValue
+  period_end_date: string | null
+  dim_capex_category?: MaybeJoined<{
+    category_name: string | null
+    category_type: string | null
+  }>
+}
+
+type FundingSnapshotRow = {
+  instrument_id: string | null
+  committed_amount: NumericValue
+  drawn_to_date: NumericValue
+  undrawn_available: NumericValue
+  accrued_fees_interest: NumericValue
+  next_draw_expected_date: string | null
+  next_draw_expected_amt: NumericValue
+  cp_status: string | null
+  covenant_overall_status: string | null
+  default_risk_flag: boolean | null
+  period_end_date: string | null
+  dim_funding_instrument?: MaybeJoined<{
+    instrument_name: string | null
+    instrument_type?: string | null
+    currency?: string | null
+    facility_limit?: NumericValue
+  }>
+}
+
+type CovenantSnapshotRow = {
+  instrument_id: string | null
+  covenant_id: string
+  test_date: string | null
+  actual_value: NumericValue
+  threshold_value: NumericValue
+  headroom_value: NumericValue
+  headroom_pct: NumericValue
+  breach_flag: boolean | null
+  warning_flag: boolean | null
+  comment: string | null
+  dim_covenant?: MaybeJoined<{
+    covenant_name: string | null
+    test_frequency: string | null
+    operator: string | null
+  }>
+  dim_funding_instrument?: MaybeJoined<{
+    instrument_name: string | null
+  }>
+}
+
+type RiskSnapshotRow = {
+  risk_id: string
+  as_of_date: string | null
+  risk_title: string | null
+  risk_description: string | null
+  probability_score: NumericValue
+  impact_cost_eur: NumericValue
+  impact_days: NumericValue
+  severity_score: NumericValue
+  mitigation_summary: string | null
+  status_code: string | null
+  escalation_flag: boolean | null
+  dim_risk_category?: MaybeJoined<{
+    category_name: string | null
+  }>
+}
 
 type DetectedEntity = {
   type: 'project' | 'financial_domain' | 'period' | 'instrument'
   value: string
   projectFilter?: string
   docTypeFilter?: string
+}
+
+const DOC_TYPE_ALIASES: Record<string, string> = {
+  contract: 'legal',
+  contracts: 'legal',
+  minutes: 'board',
+  board_pack: 'board',
+  permit: 'monitoring',
+  permits: 'monitoring',
+  financing: 'funding',
+  finance: 'funding',
+  business_plan: 'bp_model',
+  bp: 'bp_model',
+}
+
+function normalizeDocTypeFilter(docType?: string): string | null {
+  if (!docType) return null
+  const key = docType.trim().toLowerCase()
+  return DOC_TYPE_ALIASES[key] ?? key
+}
+
+function firstJoined<T>(value: MaybeJoined<T>): T | null {
+  if (Array.isArray(value)) return value[0] ?? null
+  return value ?? null
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function isRejectedSource(metadata: Record<string, unknown> | undefined): boolean {
+  return metadataString(metadata, 'review_status') === 'rejected' ||
+    metadataString(metadata, 'classification_source') === 'agent_rejected'
+}
+
+function needsReviewWarning(metadata: Record<string, unknown> | undefined): string {
+  const reviewStatus = metadataString(metadata, 'review_status') ?? 'approved'
+  const classificationSource = metadataString(metadata, 'classification_source') ?? 'human'
+  if (
+    (reviewStatus === 'pending' || reviewStatus === 'needs_review') &&
+    classificationSource.startsWith('agent')
+  ) {
+    return `[CRITICAL WARNING: This fragment comes from an agent-ingested source with review_status=${reviewStatus}. It has not been confirmed by a human. Treat it as unconfirmed context and disclose that limitation to the user.]`
+  }
+  return ''
 }
 
 // ─── System Prompt ──────────────────────────────────────────────────
@@ -140,7 +275,7 @@ const TOOLS: Anthropic.Tool[] = [
         },
         doc_type: {
           type: 'string',
-          description: 'Optional filter: capex, cash_flow, funding, bp_model, contract, minutes, permit',
+          description: 'Optional filter. Prefer corpus doc types: capex, cash_flow, funding, bp_model, legal, board, monitoring, financial_statements, asset_management.',
         },
       },
       required: ['query'],
@@ -227,6 +362,7 @@ async function executeSearchDocuments(
 ): Promise<ToolResult> {
   const supabase = createApiClient()
   const projectFilter = input.project_id || null
+  const docTypeFilter = normalizeDocTypeFilter(input.doc_type)
 
   // Parallel: vector search + keyword search
   const [vectorResults, keywordResults] = await Promise.all([
@@ -237,9 +373,9 @@ async function executeSearchDocuments(
           query_embedding: embedding,
           match_count: 25,
           filter_project: projectFilter,
-          filter_doc_type: null,
+          filter_doc_type: docTypeFilter,
         })
-        return (data || []).map((r: any) => ({
+        return ((data || []) as RetrievedChunk[]).map((r) => ({
           id: r.id,
           document_id: r.document_id,
           content: r.content,
@@ -257,13 +393,15 @@ async function executeSearchDocuments(
           filter_project: projectFilter,
           match_count: 15,
         })
-        return (data || []).map((r: any) => ({
-          id: r.id,
-          document_id: r.document_id,
-          content: r.content,
-          metadata: r.metadata || {},
-          similarity: r.rank,
-        }))
+        return ((data || []) as Array<RetrievedChunk & { rank?: number }>)
+          .filter((r) => !docTypeFilter || r.metadata?.doc_type === docTypeFilter)
+          .map((r) => ({
+            id: r.id,
+            document_id: r.document_id,
+            content: r.content,
+            metadata: r.metadata || {},
+            similarity: r.rank,
+          }))
       } catch {
         return []
       }
@@ -273,46 +411,45 @@ async function executeSearchDocuments(
   // Merge + dedup by id (vector results take precedence for similarity score)
   const merged = new Map<string, typeof vectorResults[0]>()
   for (const r of [...vectorResults, ...keywordResults]) {
+    if (isRejectedSource(r.metadata)) continue
     if (!merged.has(r.id)) merged.set(r.id, r)
   }
 
   const pool = Array.from(merged.values())
-  if (pool.length === 0) return { result: 'No relevant documents found.', sources: [] }
+  if (pool.length === 0) {
+    return {
+      result: 'No relevant documents found. Some documents may have been excluded because their review status is rejected.',
+      sources: [],
+    }
+  }
 
   // Cohere rerank on combined pool
-  const reranked = await rerankChunks(input.query, pool, 10)
+  const reranked = (await rerankChunks(input.query, pool, 10))
+    .filter(c => !isRejectedSource(c.metadata))
+    .map(c => {
+      const reviewStatus = metadataString(c.metadata, 'review_status') ?? 'approved'
+      const relevanceScore = reviewStatus === 'pending' || reviewStatus === 'needs_review'
+        ? c.relevanceScore * 0.85
+        : c.relevanceScore
+      return { ...c, relevanceScore }
+    })
+    .sort((a, b) => b.relevanceScore - a.relevanceScore)
 
-  // Resolve Storage URLs: source_file is a bare filename; construct path via project_id + doc_type
-  const sources: Source[] = reranked.map(c => {
-    const meta = c.metadata as any
-    let publicUrl: string | undefined
-    const srcFile = meta?.source_file || meta?.file_name
-    const projectId = meta?.project_id
-    const domain = meta?.doc_type || 'general'
-    if (srcFile && projectId) {
-      const { data } = supabase.storage
-        .from('documents')
-        .getPublicUrl(`${projectId}/${domain}/${srcFile}`)
-      publicUrl = data?.publicUrl
-    }
-    return {
+  const sources: Source[] = reranked.map(c =>
+    buildKnowledgeSource({
       id: c.id,
       relevance: c.relevanceScore,
-      metadata: { ...c.metadata, public_url: publicUrl },
+      metadata: c.metadata,
       preview: c.content.slice(0, 200),
-    }
-  })
+    })
+  )
 
   // Format chunks for Claude consumption
   const formatted = reranked
     .map((c, i) => {
-      const meta = c.metadata as any
-      const project = meta?.project_id || '?'
-      const docType = meta?.doc_type || '?'
-      const source = meta?.source_file || meta?.file_name || 'unknown'
-      const period = meta?.period ? ` | ${meta.period}` : ''
-      const header = `[Source ${i + 1}] ${project} | ${docType}${period} | ${source} (${(c.relevanceScore * 100).toFixed(0)}%)`
-      return `${header}\n${c.content}`
+      const header = sourceHeader(c.metadata ?? {}, c.relevanceScore, i)
+      const warning = needsReviewWarning(c.metadata)
+      return [header, warning, c.content].filter(Boolean).join('\n')
     })
     .join('\n\n---\n\n')
 
@@ -332,11 +469,12 @@ async function executeGetCapexSummary(input: { project_id: string }): Promise<To
 
   if (error) return { result: `Error fetching CapEx data: ${error.message}` }
   if (!data || data.length === 0) return { result: `No CapEx data found for ${input.project_id}.` }
+  const rows = data as CapexSnapshotRow[]
 
   const ccy = input.project_id === 'BHX' ? '£' : '€'
   const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
 
-  const totals = data.reduce(
+  const totals = rows.reduce(
     (acc, r) => ({
       budget: acc.budget + (Number(r.budget_baseline) || 0),
       approved: acc.approved + (Number(r.budget_approved_current) || 0),
@@ -355,12 +493,12 @@ async function executeGetCapexSummary(input: { project_id: string }): Promise<To
     : '0.0'
 
   let result = `### CapEx Summary — ${input.project_id}\n`
-  result += `Period: ${data[0]?.period_end_date || 'latest snapshot'}\n\n`
+  result += `Period: ${rows[0]?.period_end_date || 'latest snapshot'}\n\n`
   result += `**Totals:** Budget ${fmt(totals.budget)} | Approved ${fmt(totals.approved)} | Committed ${fmt(totals.committed)} | Paid ${fmt(totals.paid)} (${paidPct}%) | EAC ${fmt(totals.eac)} | Variance: ${Number(variance) >= 0 ? '+' : ''}${variance}%\n\n`
   result += `**By Category:**\n`
 
-  for (const r of data) {
-    const cat = (r as any).dim_capex_category
+  for (const r of rows) {
+    const cat = firstJoined(r.dim_capex_category)
     const catName = cat?.category_name || r.capex_category_id
     const catType = cat?.category_type ? ` (${cat.category_type})` : ''
     const bgt = Number(r.budget_baseline) || 0
@@ -385,12 +523,13 @@ async function executeGetFundingStatus(input: { project_id: string }): Promise<T
 
   if (error) return { result: `Error fetching funding data: ${error.message}` }
   if (!data || data.length === 0) return { result: `No funding data found for ${input.project_id}.` }
+  const rows = data as FundingSnapshotRow[]
 
   let result = `### Funding Status — ${input.project_id}\n`
-  result += `Period: ${data[0]?.period_end_date || 'latest snapshot'}\n\n`
+  result += `Period: ${rows[0]?.period_end_date || 'latest snapshot'}\n\n`
 
-  for (const r of data) {
-    const inst = (r as any).dim_funding_instrument
+  for (const r of rows) {
+    const inst = firstJoined(r.dim_funding_instrument)
     const ccy = inst?.currency === 'GBP' ? '£' : '€'
     const fmt = (v: number) => `${ccy}${(v / 1_000_000).toFixed(2)}M`
     const utilization = Number(r.committed_amount) > 0
@@ -475,12 +614,13 @@ async function executeGetCovenantStatus(input: { project_id: string }): Promise<
 
   if (error) return { result: `Error fetching covenant data: ${error.message}` }
   if (!data || data.length === 0) return { result: `No covenant data found for ${input.project_id}.` }
+  const rows = data as CovenantSnapshotRow[]
 
   let result = `### Covenant Status — ${input.project_id}\n\n`
 
   // Group by covenant_id, take most recent test
-  const latest = new Map<string, typeof data[0]>()
-  for (const r of data) {
+  const latest = new Map<string, CovenantSnapshotRow>()
+  for (const r of rows) {
     if (!latest.has(r.covenant_id)) latest.set(r.covenant_id, r)
   }
 
@@ -488,8 +628,8 @@ async function executeGetCovenantStatus(input: { project_id: string }): Promise<
   let warningCount = 0
 
   for (const r of latest.values()) {
-    const cov = (r as any).dim_covenant
-    const inst = (r as any).dim_funding_instrument
+    const cov = firstJoined(r.dim_covenant)
+    const inst = firstJoined(r.dim_funding_instrument)
     const status = r.breach_flag ? '🔴 BREACH' : r.warning_flag ? '🟡 WARNING' : '🟢 OK'
     if (r.breach_flag) breachCount++
     if (r.warning_flag) warningCount++
@@ -531,10 +671,11 @@ async function executeGetRiskRegister(
       result: `No risks found for ${input.project_id}${input.severity_min ? ` with severity ≥ ${input.severity_min}` : ''}.`,
     }
   }
+  const rows = data as RiskSnapshotRow[]
 
   // Take most recent snapshot per risk_id, then filter + sort by severity
-  const latest = new Map<string, typeof data[0]>()
-  for (const r of data) {
+  const latest = new Map<string, RiskSnapshotRow>()
+  for (const r of rows) {
     if (!latest.has(r.risk_id)) latest.set(r.risk_id, r)
   }
 
@@ -556,7 +697,7 @@ async function executeGetRiskRegister(
 
   let i = 1
   for (const r of risks) {
-    const cat = (r as any).dim_risk_category
+    const cat = firstJoined(r.dim_risk_category)
     const escalated = r.escalation_flag ? ' [ESCALATED]' : ''
     const impactCost = Number(r.impact_cost_eur) > 0 ? `, Impact Cost: €${(Number(r.impact_cost_eur) / 1_000_000).toFixed(2)}M` : ''
     const impactDays = Number(r.impact_days) > 0 ? `, Delay: ${r.impact_days} days` : ''
@@ -630,11 +771,12 @@ async function runAgentLoop(
   messages: Anthropic.MessageParam[],
   systemPrompt: string,
   anthropic: Anthropic
-): Promise<{ message: string; sources: Source[] }> {
+): Promise<{ message: string; sources: Source[]; toolCalls: ToolCallAudit[] }> {
   const allSources = new Map<string, Source>() // keyed by chunk id for dedup
   const loopMessages: Anthropic.MessageParam[] = [...messages]
+  const toolCalls: ToolCallAudit[] = []
 
-  for (let _iteration = 0; _iteration < 5; _iteration++) {
+  for (let iteration = 0; iteration < 5; iteration++) {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 4096,
@@ -646,7 +788,7 @@ async function runAgentLoop(
 
     if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
       const text = response.content.find(b => b.type === 'text')?.text ?? 'No response generated.'
-      return { message: text, sources: Array.from(allSources.values()) }
+      return { message: text, sources: Array.from(allSources.values()), toolCalls }
     }
 
     if (response.stop_reason === 'tool_use') {
@@ -660,7 +802,7 @@ async function runAgentLoop(
       // the API rejects an empty content array — treat as end_turn instead
       if (toolBlocks.length === 0) {
         const text = response.content.find(b => b.type === 'text')?.text ?? ''
-        return { message: text || 'No response generated.', sources: Array.from(allSources.values()) }
+        return { message: text || 'No response generated.', sources: Array.from(allSources.values()), toolCalls }
       }
       const toolResults = await Promise.all(
         toolBlocks.map(async block => {
@@ -674,13 +816,30 @@ async function runAgentLoop(
                 if (!allSources.has(s.id)) allSources.set(s.id, s)
               }
             }
+            toolCalls.push({
+              iteration: iteration + 1,
+              name: block.name,
+              input: block.input,
+              is_error: false,
+              source_count: sources?.length ?? 0,
+              result_preview: result.slice(0, 500),
+            })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.error(`Tool ${block.name} failed:`, err)
+            const message = err instanceof Error ? err.message : 'Unknown tool error'
+            toolCalls.push({
+              iteration: iteration + 1,
+              name: block.name,
+              input: block.input,
+              is_error: true,
+              source_count: 0,
+              result_preview: message.slice(0, 500),
+            })
             return {
               type: 'tool_result' as const,
               tool_use_id: block.id,
-              content: `Error executing ${block.name}: ${err.message}`,
+              content: `Error executing ${block.name}: ${message}`,
               is_error: true,
             }
           }
@@ -692,13 +851,14 @@ async function runAgentLoop(
     } else {
       // Unexpected stop reason (stop_sequence, etc.) — extract any text and return
       const text = response.content.find(b => b.type === 'text')?.text ?? ''
-      return { message: text || 'Unexpected stop.', sources: Array.from(allSources.values()) }
+      return { message: text || 'Unexpected stop.', sources: Array.from(allSources.values()), toolCalls }
     }
   }
 
   return {
     message: 'Maximum tool iterations reached. Please rephrase your question or ask about a specific aspect.',
     sources: Array.from(allSources.values()),
+    toolCalls,
   }
 }
 
@@ -731,7 +891,7 @@ export async function POST(request: NextRequest) {
     }))
 
     // Run agent loop
-    const { message: assistantContent, sources } = await runAgentLoop(
+    const { message: assistantContent, sources, toolCalls } = await runAgentLoop(
       historyMessages,
       SYSTEM_PROMPT,
       anthropic
@@ -760,8 +920,11 @@ export async function POST(request: NextRequest) {
           sources: sources.map(s => ({
             chunk_id: s.id,
             relevance: s.relevance,
+            label: s.label,
+            verification: s.verification,
             metadata: s.metadata,
           })),
+          tool_calls: toolCalls,
         },
       ])
     }
@@ -770,12 +933,14 @@ export async function POST(request: NextRequest) {
       message: assistantContent,
       conversationId: convId,
       sources,
+      toolCalls,
       entities,
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Chat API error:', err)
+    const message = err instanceof Error ? err.message : 'Internal server error'
     return NextResponse.json(
-      { error: err.message || 'Internal server error' },
+      { error: message },
       { status: 500 }
     )
   }

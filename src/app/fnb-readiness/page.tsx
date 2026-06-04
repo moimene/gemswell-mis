@@ -127,11 +127,13 @@ export default function FnBReadinessPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
+    let cancelled = false
     fetchReadiness(tab).then(data => {
+      if (cancelled) return
       setRows(data)
       setLoading(false)
     })
+    return () => { cancelled = true }
   }, [tab])
 
   const total = rows.length

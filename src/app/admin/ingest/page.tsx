@@ -154,8 +154,9 @@ export default function IngestPage() {
       } else {
         setQueueResult(`Error: ${data.error}`)
       }
-    } catch (err: any) {
-      setQueueResult(`Error: ${err.message}`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Queue request failed'
+      setQueueResult(`Error: ${message}`)
     } finally {
       setQueueing(false)
     }

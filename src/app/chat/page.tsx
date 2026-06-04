@@ -4,7 +4,14 @@ import { useState, useRef, useEffect } from 'react'
 type Message = {
   role: 'user' | 'assistant'
   content: string
-  sources?: { id: string; relevance: number; metadata: Record<string, unknown>; preview: string }[]
+  sources?: {
+    id: string
+    relevance: number
+    metadata: Record<string, unknown>
+    preview: string
+    label?: string
+    verification?: 'source_of_record' | 'supporting' | 'context' | 'unverified'
+  }[]
   entities?: { type: string; value: string }[]
 }
 
@@ -16,6 +23,21 @@ const SUGGESTED_QUERIES = [
   'Cash flow summary for both projects',
   '¿Cuál es el budget total del portfolio?',
 ]
+
+const VERIFICATION_LABELS = {
+  source_of_record: 'source of record',
+  supporting: 'supporting',
+  context: 'context',
+  unverified: 'unverified',
+} as const
+
+function sourceText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function sourceHref(src: NonNullable<Message['sources']>[number]): string | undefined {
+  return sourceText(src.metadata?.public_url)
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -62,10 +84,11 @@ export default function ChatPage() {
         sources: data.sources,
         entities: data.entities,
       }])
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Chat request failed'
       setMessages([...newMessages, {
         role: 'assistant',
-        content: `Error: ${err.message}. Make sure the API keys (ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY) are configured.`,
+        content: `Error: ${message}. Make sure the API keys (ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY) are configured.`,
       }])
     } finally {
       setLoading(false)
@@ -184,12 +207,43 @@ export default function ChatPage() {
                               src.relevance > 0.7 ? 'bg-green-500' :
                               src.relevance > 0.4 ? 'bg-amber-500' : 'bg-slate-300'
                             }`} />
-                            <span className="font-medium text-slate-600">
-                              {(src.metadata?.doc_type as string) || 'document'}
-                              {src.metadata?.project_id ? ` — ${String(src.metadata.project_id)}` : ''}
-                            </span>
+                            {sourceHref(src) ? (
+                              <a
+                                href={sourceHref(src)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-medium text-blue-700 hover:underline"
+                              >
+                                {src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'document'}
+                              </a>
+                            ) : (
+                              <span className="font-medium text-slate-600">
+                                {src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'document'}
+                              </span>
+                            )}
                             <span className="text-slate-400">{(src.relevance * 100).toFixed(0)}% relevant</span>
                           </div>
+                          <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                              {sourceText(src.metadata?.project_id) || 'project ?'}
+                            </span>
+                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                              {sourceText(src.metadata?.doc_type) || 'doc ?'}
+                            </span>
+                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                              {VERIFICATION_LABELS[src.verification || 'unverified']}
+                            </span>
+                            {src.metadata?.authority != null && (
+                              <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                                authority {String(src.metadata.authority)}
+                              </span>
+                            )}
+                          </div>
+                          {sourceText(src.metadata?.dms_path) && (
+                            <p className="mb-1 font-mono text-[10px] text-slate-400 truncate">
+                              {sourceText(src.metadata.dms_path)}
+                            </p>
+                          )}
                           <p className="text-slate-500 line-clamp-2">{src.preview}</p>
                         </div>
                       ))}

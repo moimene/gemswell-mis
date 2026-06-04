@@ -9,6 +9,22 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
+type ValidationNote = {
+  code?: string
+  message?: string
+}
+
+type Contradiction = {
+  id: string
+  metric_name?: string | null
+  project_id?: string | null
+  period_label?: string | null
+  severity: string
+  value_a?: number | null
+  value_b?: number | null
+  delta_pct?: number | null
+}
+
 type Candidate = {
   id: string
   metric_id: string
@@ -22,7 +38,7 @@ type Candidate = {
   authority_score: number | null
   status: string
   validation_status: string | null
-  validation_notes: any[] | null
+  validation_notes: ValidationNote[] | null
   created_at: string
   intel_metric_definition: {
     display_name: string
@@ -36,6 +52,9 @@ type Candidate = {
     title: string | null
     doc_type: string | null
     source_file: string | null
+    project_id?: string | null
+    dms_path?: string | null
+    authority?: number | null
   } | null
 }
 
@@ -48,7 +67,7 @@ type Stats = {
     validation_failed: number
     total: number
   }
-  contradictions: any[]
+  contradictions: Contradiction[]
   latest_run: {
     status: string
     started_at: string
@@ -226,10 +245,10 @@ function CandidateCard({
       {/* Validation warnings */}
       {expanded && candidate.validation_notes?.length && (
         <div className="mt-2 space-y-1">
-          {candidate.validation_notes.map((n: any, i: number) => (
+          {candidate.validation_notes.map((n, i) => (
             <div key={i} className="flex items-start gap-1.5 rounded bg-amber-50 p-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>[{n.code}] {n.message}</span>
+              <span>[{n.code || 'note'}] {n.message || String(n)}</span>
             </div>
           ))}
         </div>
@@ -306,7 +325,7 @@ function CandidateCard({
 // ─── Stats Bar ────────────────────────────────────────────────────────────
 
 function StatsBar({ stats }: { stats: Stats }) {
-  const { totals, latest_run, contradictions } = stats
+  const { totals, contradictions } = stats
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -329,7 +348,7 @@ function StatsBar({ stats }: { stats: Stats }) {
 
 // ─── Contradictions Panel ─────────────────────────────────────────────────
 
-function ContradictionsPanel({ contradictions }: { contradictions: any[] }) {
+function ContradictionsPanel({ contradictions }: { contradictions: Contradiction[] }) {
   if (!contradictions.length) return null
 
   const severityColor: Record<string, string> = {
@@ -346,7 +365,7 @@ function ContradictionsPanel({ contradictions }: { contradictions: any[] }) {
         <h3 className="text-sm font-semibold text-slate-900">Open Contradictions ({contradictions.length})</h3>
       </div>
       <div className="space-y-2">
-        {contradictions.slice(0, 8).map((c: any) => (
+        {contradictions.slice(0, 8).map(c => (
           <div key={c.id} className={cn('rounded border-l-4 p-2.5', severityColor[c.severity] || 'border-slate-300 bg-slate-50')}>
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -357,7 +376,7 @@ function ContradictionsPanel({ contradictions }: { contradictions: any[] }) {
                 <p className="text-xs font-mono text-slate-800">
                   {c.value_a?.toLocaleString()} vs {c.value_b?.toLocaleString()}
                 </p>
-                <p className="text-xs text-red-600">Δ {(c.delta_pct * 100).toFixed(1)}%</p>
+                <p className="text-xs text-red-600">Δ {((c.delta_pct ?? 0) * 100).toFixed(1)}%</p>
               </div>
             </div>
           </div>

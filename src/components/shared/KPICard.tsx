@@ -10,7 +10,7 @@ interface KPICardProps {
   className?: string
 }
 
-export function KPICard({ title, value, subtitle, rag, trend, className }: KPICardProps) {
+export function KPICard({ title, value, subtitle, rag, className }: KPICardProps) {
   return (
     <div className={cn('rounded-lg border bg-card p-4 shadow-sm', className)}>
       <div className="flex items-center justify-between">

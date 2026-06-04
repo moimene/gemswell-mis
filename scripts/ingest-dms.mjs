@@ -20,7 +20,7 @@ dotenv.config({ path: '.env.local' })
 import { createClient }  from '@supabase/supabase-js'
 import { GoogleGenAI }   from '@google/genai'
 import { readFile, readdir, stat, writeFile, unlink } from 'fs/promises'
-import { join, extname, basename } from 'path'
+import { join, extname } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { tmpdir } from 'os'

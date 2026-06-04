@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createApiClient } from '@/lib/supabase-server'
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Internal server error'
+}
+
 export async function GET() {
   try {
     const supabase = createApiClient()
@@ -56,8 +60,8 @@ export async function GET() {
       contradictions: contradictions || [],
       latest_run: latestRun || null,
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Stats API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
   }
 }

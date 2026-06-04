@@ -18,7 +18,7 @@ type FundingRow = {
     instrument_name: string
     instrument_type: string
     currency: string
-    total_facility: number
+    facility_limit: number
   } | null
 }
 

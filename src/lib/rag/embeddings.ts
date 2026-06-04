@@ -3,37 +3,135 @@ import { GoogleGenAI } from '@google/genai'
 // ─── Gemini Embedding ───────────────────────────────────────────────
 const MODEL = 'gemini-embedding-001'
 const DIMENSIONS = 768
+const REST_EMBEDDING_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:embedContent`
 
 let genai: GoogleGenAI | null = null
-function getGenAI() {
-  if (!genai) {
-    const key = process.env.GOOGLE_AI_API_KEY
-    if (!key) throw new Error('GOOGLE_AI_API_KEY not set')
-    genai = new GoogleGenAI({ apiKey: key })
-  }
+let embeddingLimiterTail: Promise<void> = Promise.resolve()
+let nextEmbeddingRequestAt = 0
+
+function numberEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function getApiKey(): string {
+  const key = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
+  if (!key) throw new Error('GOOGLE_AI_API_KEY not set')
+  return key
+}
+
+function getGenAI(): GoogleGenAI {
+  if (!genai) genai = new GoogleGenAI({ apiKey: getApiKey() })
   return genai
 }
 
-export async function embedText(text: string): Promise<number[]> {
-  const ai = getGenAI()
-  const result = await ai.models.embedContent({
-    model: MODEL,
-    contents: text,
-    config: { outputDimensionality: DIMENSIONS },
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function waitForEmbeddingSlot(): Promise<void> {
+  const minIntervalMs = numberEnv('GEMINI_EMBEDDING_MIN_INTERVAL_MS', 4000)
+  const run = embeddingLimiterTail.then(async () => {
+    const waitMs = nextEmbeddingRequestAt - Date.now()
+    if (waitMs > 0) await sleep(waitMs)
+    nextEmbeddingRequestAt = Date.now() + minIntervalMs
   })
-  return result.embeddings?.[0]?.values || []
+  embeddingLimiterTail = run.catch(() => undefined)
+  return run
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const maybe = err as { status?: number; message?: string }
+  const message = maybe.message ?? ''
+  return maybe.status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')
+}
+
+async function withEmbeddingRetry<T>(operation: () => Promise<T>): Promise<T> {
+  const maxRetries = numberEnv('GEMINI_EMBEDDING_MAX_RETRIES', 5)
+  const baseDelayMs = numberEnv('GEMINI_EMBEDDING_BASE_DELAY_MS', 2000)
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    await waitForEmbeddingSlot()
+    try {
+      return await operation()
+    } catch (err: unknown) {
+      if (!isRateLimitError(err) || attempt >= maxRetries) throw err
+      const maxDelay = baseDelayMs * 2 ** attempt
+      await sleep(Math.floor(Math.random() * maxDelay))
+    }
+  }
+
+  throw new Error('Gemini embedding retry loop exited unexpectedly')
+}
+
+function assertEmbeddingDimensions(embeddings: number[][]): number[][] {
+  const invalid = embeddings.find(embedding => embedding.length !== DIMENSIONS)
+  if (invalid) {
+    throw new Error(`Invalid Gemini embedding dimensions: ${embeddings.map(embedding => embedding.length).join(', ')}`)
+  }
+  return embeddings
+}
+
+async function embedTextsWithSdkBatch(texts: string[]): Promise<number[][]> {
+  const ai = getGenAI()
+  const result = await withEmbeddingRetry(() => ai.models.embedContent({
+    model: MODEL,
+    contents: texts,
+    config: { outputDimensionality: DIMENSIONS },
+  }))
+  return (result.embeddings ?? []).map(embedding => embedding.values ?? [])
+}
+
+async function embedTextWithRest(text: string): Promise<number[]> {
+  const response = await withEmbeddingRetry(async () => {
+    const res = await fetch(`${REST_EMBEDDING_URL}?key=${encodeURIComponent(getApiKey())}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: `models/${MODEL}`,
+        content: { parts: [{ text }] },
+        config: { outputDimensionality: DIMENSIONS },
+      }),
+    })
+
+    if (!res.ok) {
+      const body = await res.text()
+      const error = new Error(`Gemini embedding REST failed: ${res.status} ${body.slice(0, 500)}`) as Error & { status?: number }
+      error.status = res.status
+      throw error
+    }
+
+    return res.json() as Promise<{ embedding?: { values?: number[] } }>
+  })
+
+  return response.embedding?.values ?? []
+}
+
+export async function embedText(text: string): Promise<number[]> {
+  return (await embedBatch([text]))[0] ?? []
 }
 
 export async function embedBatch(texts: string[]): Promise<number[][]> {
-  // Gemini supports batch embedding — process in groups of 100
-  const results: number[][] = []
-  for (let i = 0; i < texts.length; i += 100) {
-    const batch = texts.slice(i, i + 100)
-    const promises = batch.map(t => embedText(t))
-    const batchResults = await Promise.all(promises)
-    results.push(...batchResults)
+  if (!texts.length) return []
+  for (const text of texts) {
+    if (!text.trim()) throw new Error('Cannot embed empty text')
   }
-  return results
+
+  const transport = process.env.GEMINI_EMBEDDING_TRANSPORT
+  const useRest = transport === 'rest' || texts.length === 1
+  const embeddings = useRest
+    ? await texts.reduce<Promise<number[][]>>(async (promise, text) => {
+      const results = await promise
+      results.push(await embedTextWithRest(text))
+      return results
+    }, Promise.resolve([]))
+    : await embedTextsWithSdkBatch(texts)
+
+  if (embeddings.length !== texts.length) {
+    throw new Error(`Gemini embedding count mismatch: expected ${texts.length}, got ${embeddings.length}`)
+  }
+
+  return assertEmbeddingDimensions(embeddings)
 }
 
 // ─── Financial-Aware Chunking ───────────────────────────────────────
@@ -45,6 +143,17 @@ export type ChunkMetadata = {
   category?: string        // CapEx category name
   section?: string         // 'summary' | 'detail' | 'assumptions'
   source_file?: string
+  document_id?: string
+  source_hash?: string
+  source_channel?: string
+  review_status?: string
+  classification_source?: string
+  lifecycle?: string
+  authority_tier?: string
+  authority_score?: number
+  parser_used?: string
+  ocr_used?: boolean
+  md_path?: string
   chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary'
 }
 

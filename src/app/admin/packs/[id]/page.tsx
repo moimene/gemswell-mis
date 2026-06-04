@@ -35,7 +35,7 @@ type Candidate = {
   confidence: number
   authority_score: number | null
   status: string
-  validation_notes: string | null
+  validation_notes: ValidationNotes
   context_snippet: string | null
   intel_metric_definition: {
     display_name: string
@@ -46,8 +46,13 @@ type Candidate = {
     title: string | null
     doc_type: string | null
     source_file: string | null
+    project_id?: string | null
+    dms_path?: string | null
+    authority?: number | null
   } | null
 }
+
+type ValidationNotes = string | Array<{ code?: string; message?: string } | string> | null
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -94,7 +99,17 @@ function AuthBadge({ score }: { score: number | null }) {
 }
 
 function isProvisional(c: Candidate) {
-  return c.validation_notes?.toLowerCase().includes('provisional') || c.confidence < 0.75
+  return validationNotesText(c.validation_notes).toLowerCase().includes('provisional') || c.confidence < 0.75
+}
+
+function validationNotesText(notes: ValidationNotes) {
+  if (Array.isArray(notes)) {
+    return notes
+      .map(note => typeof note === 'string' ? note : note.message || note.code || '')
+      .filter(Boolean)
+      .join('; ')
+  }
+  return notes || ''
 }
 
 function fmtValue(c: Candidate) {
@@ -230,7 +245,7 @@ function MetricRow({ candidate, index }: { candidate: Candidate; index: number }
               )}
               {/* Notes */}
               {candidate.validation_notes && (
-                <p className="text-xs text-slate-500 italic">{candidate.validation_notes}</p>
+                <p className="text-xs text-slate-500 italic">{validationNotesText(candidate.validation_notes)}</p>
               )}
             </div>
           </td>
@@ -297,6 +312,7 @@ const SEV_DOT: Record<string, string> = {
 
 function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
   const [open, setOpen] = useState(true)
+  const [now] = useState(() => Date.now())
   const { summary } = rec
   if (summary.total_items === 0 && summary.published_count > 0) return null
 
@@ -387,7 +403,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
                     <div key={c.id} className="flex items-center justify-between rounded bg-amber-50 border border-amber-200 px-3 py-2">
                       <div>
                         <p className="text-xs font-medium text-slate-800">{def?.display_name || c.metric_id}</p>
-                        <p className="text-xs text-slate-500">{c.validation_notes}</p>
+                        <p className="text-xs text-slate-500">{validationNotesText(c.validation_notes)}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-amber-700 tabular-nums">
@@ -429,7 +445,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
                 {rec.stale.map(c => {
                   const def = c.intel_metric_definition
                   const ageMonths = c.period_date
-                    ? Math.round((Date.now() - new Date(c.period_date).getTime()) / (1000 * 3600 * 24 * 30))
+                    ? Math.round((now - new Date(c.period_date).getTime()) / (1000 * 3600 * 24 * 30))
                     : null
                   return (
                     <div key={c.id} className="flex items-center justify-between rounded bg-slate-50 border border-slate-200 px-3 py-2">
@@ -678,7 +694,7 @@ export default function PackGroundingPage() {
                       {c.status}
                     </span>
                   </td>
-                  <td className="py-2.5 pr-4 text-xs text-slate-500">{c.validation_notes || '—'}</td>
+                  <td className="py-2.5 pr-4 text-xs text-slate-500">{validationNotesText(c.validation_notes) || '—'}</td>
                 </tr>
               ))}
             </tbody>

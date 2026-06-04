@@ -1,5 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createApiClient } from '@/lib/supabase-server'
+import { attachGroundedDocument, firstJoined, type MaybeJoined } from '@/lib/intel/grounding'
+
+type MetricDefinition = {
+  display_name: string
+  domain: string
+  project_id: string
+  unit: string
+  target_table: string
+  target_column: string
+  extraction_hint: string | null
+}
+
+type CandidateRow = {
+  id: string
+  intel_metric_definition?: MaybeJoined<MetricDefinition>
+  rag_documents?: MaybeJoined<{
+    title: string | null
+    source_type: string | null
+  }>
+  rag_chunks?: MaybeJoined<{
+    metadata: Record<string, unknown> | null
+  }>
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Internal server error'
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -46,9 +73,10 @@ export async function GET(request: NextRequest) {
         ),
         rag_documents!rag_document_id (
           title,
-          doc_type,
-          source_file,
-          project_id
+          source_type
+        ),
+        rag_chunks!rag_chunk_id (
+          metadata
         )
       `)
       .order('created_at', { ascending: false })
@@ -74,23 +102,23 @@ export async function GET(request: NextRequest) {
     }
 
     // Post-filter by project/domain (joined fields)
-    let filtered = data || []
+    let filtered = ((data || []) as CandidateRow[]).map(attachGroundedDocument)
 
     if (project && project !== 'all') {
-      filtered = filtered.filter((c: any) =>
-        c.intel_metric_definition?.project_id === project
+      filtered = filtered.filter(candidate =>
+        firstJoined(candidate.intel_metric_definition)?.project_id === project
       )
     }
 
     if (domain && domain !== 'all') {
-      filtered = filtered.filter((c: any) =>
-        c.intel_metric_definition?.domain === domain
+      filtered = filtered.filter(candidate =>
+        firstJoined(candidate.intel_metric_definition)?.domain === domain
       )
     }
 
     return NextResponse.json({ candidates: filtered, total: filtered.length })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Candidates API error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
   }
 }

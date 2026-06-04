@@ -60,6 +60,63 @@ type Project = {
   stage: string; status_rag: RAGColor; opening_target: string
 }
 type CapexSum = Record<string, { budget: number; approved: number; committed: number; invoiced: number; paid: number; eac: number }>
+type CashFlowSummary = Awaited<ReturnType<typeof getCashFlowSummary>>
+
+type MaybeJoined<T> = T | T[] | null | undefined
+
+type OwnerJoin = MaybeJoined<{
+  full_name: string | null
+}>
+
+type DashboardTask = {
+  id: string
+  project_id: string
+  task_id: string
+  as_of_week_ending: string
+  forecast_finish: string | null
+  percent_complete: number | null
+  status_code: string
+  blocked_flag: boolean
+  blocker_reason: string | null
+  impact_days_on_opening: number | null
+  dim_task?: MaybeJoined<{
+    task_name: string | null
+    criticality_level: string | null
+    opening_gate_flag: boolean | null
+    baseline_finish: string | null
+  }>
+}
+
+type DashboardDecision = {
+  id: string
+  decision_id: string | null
+  project_id: string
+  decision_topic: string | null
+  decision_text: string | null
+  meeting_type: string | null
+  implementation_due: string | null
+  status_code: string
+  dim_owner?: OwnerJoin
+}
+
+type DashboardAction = {
+  id: string
+  action_id: string | null
+  project_id: string
+  action_title: string | null
+  due_date: string | null
+  action_status_id: string
+  dim_owner?: OwnerJoin
+}
+
+function firstJoined<T>(value: MaybeJoined<T>): T | null {
+  if (Array.isArray(value)) return value[0] ?? null
+  return value ?? null
+}
+
+function ownerName(owner: OwnerJoin): string {
+  return firstJoined(owner)?.full_name || 'Sin asignar'
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────
 
@@ -106,10 +163,10 @@ function ProgressBar({ pct, color = '#0B4A6F', thin = false }: { pct: number; co
 export default function CEODashboard() {
   const [projects,  setProjects]  = useState<Project[]>([])
   const [capex,     setCapex]     = useState<CapexSum>({})
-  const [cashFlow,  setCashFlow]  = useState<Record<string, any>>({})
-  const [tasks,     setTasks]     = useState<any[]>([])
-  const [decisions, setDecisions] = useState<any[]>([])
-  const [actions,   setActions]   = useState<any[]>([])
+  const [cashFlow,  setCashFlow]  = useState<CashFlowSummary>({})
+  const [tasks,     setTasks]     = useState<DashboardTask[]>([])
+  const [decisions, setDecisions] = useState<DashboardDecision[]>([])
+  const [actions,   setActions]   = useState<DashboardAction[]>([])
   const [loading,   setLoading]   = useState(true)
 
   useEffect(() => {
@@ -144,8 +201,8 @@ export default function CEODashboard() {
       ])
 
       // Deduplicate tasks → latest snapshot per task_id
-      const byTask: Record<string, any> = {}
-      for (const t of taskData || []) {
+      const byTask: Record<string, DashboardTask> = {}
+      for (const t of (taskData || []) as unknown as DashboardTask[]) {
         if (!byTask[t.task_id] || t.as_of_week_ending > byTask[t.task_id].as_of_week_ending) {
           byTask[t.task_id] = t
         }
@@ -153,16 +210,19 @@ export default function CEODashboard() {
       const latest = Object.values(byTask)
       // Critical tasks: L0 gates + blocked, sorted by impact
       const critical = latest
-        .filter(t => t.dim_task?.opening_gate_flag || t.dim_task?.criticality_level === 'L0' || t.blocked_flag)
+        .filter(t => {
+          const task = firstJoined(t.dim_task)
+          return task?.opening_gate_flag || task?.criticality_level === 'L0' || t.blocked_flag
+        })
         .sort((a, b) => (b.impact_days_on_opening || 0) - (a.impact_days_on_opening || 0))
         .slice(0, 8)
 
-      setProjects(pData || [])
+      setProjects((pData || []) as Project[])
       setCapex(capexData)
       setCashFlow(cfData)
       setTasks(critical)
-      setDecisions(decData || [])
-      setActions(actData || [])
+      setDecisions((decData || []) as DashboardDecision[])
+      setActions((actData || []) as DashboardAction[])
       setLoading(false)
     }
     load()
@@ -183,11 +243,6 @@ export default function CEODashboard() {
   const week = isoWeek(now)
   const year = now.getFullYear()
   const dateLabel = now.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-
-  // Portfolio totals for footer / capex section
-  const totalBudget   = Object.values(capex).reduce((s, p) => s + p.budget, 0)
-  const totalCommitted = Object.values(capex).reduce((s, p) => s + p.committed, 0)
-  const totalPaid     = Object.values(capex).reduce((s, p) => s + p.paid, 0)
 
   // Separate tasks by project for the two tables
   const tasksMad = tasks.filter(t => t.project_id === 'MAD').slice(0, 5)
@@ -439,7 +494,7 @@ export default function CEODashboard() {
                             </span>
                           </div>
                           <p className="text-[12px] text-slate-800 leading-snug">{d.decision_topic}</p>
-                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">{(d.dim_owner as any)?.full_name || 'Sin asignar'}</p>
+                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">{ownerName(d.dim_owner)}</p>
                         </div>
                         <div className="shrink-0 text-right">
                           <span className={cn('font-mono text-[10px]', isOverdue ? 'text-red-600 font-bold' : 'text-slate-400')}>
@@ -487,7 +542,7 @@ export default function CEODashboard() {
                             </span>
                           </div>
                           <p className="text-[12px] text-slate-800 leading-snug">{a.action_title}</p>
-                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">{(a.dim_owner as any)?.full_name || 'Sin asignar'}</p>
+                          <p className="font-mono text-[10px] text-slate-400 mt-0.5">{ownerName(a.dim_owner)}</p>
                         </div>
                         <div className="shrink-0 text-right">
                           <span className={cn('font-mono text-[10px]', isOverdue || isUrgent ? 'text-red-600 font-bold' : 'text-slate-400')}>
@@ -528,7 +583,7 @@ export default function CEODashboard() {
 
 // ─── Task Table ───────────────────────────────────────────────────────────
 
-function TaskTable({ tasks, emptyMsg }: { tasks: any[]; emptyMsg: string }) {
+function TaskTable({ tasks, emptyMsg }: { tasks: DashboardTask[]; emptyMsg: string }) {
   if (tasks.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 bg-white p-6 text-center">
@@ -552,9 +607,9 @@ function TaskTable({ tasks, emptyMsg }: { tasks: any[]; emptyMsg: string }) {
         </thead>
         <tbody>
           {tasks.map((t, i) => {
-            const task      = t.dim_task || {}
+            const task      = firstJoined(t.dim_task)
             const rag       = STATUS_CODE_RAG[t.status_code] || 'Grey'
-            const baseDate  = task.baseline_finish
+            const baseDate  = task?.baseline_finish
             const foreDate  = t.forecast_finish
             const slip      = baseDate && foreDate
               ? Math.ceil((new Date(foreDate).getTime() - new Date(baseDate).getTime()) / 86400000)
@@ -566,7 +621,7 @@ function TaskTable({ tasks, emptyMsg }: { tasks: any[]; emptyMsg: string }) {
                   {t.task_id}
                 </td>
                 <td className="px-3 py-2.5 font-medium text-slate-800 max-w-[180px]">
-                  <span className="line-clamp-2 leading-snug">{task.task_name || '—'}</span>
+                  <span className="line-clamp-2 leading-snug">{task?.task_name || '—'}</span>
                   {t.blocked_flag && (
                     <span className="flex items-center gap-1 font-mono text-[10px] text-red-600 mt-0.5">
                       <AlertTriangle className="h-2.5 w-2.5" /> bloqueado

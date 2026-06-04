@@ -83,7 +83,7 @@ export async function getFundingByProject(projectId: string) {
   const supabase = createClient()
   const { data, error } = await supabase
     .from('fct_funding_snapshot')
-    .select('*, dim_funding_instrument(instrument_name, instrument_type, currency, total_facility)')
+    .select('*, dim_funding_instrument(instrument_name, instrument_type, currency, facility_limit)')
     .eq('project_id', projectId)
   if (error) throw error
   return data

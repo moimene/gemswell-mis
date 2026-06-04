@@ -102,19 +102,18 @@ export default function RisksPage() {
 
   const today = new Date().toISOString().split('T')[0]
 
-  async function load() {
-    setLoading(true)
+  async function fetchRiskState(project: ProjectTab) {
     const supabase = createClient()
     const [{ data: riskData }, { data: actionData }] = await Promise.all([
       supabase
         .from('fct_risk_snapshot')
         .select('*, dim_owner(full_name, department), dim_risk_category(category_name, scope)')
-        .eq('project_id', activeProject)
+        .eq('project_id', project)
         .order('as_of_date', { ascending: false }),
       supabase
         .from('fct_action_snapshot')
         .select('*, dim_owner(full_name), dim_action_status(status_name, is_closed)')
-        .eq('project_id', activeProject)
+        .eq('project_id', project)
         .order('as_of_date', { ascending: false }),
     ])
 
@@ -133,12 +132,27 @@ export default function RisksPage() {
       }, {})
     )
 
-    setRisks(latestRisks)
-    setActions(latestActions)
+    return { risks: latestRisks, actions: latestActions }
+  }
+
+  async function load() {
+    setLoading(true)
+    const data = await fetchRiskState(activeProject)
+    setRisks(data.risks)
+    setActions(data.actions)
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [activeProject]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let cancelled = false
+    fetchRiskState(activeProject).then(data => {
+      if (cancelled) return
+      setRisks(data.risks)
+      setActions(data.actions)
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [activeProject])
 
   const openRisks = risks.filter(r => r.status_code !== 'CP')
   const criticalRisks = risks.filter(r => r.severity_score >= 13)
