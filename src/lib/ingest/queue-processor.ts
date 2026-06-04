@@ -349,6 +349,10 @@ export async function processIngestQueueItem(
       }
     }
 
+    if (insertedChunks !== chunks.length) {
+      throw new Error(`Embedding incomplete: inserted ${insertedChunks}/${chunks.length} chunks (${failedBatches} failed batches)`)
+    }
+
     await supabase
       .from('rag_documents')
       .update({ status: 'indexed', chunk_count: insertedChunks })
@@ -389,8 +393,13 @@ export async function processIngestQueueItem(
 
     if (documentId) {
       await supabase
+        .from('rag_chunks')
+        .delete()
+        .eq('document_id', documentId)
+
+      await supabase
         .from('rag_documents')
-        .update({ status: 'error' })
+        .update({ status: 'error', chunk_count: 0 })
         .eq('id', documentId)
     }
 

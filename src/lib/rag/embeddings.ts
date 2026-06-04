@@ -84,13 +84,16 @@ async function embedTextsWithSdkBatch(texts: string[]): Promise<number[][]> {
 
 async function embedTextWithRest(text: string): Promise<number[]> {
   const response = await withEmbeddingRetry(async () => {
-    const res = await fetch(`${REST_EMBEDDING_URL}?key=${encodeURIComponent(getApiKey())}`, {
+    const res = await fetch(REST_EMBEDDING_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': getApiKey(),
+      },
       body: JSON.stringify({
         model: `models/${MODEL}`,
         content: { parts: [{ text }] },
-        config: { outputDimensionality: DIMENSIONS },
+        outputDimensionality: DIMENSIONS,
       }),
     })
 
