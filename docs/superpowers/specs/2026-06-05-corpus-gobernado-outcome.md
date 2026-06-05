@@ -20,6 +20,7 @@ Plan: `../plans/2026-06-05-corpus-gobernado-foundation.md`
 | Adversarial fixes F2/F4/F5/F7/F8 | `cccc186` | trust-boundary hardening |
 | Adversarial fixes F1/F3 (migration 006) | `2ecbc26` | RPC parent-first |
 | Adversarial fix F6 (migration 007 + drain) | `0fb85cc` | backfill convergence |
+| Codex pass-2 fixes CX-1..CX-5 (migration 008) | `8d69d9a` | strict gov override + sticky agent_rejected + final-update guard + transient retry |
 
 ## Mid-flight incidents handled
 - **Concurrent session collision**: another session added a 5-arg `match_chunks(... match_threshold)` overload via raw SQL while this work ran, making the chat's RPC call ambiguous ("function is not unique") → chat broken. Resolved by unifying into a single 5-arg function that merges their threshold(0.18)+authority-ordering with this work's `NULLIF` un-shadow + `status='indexed'` exclusion (migration `unify_match_chunks_threshold_governance`). Their `5b048af "Sanitize chat RAG quality governance"` is a legitimate ancestor of this branch (integrated via git history).
@@ -38,6 +39,17 @@ Swarm `swarm-1780667905126-o389nh` (hierarchical-mesh, 4 reviewer agents registe
 - **F8 (MED)** `doc_type` enum drift between classify and contracts. Fixed: single `DOC_TYPES` source of truth.
 
 Deferred to spec C (chat consolidation): rerank `reviewPenalty` vs additive `authorityBoost` can let an unreviewed high-authority doc outrank an approved one; `match_threshold 0.18` is below the corpus cosine floor (inert knob); minor `liftUpFromChunks` garbage-coercion guards.
+
+## Codex pass-2 (independent second-opinion review, 2026-06-05)
+After ruflo-swarm fixes landed, Codex (gpt-5.5, medium reasoning, scope limited to the 5 changed files) found 5 additional real issues — all fixed in commit `8d69d9a` + migration 008:
+
+- **CX-1 (HIGH, latent)** `sql/006` `jsonb_strip_nulls(...)` dropped null governance overrides, leaving stale chunk-side metadata visible. Fixed in `sql/008`: two-stage merge — `strip_nulls` only on reconcilable fields (`project_id/doc_type/period`); governance is always parent-only, even when null (NULL→fail-closed via `source-reference.ts`).
+- **CX-2 (HIGH, preventive)** backfill could overwrite human/agent_reviewed/agent_corrected decisions. Fixed: pool excludes those + rejected.
+- **CX-3 (MED)** sticky-rejection only fired on `review_status='rejected'`, not on `classification_source='agent_rejected'`. Fixed: both signals now sticky.
+- **CX-4 (CRITICAL)** final `rag_documents.update()` error was silently ignored — queue could be marked `done` while doc stayed `processing` (invisible to chat). Fixed: capture + throw, outer catch marks both `error`.
+- **CX-5 (MED)** transient Haiku failures marked `governance_backfilled_at` → never retried. Fixed: leave NULL on classifier failure so next drain run picks it up.
+
+Codex's first pass with `high` reasoning hung >50 min (known issue per `/codex` skill — OpenAI #8545/#8402/#6931); retried with `medium` reasoning + acotated scope produced these 5 in <30s. Pattern lesson: prefer `medium` for diff-heavy reviews.
 
 ## Final state
 - match_chunks / keyword_search_chunks: single overload each, parent-first, trust-parent authority, exclude rejected + retired + agent_rejected.
