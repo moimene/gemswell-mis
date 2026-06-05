@@ -147,7 +147,8 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
       // doc could retire an approved indexed one, leaving the corpus with no retrievable successor.
       if (current.status !== 'indexed' || current.review_status === 'rejected')
         throw new InvalidTransitionError('the superseding document must be indexed and not rejected')
-      const newVersion = Math.max(current.current_version, supersede.oldDoc.current_version + 1)
+      // always advance past the current revision (CX-B3 optimistic lock) and past the old chain
+      const newVersion = Math.max(current.current_version + 1, supersede.oldDoc.current_version + 1)
       return {
         patch: { supersedes_document_id: supersede.oldId, current_version: newVersion },
         related: { id: supersede.oldId, patch: { status: RETIRED_STATUS, lifecycle: 'superseded' } },
