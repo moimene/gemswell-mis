@@ -146,14 +146,17 @@ async function reserveRagDocument(
   if (error && (error as { code?: string }).code === '23505') {
     const { data: existing, error: existingError } = await supabase
       .from('rag_documents')
-      .select('id, review_status')
+      .select('id, review_status, classification_source')
       .eq('source_hash', sourceHash)
       .maybeSingle()
 
     if (existingError) throw new Error(`rag_documents source_hash lookup failed: ${existingError.message}`)
     if (existing) {
-      const document = existing as RagDocumentInsert & { review_status?: string }
-      if (document.review_status === 'rejected') {
+      const document = existing as RagDocumentInsert & { review_status?: string; classification_source?: string }
+      // CX-3: defense-in-depth — agent_rejected is the second rejection signal the chat RPCs
+      // already exclude, so a re-ingest of an agent-rejected doc must also be sticky (else
+      // governance can be silently overwritten).
+      if (document.review_status === 'rejected' || document.classification_source === 'agent_rejected') {
         return { id: document.id, reused: true, rejected: true }
       }
       await supabase.from('rag_chunks').delete().eq('document_id', document.id)
@@ -402,7 +405,11 @@ export async function processIngestQueueItem(
       throw new Error(`Embedding incomplete: inserted ${insertedChunks}/${chunks.length} chunks (${failedBatches} failed batches)`)
     }
 
-    await supabase
+    // CX-4: silently ignoring this error would mark the queue item 'done' while
+    // rag_documents.status stays 'processing' — the chat RPCs filter status='indexed', so the
+    // doc + chunks become invisible. Throw and let the outer catch mark both rows 'error'
+    // so the queue can be retried.
+    const { error: finalUpdateErr } = await supabase
       .from('rag_documents')
       .update({
         status: 'indexed',
@@ -420,6 +427,7 @@ export async function processIngestQueueItem(
         period: cls?.result.period ?? null,
       })
       .eq('id', documentId)
+    if (finalUpdateErr) throw new Error(`rag_documents final update failed: ${finalUpdateErr.message}`)
 
     await supabase
       .from('ingest_queue')

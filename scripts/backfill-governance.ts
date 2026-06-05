@@ -51,10 +51,15 @@ async function main() {
   // marked rule-resolved docs and caused re-processing + duplicate events). F6.
   for (;;) {
     if (processed >= cap) break
+    // CX-2: never overwrite human/agent_reviewed/agent_corrected decisions, never re-touch
+    // rejected docs (sticky-rejection). Only the auto-classified pool is eligible to be
+    // (re-)processed by the backfill.
     const { data, error } = await supabase
       .from('rag_documents')
       .select('id, title, doc_type, authority_score')
       .is('governance_backfilled_at', null)
+      .not('review_status', 'eq', 'rejected')
+      .in('classification_source', ['rule', 'agent_auto'])
       .order('id', { ascending: true })
       .limit(Math.min(page, cap - processed))
     if (error) throw new Error(error.message)
@@ -85,6 +90,9 @@ async function main() {
       let period: string | null = lifted.period
       let source = 'rule'
 
+      // CX-5: when Haiku fails (transient API issue, rate-limit storm), do NOT mark this doc
+      // as governance_backfilled_at — that would burn the chance to retry on a later run.
+      let classifierFailedTransiently = false
       const ambiguous = !docType || docType === 'other' || tier === 'unverified'
       if (ambiguous) {
         const sample = chunks.slice(0, 6).map(c => c.content ?? '').join('\n').slice(0, 4000)
@@ -93,6 +101,7 @@ async function main() {
           cls = await classifyWithRetry({ title: doc.title ?? '', sample, dmsFolder: lifted.dms_folder })
         } catch (e) {
           failed++
+          classifierFailedTransiently = true
           console.error(`[backfill] classify failed for ${doc.id}: ${(e as Error).message}`)
         }
         if (cls) {
@@ -130,7 +139,9 @@ async function main() {
           topics,
           currency,
           lifecycle,
-          governance_backfilled_at: new Date().toISOString(),
+          // CX-5: only mark the row as backfilled when classification succeeded (or wasn't needed).
+          // On transient Haiku failure, leave it NULL so the next run retries this doc.
+          governance_backfilled_at: classifierFailedTransiently ? null : new Date().toISOString(),
         }
         const { error: upErr } = await supabase.from('rag_documents').update(update).eq('id', doc.id)
         // A persistent update failure would otherwise re-fetch the same NULL row forever — stop instead.
