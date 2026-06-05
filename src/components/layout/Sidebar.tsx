@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Briefcase, Building2, GitBranch,
   Banknote, Shield, Utensils, Tag, BarChart3,
   AlertTriangle, FileText, MessageSquare, Upload, ChevronLeft, ChevronRight,
-  FlaskConical, Layers
+  FlaskConical, Layers, FolderCheck
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -33,6 +33,7 @@ const navSections = [
       { label: 'Document Bot', href: '/chat', icon: MessageSquare },
       { label: 'Document Ingestion', href: '/admin/ingest', icon: Upload },
       { label: 'Evidence Review', href: '/admin/review', icon: FlaskConical },
+      { label: 'Gestor Documental', href: '/admin/documents', icon: FolderCheck },
       { label: 'Pack Grounding',  href: '/admin/packs',  icon: Layers },
     ],
   },
