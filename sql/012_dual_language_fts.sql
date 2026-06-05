@@ -56,10 +56,12 @@ language sql stable as $$
   limit match_count;
 $$;
 
--- Post-migration backfill (run once, then drop scaffolding):
+-- Post-migration backfill — STATUS: DONE 2026-06-05 (all 156,898 fts cells rebuilt; scaffolding dropped).
+-- Recipe (for any future rebuild):
 --   alter table rag_chunks add column if not exists fts_done boolean not null default false;
 --   drop index if exists idx_rag_chunks_fts;
---   -- loop scripts/backfill-fts.ts (calls backfill_fts_batch) until 0 remaining
+--   -- loop scripts/backfill-fts.ts (calls a temp SECURITY DEFINER backfill_fts_batch) until 0 remaining
 --   create index idx_rag_chunks_fts on rag_chunks using gin(fts);
 --   alter table rag_chunks drop column fts_done;
---   drop function backfill_fts_batch(integer);
+--   drop function backfill_fts_batch(integer);          -- MUST drop (SECURITY DEFINER, CX-B1-class)
+--   drop index if exists idx_rag_chunks_fts_simple;     -- dead: old RPC's inline 'simple' vector index
