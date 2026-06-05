@@ -15,7 +15,8 @@ El diseño original (A+B) se aprobó **antes** de la doble pasada adversarial de
 - `classification_source`: agent_auto 3.639 + rule 1.859 → **0 docs validados por humano** → **0 `source_of_record` hoy**, pese a 831 docs con authority≥90.
 - De esos **831** (authority≥90): **797 ya `approved`** (machine) + **34 en needs_review**. Endosar los 797 = activación casi inmediata de `source_of_record`.
 - `supersedes_document_id`: 0 usados. `md_path` / `source_hash`: solo **2 docs** (reconstrucción de markdown es la norma; salud %markdown ≈ 0).
-- Columnas de gobierno + enriquecimiento (`summary/topics/currency/entity_ids`) + `supersedes_document_id` + `current_version` + tabla `rag_document_events`: **TODAS existen** (migraciones 005–008). **B no requiere migraciones de gobierno nuevas.**
+- Columnas de gobierno + enriquecimiento (`summary/topics/currency/entity_ids`) + `supersedes_document_id` + `current_version` + tabla `rag_document_events`: **TODAS existen** (migraciones 005–008).
+- ⚠️ **CORRECCIÓN (verificación en vivo 2026-06-05):** la suposición "`status` admite `'retired'`" era **falsa** — existía un CHECK `rag_documents_status_check` que solo permitía `pending|processing|indexed|error`. El retire/restore/supersede lo necesita. **B SÍ requiere una migración**: `sql/009_status_allow_retired.sql` (= migración `allow_retired_document_status`, ya aplicada) que añade `'retired'` al constraint. Es aditiva y segura (todas las filas eran `indexed`); el RPC ya filtra `status='indexed'`, así que un doc `retired` queda excluido del chat sin tocar el RPC.
 - Enums vivos: `review_status_enum` {pending, approved, rejected, needs_review}; `classification_source_enum` {human, rule, agent_auto, agent_reviewed, agent_corrected, agent_rejected}; `lifecycle_enum` incluye **`superseded`**; `authority_tier_enum` {audited, executed, controller, board_pack, dd_memo, internal, narrative, unverified}.
 
 ## 2. Decisiones cerradas (esta sesión)
@@ -35,7 +36,7 @@ El diseño original (A+B) se aprobó **antes** de la doble pasada adversarial de
 - **§9 Retirar/Restaurar**: `status` retired/indexed; el RPC filtra `status='indexed'`. Confirmado.
 - **§7 health "cola 2406/267/2"**: cifras de abril; el dashboard las lee **en vivo** de la cola (reusa la lógica de `/api/ingest/queue`). No hardcodear.
 - **§8 visor markdown**: solo 2 docs con `md_path` → reconstrucción por concatenación de `rag_chunks.content` ordenado por `chunk_index` es la vía v1 (base: `src/lib/knowledge/markdown-artifact.ts`). Etiquetar "markdown reconstruido (no es el artifact original)".
-- **Migraciones**: B no necesita DDL de gobierno. Posible micro-migración **solo** si el plan decide índices para la query de listado (p.ej. sobre `review_status / doc_type / project_id / authority_score`) — a decidir en writing-plans, no obligatorio.
+- **Migraciones**: una migración obligatoria — `009_status_allow_retired.sql` (constraint `status`, ver §1). Opcional: índices para la query de listado (`review_status / doc_type / project_id / authority_score`) — no obligatorio.
 
 ## 4. Alcance de construcción (lo que planificará writing-plans)
 **APIs** (server, sin auth esta fase) — nuevo árbol `src/app/api/knowledge/...`:

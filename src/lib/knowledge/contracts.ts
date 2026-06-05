@@ -46,6 +46,16 @@ export const DOC_TYPES = [
 
 export type DocType = typeof DOC_TYPES[number]
 
+/** Allow-listed project ids (mirrors the project taxonomy; reclassify validates against this). */
+export const PROJECT_IDS = ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'] as const
+export type ProjectId = typeof PROJECT_IDS[number]
+
+/** Allow-listed lifecycle values (mirrors the lifecycle_enum DB type). */
+export const LIFECYCLES = ['draft', 'signed', 'executed', 'filed', 'audited', 'working_paper', 'superseded', 'unknown'] as const
+
+/** Allow-listed authority tiers (mirrors the authority_tier_enum DB type). */
+export const AUTHORITY_TIERS = ['audited', 'executed', 'controller', 'board_pack', 'dd_memo', 'internal', 'narrative', 'unverified'] as const
+
 export type Lifecycle =
   | 'draft'
   | 'signed'
@@ -131,4 +141,39 @@ export const AUTHORITY_TIER_SCORE: Record<AuthorityTier, number> = {
   narrative: 10,
   unverified: 0,
 }
+
+// ─── Governance actions (Spec B) ────────────────────────────────────────────
+export type GovernanceAction =
+  | 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede'
+
+/** status is a text column; retire sets this sentinel (RPC filters status='indexed') */
+export const RETIRED_STATUS = 'retired' as const
+
+export type ReclassifyFields = Partial<{
+  project_id: string | null
+  doc_type: DocType
+  authority_tier: AuthorityTier
+  authority_score: number
+  period: string | null
+  lifecycle: Lifecycle
+}>
+
+/** Minimal governance snapshot of a rag_documents row needed to compute an action. */
+export type DocGovernanceState = {
+  review_status: ReviewStatus
+  classification_source: ClassificationSource
+  status: string
+  authority_score: number
+  authority_tier: AuthorityTier
+  current_version: number
+  supersedes_document_id?: string | null
+  doc_type?: DocType | null
+  project_id?: string | null
+  period?: string | null
+  lifecycle?: Lifecycle | null
+}
+
+/** classification_source values that already count as human-validated (mirror source-reference). */
+export const HUMAN_VALIDATED_SOURCES: ReadonlySet<ClassificationSource> =
+  new Set<ClassificationSource>(['human', 'agent_reviewed', 'agent_corrected'])
 

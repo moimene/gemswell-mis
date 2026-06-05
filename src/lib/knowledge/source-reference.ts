@@ -52,7 +52,7 @@ function classificationSourceValue(value: unknown): ClassificationSource | 'unkn
     : 'unknown'
 }
 
-function verificationFromGovernance(
+export function verificationFromGovernance(
   authority: number | undefined,
   reviewStatus: ReviewStatus,
   classificationSource: ClassificationSource | 'unknown'
