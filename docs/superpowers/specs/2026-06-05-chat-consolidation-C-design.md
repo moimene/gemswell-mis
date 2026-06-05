@@ -12,7 +12,7 @@ Tres arreglos de **calidad de recuperación del chat**, todos en el camino `/api
 
 ## 1. Estado verificado (BD `nqxhsjkcvfxygiajdxki`, 2026-06-05)
 - 5.498 docs / 156.898 chunks. Distribución por proyecto: **BHX 3.142 (57%, inglés)**, MAD 1.094, KLP 492, GVF 490, PHILAE 184, null 96 → corpus **mixto ES/EN**, mayoría inglés pero ~40% español (MAD permisos/actas/legal + parte de KLP/PHILAE/GVF).
-- `keyword_search_chunks` y la columna `rag_chunks.fts` usan `to_tsvector('english', …)`. **Sin `unaccent`** (no instalado). → el contenido español queda mal stemmizado y sensible a acentos.
+- **`keyword_search_chunks` NO usa la columna `fts`**: recomputa `to_tsvector('simple', c.content)` inline en el WHERE y en el rank (`ts_rank_cd`). → **sin stemming** (ni ES ni EN; 'simple' solo tokeniza+minúsculas), **sin `unaccent`** (no instalado), y **sin usar el índice GIN** (`idx_rag_chunks_fts` está sobre la columna `fts` 'english', no sobre el `to_tsvector('simple',…)` recomputado) → seqscan calculando tsvector sobre hasta 156k chunks por query. La columna `rag_chunks.fts` (trigger `rag_chunks_fts_update`, config 'english') + su GIN existen pero están **muertos** (el RPC no los toca).
 - Rerank (route.ts:493–507): Cohere `rerank-v3.5` da `relevanceScore∈[0,1]`; luego el route hace `relevance×reviewPenalty + authorityBoost`.
 - Limitador de embeddings (embeddings.ts:32–41): **un único limitador global** encadenado (`embeddingLimiterTail`) con intervalo mínimo 4s (`GEMINI_EMBEDDING_MIN_INTERVAL_MS`). Todo `embedText` comparte la cola → la query del chat espera detrás del backfill masivo.
 
@@ -29,11 +29,11 @@ Tres arreglos de **calidad de recuperación del chat**, todos en el camino `/api
 El route deja de hacer el cálculo inline (líneas 495–507) y llama a `rankBySourceTrust`.
 
 ## 3. Arreglo 2 — Stemming ES/EN (corpus mixto)
-**Decisión:** **tsvector dual-idioma + `unaccent`** (no per-fila ni un solo idioma).
+**Decisión:** tsvector **dual-idioma + `unaccent`, materializado en `fts` y consultado vía el índice GIN** → arregla a la vez (a) el stemming ES/EN, (b) la insensibilidad a acentos, y (c) la ineficiencia de seqscan (el RPC pasa a usar el índice).
 - Migración `012`: `create extension if not exists unaccent;`
-- Redefinir el trigger de `rag_chunks.fts` para construir: `to_tsvector('spanish', unaccent(coalesce(content,''))) || to_tsvector('english', unaccent(coalesce(content,'')))`. El `||` combina ambos stemmers → recall en ES y EN; `unaccent` → insensible a acentos (clave en español).
-- **Backfill por lotes** de 156.898 filas (`UPDATE rag_chunks SET fts = <expr> WHERE id IN (lote)`), en tandas (p.ej. 10k) para no bloquear; el índice GIN `idx_rag_chunks_fts` se mantiene.
-- `keyword_search_chunks`: la query también dual + unaccent: `(plainto_tsquery('spanish', unaccent(query_text)) || plainto_tsquery('english', unaccent(query_text)))` contra `c.fts`. Mantiene los filtros de gobernanza parent-first de A (status='indexed', exclusión rejected/agent_rejected, doc_type/project parent).
+- Redefinir el trigger `rag_chunks_fts_update`: `NEW.fts := to_tsvector('spanish', unaccent(coalesce(NEW.content,''))) || to_tsvector('english', unaccent(coalesce(NEW.content,'')));`. El `||` combina ambos stemmers → recall en ES y EN; `unaccent` → insensible a acentos (clave en español).
+- **Backfill por lotes** de 156.898 filas (`UPDATE rag_chunks SET fts = <expr> WHERE id = ANY(lote)`), en tandas (p.ej. 10k por execute_sql) para no bloquear; idempotente; el índice GIN `idx_rag_chunks_fts` se mantiene y ahora **sí se usa**.
+- `keyword_search_chunks` **reescrito para usar `c.fts`** (deja de recomputar 'simple' inline): `WHERE c.fts @@ (plainto_tsquery('spanish', unaccent(query_text)) || plainto_tsquery('english', unaccent(query_text)))` y `ts_rank_cd(c.fts, <misma tsquery>)`. Mantiene intactos los filtros de gobernanza parent-first de A (status='indexed', exclusión rejected/agent_rejected, doc_type/project parent COALESCE). → GIN usado (gran mejora de latencia) + stemming ES/EN + acentos.
 - `unaccent()` no es IMMUTABLE por defecto (importaría solo si se usara en un índice de expresión). Aquí se usa en el trigger/backfill y en la query del RPC, NO en la definición del índice GIN (que indexa la columna `fts` ya materializada), así que no hace falta un wrapper inmutable. Validar que el trigger sea determinista.
 - **Verificación viva:** una query con acento (`"climatización"`) y un plural/conjugación español encuentran el chunk tras el backfill; una query inglesa (`"funding"/"funded"`) sigue funcionando. Self-cleaning donde aplique; el backfill es idempotente (recomputa `fts`).
 
