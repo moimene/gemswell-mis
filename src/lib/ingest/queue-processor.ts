@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'crypto'
 import { readFile } from 'fs/promises'
+import Anthropic from '@anthropic-ai/sdk'
 import { parseDocument } from '@/lib/rag/parse'
 import { chunkFinancialContent, embedBatch, DIMENSIONS, type ChunkMetadata } from '@/lib/rag/embeddings'
 import { buildMarkdownArtifact, type MarkdownFrontmatter } from '@/lib/knowledge/markdown-artifact'
+import { classifyDocument, decideReviewStatus } from '@/lib/knowledge/classify'
 import type {
   AuthorityTier,
   ClassificationSource,
@@ -53,7 +55,7 @@ type ReservedDocument = {
 const DEFAULT_EMBEDDING_BATCH_SIZE = numberEnv('INGEST_EMBEDDING_BATCH_SIZE', 5)
 const DEFAULT_RETRY_DELAY_MS = 10_000
 const DEFAULT_SOURCE_CHANNEL: SourceChannel = 'local_backfill'
-const DEFAULT_CLASSIFICATION_SOURCE: ClassificationSource = 'rule'
+const DEFAULT_CLASSIFICATION_SOURCE: ClassificationSource = 'agent_auto'
 const DEFAULT_REVIEW_STATUS: ReviewStatus = 'needs_review'
 const DEFAULT_LIFECYCLE: Lifecycle = 'unknown'
 const DEFAULT_AUTHORITY_TIER: AuthorityTier = 'unverified'
@@ -269,6 +271,25 @@ export async function processIngestQueueItem(
       throw new Error(`Parsed content too short: ${parsed.content.length} chars`)
     }
 
+    // Classify the freshly-parsed document so governance is real, not trusted-by-default.
+    let cls: Awaited<ReturnType<typeof classifyDocument>> = null
+    try {
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+      cls = await classifyDocument(
+        { title: item.file_name, sample: parsed.content.slice(0, 4000), dmsFolder: item.category ?? null },
+        anthropic
+      )
+    } catch (clsErr) {
+      log(`[ingest] classify failed, falling back to rule governance: ${errorMessage(clsErr)}`)
+    }
+    const govDocType = cls?.result.doc_type ?? item.category ?? null
+    const govTier: AuthorityTier = cls?.result.authority_tier ?? DEFAULT_AUTHORITY_TIER
+    const govScore = cls?.authority_score ?? DEFAULT_AUTHORITY_SCORE
+    const govConfidence = cls?.result.confidence ?? 0
+    const govLifecycle: Lifecycle = (cls?.result.lifecycle as Lifecycle) ?? DEFAULT_LIFECYCLE
+    const govReview = decideReviewStatus({ doc_type: govDocType, authority_tier: govTier, confidence: govConfidence })
+    const govSource: ClassificationSource = cls ? 'agent_auto' : 'rule'
+
     const mdFrontmatter: MarkdownFrontmatter = {
       document_id: documentId,
       source_channel: DEFAULT_SOURCE_CHANNEL,
@@ -277,12 +298,12 @@ export async function processIngestQueueItem(
       mime_type: getMimeType(item.file_ext),
       business_line_id: null,
       project_id: item.project_id || null,
-      doc_type: item.category || null,
-      lifecycle: DEFAULT_LIFECYCLE,
-      authority_tier: DEFAULT_AUTHORITY_TIER,
-      authority_score: DEFAULT_AUTHORITY_SCORE,
-      classification_source: DEFAULT_CLASSIFICATION_SOURCE,
-      review_status: DEFAULT_REVIEW_STATUS,
+      doc_type: govDocType,
+      lifecycle: govLifecycle,
+      authority_tier: govTier,
+      authority_score: govScore,
+      classification_source: govSource,
+      review_status: govReview,
       parser: parsed.parser,
       ocr_used: false,
       generated_at: new Date().toISOString(),
@@ -293,16 +314,16 @@ export async function processIngestQueueItem(
 
     const baseMetadata: ChunkMetadata = {
       project_id: item.project_id || undefined,
-      doc_type: item.category || undefined,
+      doc_type: govDocType ?? undefined,
       source_file: item.file_name,
       document_id: documentId,
       source_hash: sourceHash,
       source_channel: DEFAULT_SOURCE_CHANNEL,
-      review_status: DEFAULT_REVIEW_STATUS,
-      classification_source: DEFAULT_CLASSIFICATION_SOURCE,
-      lifecycle: DEFAULT_LIFECYCLE,
-      authority_tier: DEFAULT_AUTHORITY_TIER,
-      authority_score: DEFAULT_AUTHORITY_SCORE,
+      review_status: govReview,
+      classification_source: govSource,
+      lifecycle: govLifecycle,
+      authority_tier: govTier,
+      authority_score: govScore,
       parser_used: parsed.parser,
       ocr_used: false,
       ...(mdPath ? { md_path: mdPath } : {}),
@@ -355,7 +376,18 @@ export async function processIngestQueueItem(
 
     await supabase
       .from('rag_documents')
-      .update({ status: 'indexed', chunk_count: insertedChunks })
+      .update({
+        status: 'indexed',
+        chunk_count: insertedChunks,
+        doc_type: govDocType,
+        authority_tier: govTier,
+        authority_score: govScore,
+        classification_source: govSource,
+        classification_confidence: govConfidence,
+        review_status: govReview,
+        lifecycle: govLifecycle,
+        ...(cls ? { summary: cls.result.summary || null, topics: cls.result.topics, currency: cls.result.currency, period: cls.result.period } : {}),
+      })
       .eq('id', documentId)
 
     await supabase
