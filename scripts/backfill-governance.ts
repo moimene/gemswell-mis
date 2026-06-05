@@ -14,7 +14,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-type DocRow = { id: string; title: string | null; doc_type: string | null; authority_score: number | null; summary: string | null }
+type DocRow = { id: string; title: string | null; doc_type: string | null; authority_score: number | null }
 type ChunkRow = { metadata: Record<string, unknown> | null; content: string | null }
 
 async function classifyWithRetry(
@@ -25,10 +25,11 @@ async function classifyWithRetry(
     try {
       return await classifyDocument(doc, anthropic)
     } catch (e: unknown) {
-      const err = e as { status?: number; headers?: Record<string, string> }
+      const err = e as { status?: number; headers?: { get?: (k: string) => string | null } }
       const status = err?.status ?? 0
       if (attempt < max && (status === 429 || status === 529 || status >= 500)) {
-        const retryAfter = Number(err?.headers?.['retry-after']) || 0
+        // @anthropic-ai/sdk error.headers is a Web Headers object — must use .get(), not index access.
+        const retryAfter = Number(err?.headers?.get?.('retry-after')) || 0
         await sleep((retryAfter ? retryAfter * 1000 : 2000 * 2 ** attempt) + Math.random() * 500)
         continue
       }
@@ -39,27 +40,29 @@ async function classifyWithRetry(
 }
 
 async function main() {
-  let from = 0
   const page = 200
   const dist: Record<string, number> = {}
-  let processed = 0, enriched = 0, skipped = 0, failed = 0
+  let processed = 0, enriched = 0, failed = 0
+  const cap = LIMIT || Number.MAX_SAFE_INTEGER
 
+  // Drain pattern: process rows whose governance has not been computed yet
+  // (governance_backfilled_at IS NULL). Each processed row is marked, so the pool
+  // shrinks and re-runs converge — no offset paging, no summary sentinel (which never
+  // marked rule-resolved docs and caused re-processing + duplicate events). F6.
   for (;;) {
+    if (processed >= cap) break
     const { data, error } = await supabase
       .from('rag_documents')
-      .select('id, title, doc_type, authority_score, summary')
+      .select('id, title, doc_type, authority_score')
+      .is('governance_backfilled_at', null)
       .order('id', { ascending: true })
-      .range(from, from + page - 1)
+      .limit(Math.min(page, cap - processed))
     if (error) throw new Error(error.message)
     const docs = (data ?? []) as DocRow[]
     if (!docs.length) break
 
-    let stop = false
     for (const doc of docs) {
-      if (LIMIT && processed >= LIMIT) { stop = true; break }
-
-      // Resumable: skip docs already Haiku-enriched.
-      if (doc.summary != null) { skipped++; continue }
+      if (processed >= cap) break
 
       const { data: chunkData } = await supabase
         .from('rag_chunks')
@@ -112,6 +115,9 @@ async function main() {
       processed++
 
       if (!DRY_RUN) {
+        // Write enrichment + the backfill marker unconditionally: a rule-resolved or
+        // classify-failed doc clears any stale enrichment and is still marked done so
+        // the drain converges (and re-runs don't re-charge / double-write events).
         const update: Record<string, unknown> = {
           doc_type: docType,
           authority_tier: tier,
@@ -120,15 +126,15 @@ async function main() {
           classification_confidence: confidence,
           review_status: review,
           period,
-        }
-        if (source === 'agent_auto') {
-          update.summary = summary
-          update.topics = topics
-          update.currency = currency
-          update.lifecycle = lifecycle
+          summary,
+          topics,
+          currency,
+          lifecycle,
+          governance_backfilled_at: new Date().toISOString(),
         }
         const { error: upErr } = await supabase.from('rag_documents').update(update).eq('id', doc.id)
-        if (upErr) { failed++; console.error(`[backfill] update failed for ${doc.id}: ${upErr.message}`); continue }
+        // A persistent update failure would otherwise re-fetch the same NULL row forever — stop instead.
+        if (upErr) { failed++; throw new Error(`[backfill] update failed for ${doc.id}, stopping: ${upErr.message}`) }
         await supabase.from('rag_document_events').insert({
           document_id: doc.id,
           action: 'backfill_classify',
@@ -141,14 +147,14 @@ async function main() {
       }
 
       if (processed % 50 === 0) {
-        console.log(`[backfill] processed=${processed} enriched=${enriched} skipped=${skipped} failed=${failed} dist=${JSON.stringify(dist)}`)
+        console.log(`[backfill] processed=${processed} enriched=${enriched} failed=${failed} dist=${JSON.stringify(dist)}`)
       }
     }
-    if (stop) break
-    from += page
+
+    if (DRY_RUN) break  // dry-run doesn't mark rows, so don't re-fetch the same NULL pool
   }
 
-  console.log(`[backfill] DONE ${DRY_RUN ? '(dry-run)' : ''} processed=${processed} enriched=${enriched} skipped=${skipped} failed=${failed} dist=${JSON.stringify(dist)}`)
+  console.log(`[backfill] DONE ${DRY_RUN ? '(dry-run)' : ''} processed=${processed} enriched=${enriched} failed=${failed} dist=${JSON.stringify(dist)}`)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })
