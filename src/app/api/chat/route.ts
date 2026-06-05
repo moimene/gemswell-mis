@@ -4,6 +4,7 @@ import { createApiClient } from '@/lib/supabase-server'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
+import { rankBySourceTrust } from '@/lib/rag/rank'
 
 export const maxDuration = 800
 
@@ -148,16 +149,6 @@ function firstJoined<T>(value: MaybeJoined<T>): T | null {
 function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = metadata?.[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function metadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | undefined {
-  const value = metadata?.[key]
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
 }
 
 function isRejectedSource(metadata: Record<string, unknown> | undefined): boolean {
@@ -489,24 +480,12 @@ async function executeSearchDocuments(
     }
   }
 
-  // Cohere rerank on combined pool
+  // Cohere rerank on combined pool, then order by source trust tier (tier dominates relevance).
   const reranked = (await rerankChunks(input.query, pool, 10))
     .filter(c => !isRejectedSource(c.metadata))
-    .map(c => {
-      const reviewStatus = metadataString(c.metadata, 'review_status') ?? 'needs_review'
-      const authorityScore = metadataNumber(c.metadata, 'authority_score') ?? 0
-      const authorityBoost = Math.min(authorityScore, 100) / 1000
-      const reviewPenalty = reviewStatus === 'pending' || reviewStatus === 'needs_review'
-        ? 0.85
-        : reviewStatus === 'approved'
-          ? 1
-          : 0.5
-      const relevanceScore = (c.relevanceScore * reviewPenalty) + authorityBoost
-      return { ...c, relevanceScore }
-    })
-    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+  const ranked = rankBySourceTrust(reranked)
 
-  const sources: Source[] = reranked.map(c =>
+  const sources: Source[] = ranked.map(c =>
     buildKnowledgeSource({
       id: c.id,
       relevance: c.relevanceScore,
@@ -515,8 +494,7 @@ async function executeSearchDocuments(
     })
   )
 
-  // Format chunks for Claude consumption
-  const formatted = reranked
+  const formatted = ranked
     .map((c, i) => {
       const header = sourceHeader(c.metadata ?? {}, c.relevanceScore, i)
       const warning = needsReviewWarning(c.metadata)
