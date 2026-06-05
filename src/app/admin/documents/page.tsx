@@ -115,7 +115,7 @@ export default function DocumentsPage() {
         </div>
       </div>
 
-      {selected && <DocumentPanel docId={selected} onClose={() => setSelected(null)} onChanged={load} />}
+      {selected && <DocumentPanel key={selected} docId={selected} onClose={() => setSelected(null)} onChanged={load} />}
     </div>
   )
 }

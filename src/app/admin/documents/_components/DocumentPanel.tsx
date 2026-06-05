@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ChevronDown, ChevronRight } from 'lucide-react'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
+import { AUTHORITY_TIER_SCORE } from '@/lib/knowledge/contracts'
+import type { AuthorityTier } from '@/lib/knowledge/contracts'
 
 type DocDetail = {
   title: string | null
@@ -59,6 +61,8 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
   const [d, setD] = useState<Detail | null>(null)
   const [open, setOpen] = useState({ md: false, chunks: false, history: false, reclass: false })
   const [supersedeOpen, setSupersedeOpen] = useState(false)
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
   const [reclass, setReclass] = useState({ doc_type: '', authority_tier: '', project_id: '' })
 
   const load = useCallback(async () => {
@@ -109,7 +113,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
         {/* Actions */}
         <div className="grid grid-cols-2 gap-2 pt-2">
           <button onClick={() => act({ action: 'approve' })} className="flex items-center justify-center gap-1 rounded bg-green-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-green-700"><Check className="h-3.5 w-3.5" /> Aprobar</button>
-          <button onClick={() => { const reason = prompt('Motivo del rechazo:') ?? undefined; act({ action: 'reject', reason }) }} className="flex items-center justify-center gap-1 rounded bg-red-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-red-700"><Ban className="h-3.5 w-3.5" /> Rechazar</button>
+          <button onClick={() => setRejectOpen(o => !o)} className="flex items-center justify-center gap-1 rounded bg-red-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-red-700"><Ban className="h-3.5 w-3.5" /> Rechazar</button>
           <button onClick={() => setOpen(o => ({ ...o, reclass: !o.reclass }))} className="flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><Tag className="h-3.5 w-3.5" /> Reclasificar</button>
           {retired
             ? <button onClick={() => act({ action: 'restore' })} className="flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Restaurar</button>
@@ -117,11 +121,45 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
           <button onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
         </div>
 
+        {/* Reject inline form (F9): reason required; Cancel does NOT dispatch */}
+        {rejectOpen && (
+          <div className="space-y-2 rounded border border-red-200 bg-red-50 p-2">
+            <input
+              autoFocus
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              placeholder="Motivo del rechazo (obligatorio)…"
+              className="w-full rounded border px-2 py-1 text-xs"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                disabled={!rejectReason.trim()}
+                onClick={async () => {
+                  const reason = rejectReason.trim()
+                  if (!reason) return
+                  await act({ action: 'reject', reason })
+                  setRejectOpen(false); setRejectReason('')
+                }}
+                className="rounded bg-red-600 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-40"
+              >Confirmar rechazo</button>
+              <button
+                onClick={() => { setRejectOpen(false); setRejectReason('') }}
+                className="rounded border bg-white py-1 text-xs font-medium hover:bg-slate-50"
+              >Cancelar</button>
+            </div>
+          </div>
+        )}
+
         {/* Reclassify inline form */}
         {open.reclass && (
           <div className="space-y-2 rounded border p-2">
             <select value={reclass.doc_type} onChange={e => setReclass(r => ({ ...r, doc_type: e.target.value }))} className="w-full rounded border px-2 py-1 text-xs"><option value="">doc_type…</option>{DOCTYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
-            <select value={reclass.authority_tier} onChange={e => setReclass(r => ({ ...r, authority_tier: e.target.value }))} className="w-full rounded border px-2 py-1 text-xs"><option value="">authority_tier…</option>{TIERS.map(t => <option key={t} value={t}>{t}</option>)}</select>
+            <div className="flex items-center gap-2">
+              <select value={reclass.authority_tier} onChange={e => setReclass(r => ({ ...r, authority_tier: e.target.value }))} className="flex-1 rounded border px-2 py-1 text-xs"><option value="">authority_tier…</option>{TIERS.map(t => <option key={t} value={t}>{t}</option>)}</select>
+              {reclass.authority_tier && (
+                <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-slate-500">→ authority_score = {AUTHORITY_TIER_SCORE[reclass.authority_tier as AuthorityTier]}</span>
+              )}
+            </div>
             <input value={reclass.project_id} onChange={e => setReclass(r => ({ ...r, project_id: e.target.value }))} placeholder="project_id (MAD/BHX/…)" className="w-full rounded border px-2 py-1 text-xs" />
             <button onClick={() => {
               const fields: Record<string, string> = {}
