@@ -132,3 +132,34 @@ export const AUTHORITY_TIER_SCORE: Record<AuthorityTier, number> = {
   unverified: 0,
 }
 
+// ─── Governance actions (Spec B) ────────────────────────────────────────────
+export type GovernanceAction =
+  | 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede'
+
+/** status is a text column; retire sets this sentinel (RPC filters status='indexed') */
+export const RETIRED_STATUS = 'retired' as const
+
+export type ReclassifyFields = Partial<{
+  project_id: string | null
+  doc_type: DocType
+  authority_tier: AuthorityTier
+  authority_score: number
+  period: string | null
+  lifecycle: Lifecycle
+}>
+
+/** Minimal governance snapshot of a rag_documents row needed to compute an action. */
+export type DocGovernanceState = {
+  review_status: ReviewStatus
+  classification_source: ClassificationSource
+  status: string
+  authority_score: number
+  authority_tier: AuthorityTier
+  current_version: number
+  supersedes_document_id?: string | null
+}
+
+/** classification_source values that already count as human-validated (mirror source-reference). */
+export const HUMAN_VALIDATED_SOURCES: ReadonlySet<ClassificationSource> =
+  new Set<ClassificationSource>(['human', 'agent_reviewed', 'agent_corrected'])
+
