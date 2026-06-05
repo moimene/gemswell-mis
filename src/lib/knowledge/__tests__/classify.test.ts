@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { liftUpFromChunks, decideReviewStatus } from '@/lib/knowledge/classify'
+import { liftUpFromChunks, decideReviewStatus, buildClassifyPrompt, parseClassifyResponse } from '@/lib/knowledge/classify'
 
 describe('liftUpFromChunks', () => {
   it('takes max authority and modal doc_type/project', () => {
@@ -31,5 +31,27 @@ describe('decideReviewStatus', () => {
     expect(decideReviewStatus({ doc_type: 'other', authority_tier: 'controller', confidence: 0.9 })).toBe('needs_review')
     expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.9 })).toBe('needs_review')
     expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'audited', confidence: 0.4 })).toBe('needs_review')
+  })
+})
+
+describe('buildClassifyPrompt', () => {
+  it('includes title and sample text and asks for JSON', () => {
+    const p = buildClassifyPrompt({ title: 'Acta JG', sample: 'aumento de capital', dmsFolder: '03. Legal' })
+    expect(p).toContain('Acta JG')
+    expect(p).toContain('aumento de capital')
+    expect(p).toContain('JSON')
+  })
+})
+
+describe('parseClassifyResponse', () => {
+  it('parses valid JSON (even with prose/code fences around it)', () => {
+    const r = parseClassifyResponse('Here:\n```json\n{"doc_type":"legal","authority_tier":"executed","lifecycle":"signed","period":"2026","currency":"EUR","topics":["capital"],"summary":"Acta de aumento de capital","confidence":0.8}\n```')
+    expect(r).not.toBeNull()
+    expect(r!.doc_type).toBe('legal')
+    expect(r!.authority_tier).toBe('executed')
+    expect(r!.confidence).toBe(0.8)
+  })
+  it('returns null on garbage', () => {
+    expect(parseClassifyResponse('no json here')).toBeNull()
   })
 })

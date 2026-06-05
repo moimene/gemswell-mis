@@ -1,4 +1,6 @@
-import { scoreToTier } from '@/lib/knowledge/authority'
+import Anthropic from '@anthropic-ai/sdk'
+import { z } from 'zod'
+import { scoreToTier, tierToScore } from '@/lib/knowledge/authority'
 import type { AuthorityTier, ReviewStatus } from '@/lib/knowledge/contracts'
 
 export type ChunkMetaLite = {
@@ -65,4 +67,63 @@ export function decideReviewStatus(labels: {
     labels.doc_type !== 'other' &&
     labels.authority_tier !== 'unverified'
   return classified ? 'approved' : 'needs_review'
+}
+
+// ─── Haiku document classifier ───────────────────────────────────────────────
+
+const DOC_TYPES = ['legal','board','funding','capex','cash_flow','bp_model','financial_statements','tax','kyc','dd','asset_management','monitoring','correspondence','general','other'] as const
+const TIERS = ['audited','executed','controller','board_pack','dd_memo','internal','narrative','unverified'] as const
+const LIFECYCLES = ['draft','signed','executed','filed','audited','working_paper','superseded','unknown'] as const
+
+export const classifyResultSchema = z.object({
+  doc_type: z.enum(DOC_TYPES),
+  authority_tier: z.enum(TIERS),
+  lifecycle: z.enum(LIFECYCLES).default('unknown'),
+  period: z.string().nullable().default(null),
+  currency: z.enum(['EUR','GBP','USD']).nullable().default(null),
+  topics: z.array(z.string()).default([]),
+  summary: z.string().default(''),
+  confidence: z.number().min(0).max(1),
+})
+export type ClassifyResult = z.infer<typeof classifyResultSchema>
+
+export function buildClassifyPrompt(doc: { title: string; sample: string; dmsFolder?: string | null }): string {
+  return [
+    'Clasifica este documento financiero/legal de un grupo de parques de olas (Gemswell).',
+    `Título: ${doc.title}`,
+    doc.dmsFolder ? `Carpeta DMS: ${doc.dmsFolder}` : '',
+    `Extracto:\n${doc.sample.slice(0, 4000)}`,
+    '',
+    'Responde SOLO con un objeto JSON con estas claves:',
+    `doc_type (${DOC_TYPES.join('|')}), authority_tier (${TIERS.join('|')}), lifecycle (${LIFECYCLES.join('|')}), period (string|null), currency (EUR|GBP|USD|null), topics (string[]), summary (1 frase), confidence (0..1).`,
+  ].filter(Boolean).join('\n')
+}
+
+export function parseClassifyResponse(text: string): ClassifyResult | null {
+  const match = text.match(/\{[\s\S]*\}/)
+  if (!match) return null
+  try {
+    const parsed = classifyResultSchema.safeParse(JSON.parse(match[0]))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001'
+
+export async function classifyDocument(
+  doc: { title: string; sample: string; dmsFolder?: string | null },
+  anthropic: Anthropic
+): Promise<{ result: ClassifyResult; authority_score: number } | null> {
+  const resp = await anthropic.messages.create({
+    model: HAIKU_MODEL,
+    max_tokens: 512,
+    temperature: 0,
+    messages: [{ role: 'user', content: buildClassifyPrompt(doc) }],
+  })
+  const text = resp.content.find(b => b.type === 'text')?.text ?? ''
+  const result = parseClassifyResponse(text)
+  if (!result) return null
+  return { result, authority_score: tierToScore(result.authority_tier) }
 }
