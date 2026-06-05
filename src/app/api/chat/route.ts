@@ -114,6 +114,13 @@ type DetectedEntity = {
   docTypeFilter?: string
 }
 
+const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514'
+const CHAT_FAST_MODEL = process.env.CHAT_FAST_MODEL || DEFAULT_CHAT_MODEL
+const CHAT_REASONING_MODEL = process.env.CHAT_REASONING_MODEL || CHAT_FAST_MODEL
+const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASONING_MODEL
+const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
+const RAG_MATCH_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD || '0.18')
+
 const DOC_TYPE_ALIASES: Record<string, string> = {
   contract: 'legal',
   contracts: 'legal',
@@ -143,84 +150,74 @@ function metadataString(metadata: Record<string, unknown> | undefined, key: stri
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+function metadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = metadata?.[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return undefined
+}
+
 function isRejectedSource(metadata: Record<string, unknown> | undefined): boolean {
   return metadataString(metadata, 'review_status') === 'rejected' ||
     metadataString(metadata, 'classification_source') === 'agent_rejected'
 }
 
 function needsReviewWarning(metadata: Record<string, unknown> | undefined): string {
-  const reviewStatus = metadataString(metadata, 'review_status') ?? 'approved'
-  const classificationSource = metadataString(metadata, 'classification_source') ?? 'human'
-  if (
-    (reviewStatus === 'pending' || reviewStatus === 'needs_review') &&
-    classificationSource.startsWith('agent')
-  ) {
-    return `[CRITICAL WARNING: This fragment comes from an agent-ingested source with review_status=${reviewStatus}. It has not been confirmed by a human. Treat it as unconfirmed context and disclose that limitation to the user.]`
+  const reviewStatus = metadataString(metadata, 'review_status') ?? 'needs_review'
+  const classificationSource = metadataString(metadata, 'classification_source') ?? 'unknown'
+  if (reviewStatus === 'pending' || reviewStatus === 'needs_review') {
+    return `[SOURCE STATUS WARNING: This fragment has review_status=${reviewStatus} and classification_source=${classificationSource}. Use it as unconfirmed context unless corroborated by approved/source-of-record evidence, and disclose that limitation when material.]`
   }
   return ''
 }
 
 // ─── System Prompt ──────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are the Gemswell MIS AI Assistant — a senior financial analyst serving the CEO and CFO of Gemswell Ventures' wave park development portfolio. Your role is to deliver rich, detailed, analytical answers backed by evidence from the documents and data provided.
+const SYSTEM_PROMPT = `You are the Gemswell MIS documentary and financial analysis assistant for a CEO/CFO audience.
 
-## Portfolio Overview
-Gemswell Ventures (OPCO) is the management company for wave parks developed by Teras Capital (fund manager) and Stoneweg (co-promoter / infrasports). Technology: Wavegarden.
+Your primary obligation is evidence discipline. Do not treat this prompt as a source of financial truth. Any material number, covenant, legal term, financing structure, contract position, board decision, deadline or risk must come from an explicit tool result or documentary source.
 
-### Projects
-- **Madrid Playa Surf (MAD)**: Madrid, Spain. SPV: Madrid Playa Surf S.L. Currency: EUR. Concession: Ayuntamiento de Madrid (75 years).
-- **Birmingham Wave (BHX)**: Birmingham/Coventry, UK. SPV: Urban Surf Company Ltd (USCL). Currency: GBP.
+## Operating Rules
+- Use tools before answering factual questions. Do not answer from memory when a relevant tool can retrieve data.
+- Distinguish structured MIS data from documentary evidence.
+- If a statement comes from structured data, say it is from MIS structured data.
+- If a statement comes from documents, cite the document source cards and respect their review/authority status.
+- If a statement is an assumption or inference, label it as such.
+- If evidence is missing, stale, contradictory or not reviewed, say so directly.
+- Never promote a source with review_status pending/needs_review/rejected as a source of record.
+- Rejected sources must not be used.
+- Avoid unsupported financial precision. Do not invent exact amounts, dates, names or statuses.
+- Respond in the same language as the user.
 
-### Financing Structure — Madrid (EUR)
-- Teras Fund Equity: €18.4M (via Kelpa Expansión S.L.)
-- Buenavista Quasi-Equity: €13.9M (cuasi-capital — subordinated hybrid instrument, lender: Buenavista Capital)
-- Santander + BBVA Senior Debt: €31.0M (Euribor3M + 325bps)
-- Caixabank: credit line
-- Sponsor Upfront Rights (Mahou + Cantabria Labs): €6.0M
-- Memberships pre-sales: €9.2M
-- Total: ~€78.6M
+## Available Tools
+- get_portfolio_context: orientation-only project/entity dictionary and corpus status. It is not financial evidence.
+- search_documents: hybrid RAG search over indexed documentary chunks.
+- get_capex_summary: structured CapEx data.
+- get_funding_status: structured funding/facility data.
+- get_cash_runway: structured 13-week cash flow data.
+- get_covenant_status: structured covenant data.
+- get_risk_register: structured risk register data.
+- compare_projects: structured cross-project comparison.
 
-### Financing Structure — Birmingham (GBP)
-- Teras Fund Equity: ~£10M
-- WMCA Public Grant: ~£3M (West Midlands Combined Authority)
-- CESCE-backed Senior Debt (Buyer Credit): ~£22M (SONIA + 350bps)
-- Wavegarden Vendor Finance: ~£1.5M
-- Total: ~£36.5M
+## Response Standard
+- Lead with the answer, then evidence and caveats.
+- Cite concrete numbers only when they appear in tool results.
+- Include source limitations when relevant: unreviewed source, low authority, missing markdown artifact, or conflicting evidence.
+- For CEO/CFO questions, end with practical implications or next checks when the evidence supports them.`
 
-### Corporate Structure
-- **Teras Capital**: Fund manager (GP), manages the Teras Infrasports fund
-- **Stoneweg**: Swiss asset manager, co-promoter/LP
-- **Kelpa Expansión S.L.**: Spanish vehicle for Teras fund equity deployment
-- **IPN (Investment & Partners Network)**: MdL family office / holding
-- **TCH3 (Gemswell Ventures)**: OPCO entity managing both projects
-
-### Key People
-- CEO: Íñigo Garayar
-- CFO: Ana Ruiz
-- COO: Lucia Delgado
-- PD Madrid: Carlos Mendez
-- PD Birmingham: Sarah Whitaker
-
-## Your Capabilities
-You have tools to access live MIS data and search 102K+ indexed documents:
-- **search_documents**: Full-text + semantic search over contracts, board packs, BPs, reports, permits, due diligence
-- **get_capex_summary**: Live CapEx tracking by category (budget, committed, paid, EAC)
-- **get_funding_status**: Live funding facility status (drawn, undrawn, covenants, CPs)
-- **get_cash_runway**: 13-week rolling cash flow (inflows, outflows, net by week)
-- **get_covenant_status**: Covenant test results with breach/warning flags and headroom
-- **get_risk_register**: Risk register with severity scores and mitigations
-- **compare_projects**: Side-by-side MAD vs BHX comparison for any metric
-
-## CRITICAL Response Instructions
-- **Use your tools.** Call the appropriate tool(s) before answering. Don't guess at data you can retrieve.
-- **Analyze in depth.** Don't just list data — interpret it. Explain WHY numbers matter, WHAT the trend means, and WHAT actions may be needed.
-- **Always cite specific numbers** — never invent financial data.
-- **When comparing projects**, present data side-by-side with currencies clearly labeled (€ for MAD, £ for BHX).
-- **Flag variances and risks proactively** (EAC > Budget, low funding headroom, covenant stress, etc.).
-- Format amounts as €12.5M or £8.3M, percentages as 67.2%.
-- If data is truly not available, say so — but first check both the document search AND the structured data tools.
-- **Respond in the same language as the user** (Spanish or English).
-- **Be comprehensive.** The user is a CEO/CFO who wants the full picture, not a one-paragraph summary. Provide the depth of a financial analyst memo.
-- **When you have knowledge from this system prompt** (financing structure, corporate entities, key people), USE IT directly — never say "not found in context" for things you already know.`
+function chooseChatModel(query: string): string {
+  const q = query.toLowerCase()
+  const needsReasoning = [
+    'covenant', 'funding', 'financing', 'debt', 'loan', 'facility', 'cesce',
+    'capex', 'cash', 'runway', 'liquidity', 'legal', 'contract', 'board',
+    'risk', 'contradiction', 'compare', 'variance', 'authority', 'source',
+    'evidence', 'auditor', 'audit', 'financiación', 'deuda', 'liquidez',
+    'contrato', 'riesgo', 'comparar',
+  ].some(term => q.includes(term))
+  return needsReasoning ? CHAT_REASONING_MODEL : CHAT_FAST_MODEL
+}
 
 // ─── Entity Detection (kept for UI badges in response) ───────────────
 function detectEntities(query: string): DetectedEntity[] {
@@ -259,8 +256,22 @@ function detectEntities(query: string): DetectedEntity[] {
 // ─── Tool Definitions ───────────────────────────────────────────────
 const TOOLS: Anthropic.Tool[] = [
   {
+    name: 'get_portfolio_context',
+    description: 'Get orientation-only project/entity context and corpus governance status. This is not financial evidence and must not be used as the source for exact amounts, covenants, legal terms, or deal status.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        project_id: {
+          type: 'string',
+          enum: ['MAD', 'BHX'],
+          description: 'Optional project filter for corpus status.',
+        },
+      },
+    },
+  },
+  {
     name: 'search_documents',
-    description: 'Search the document corpus (102K+ chunks from contracts, board packs, business plans, reports, permits, due diligence). Performs hybrid vector + keyword search. Use for any question about document content, terms, conditions, contract clauses, board minutes, or narrative context.',
+    description: 'Search the indexed document corpus using hybrid vector + keyword retrieval. Use for any question about document content, terms, conditions, contract clauses, board minutes, reports, permits, due diligence or narrative evidence.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -356,6 +367,60 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ]
 
+// ─── Tool Executor: get_portfolio_context ───────────────────────────
+async function executeGetPortfolioContext(input: { project_id?: string }): Promise<ToolResult> {
+  const supabase = createApiClient()
+  const projectFilter = input.project_id || null
+
+  let docQuery = supabase
+    .from('rag_documents')
+    .select('id, review_status, authority_tier, authority_score, source_hash, md_path', { count: 'exact' })
+  if (projectFilter) {
+    docQuery = docQuery.eq('project_id', projectFilter)
+  }
+
+  const chunkQuery = supabase
+    .from('rag_chunks')
+    .select('id', { count: 'exact', head: true })
+
+  const [{ data: docs, count: docCount, error: docError }, { count: chunkCount, error: chunkError }] = await Promise.all([
+    docQuery.limit(10000),
+    chunkQuery,
+  ])
+
+  if (docError) return { result: `Error fetching portfolio context: ${docError.message}` }
+  if (chunkError) return { result: `Error fetching corpus status: ${chunkError.message}` }
+
+  const filteredDocs = docs ?? []
+  const reviewCounts = filteredDocs.reduce<Record<string, number>>((acc, doc) => {
+    const status = String(doc.review_status ?? 'unknown')
+    acc[status] = (acc[status] ?? 0) + 1
+    return acc
+  }, {})
+  const sourceHashCount = filteredDocs.filter(doc => Boolean(doc.source_hash)).length
+  const mdPathCount = filteredDocs.filter(doc => Boolean(doc.md_path)).length
+  const sourceRecordCandidates = filteredDocs.filter(doc => Number(doc.authority_score) >= 90 && doc.review_status === 'approved').length
+
+  const context = [
+    '### Portfolio Context (orientation only, not financial evidence)',
+    '- Projects: MAD = Madrid Playa Surf; BHX = Birmingham Wave.',
+    '- Use structured tools for amounts, covenants, runway, risk and CapEx.',
+    '- Use search_documents for documentary evidence and cite source cards.',
+    '',
+    `### Corpus Governance Status${projectFilter ? ` — ${projectFilter}` : ''}`,
+    `- Documents: ${docCount ?? filteredDocs.length}.`,
+    `- Total chunks in corpus: ${chunkCount ?? 'unknown'}.`,
+    `- Review status distribution: ${JSON.stringify(reviewCounts)}.`,
+    `- Documents with source_hash: ${sourceHashCount}.`,
+    `- Documents with markdown artifact path: ${mdPathCount}.`,
+    `- Source-of-record candidates (approved + authority_score >= 90): ${sourceRecordCandidates}.`,
+    '',
+    'Treat this context as routing/orientation only. It does not prove any financial figure or legal position.',
+  ].join('\n')
+
+  return { result: context }
+}
+
 // ─── Tool Executor: search_documents ────────────────────────────────
 async function executeSearchDocuments(
   input: { query: string; project_id?: string; doc_type?: string }
@@ -374,6 +439,7 @@ async function executeSearchDocuments(
           match_count: 25,
           filter_project: projectFilter,
           filter_doc_type: docTypeFilter,
+          match_threshold: RAG_MATCH_THRESHOLD,
         })
         return ((data || []) as RetrievedChunk[]).map((r) => ({
           id: r.id,
@@ -428,9 +494,14 @@ async function executeSearchDocuments(
     .filter(c => !isRejectedSource(c.metadata))
     .map(c => {
       const reviewStatus = metadataString(c.metadata, 'review_status') ?? 'approved'
-      const relevanceScore = reviewStatus === 'pending' || reviewStatus === 'needs_review'
-        ? c.relevanceScore * 0.85
-        : c.relevanceScore
+      const authorityScore = metadataNumber(c.metadata, 'authority_score') ?? 0
+      const authorityBoost = Math.min(authorityScore, 100) / 1000
+      const reviewPenalty = reviewStatus === 'pending' || reviewStatus === 'needs_review'
+        ? 0.85
+        : reviewStatus === 'approved'
+          ? 1
+          : 0.5
+      const relevanceScore = (c.relevanceScore * reviewPenalty) + authorityBoost
       return { ...c, relevanceScore }
     })
     .sort((a, b) => b.relevanceScore - a.relevanceScore)
@@ -747,6 +818,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
   }
 
   switch (name) {
+    case 'get_portfolio_context':
+      return executeGetPortfolioContext(input as { project_id?: string })
     case 'search_documents':
       return executeSearchDocuments(input as { query: string; project_id?: string; doc_type?: string })
     case 'get_capex_summary':
@@ -770,7 +843,8 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 async function runAgentLoop(
   messages: Anthropic.MessageParam[],
   systemPrompt: string,
-  anthropic: Anthropic
+  anthropic: Anthropic,
+  model: string
 ): Promise<{ message: string; sources: Source[]; toolCalls: ToolCallAudit[] }> {
   const allSources = new Map<string, Source>() // keyed by chunk id for dedup
   const loopMessages: Anthropic.MessageParam[] = [...messages]
@@ -778,7 +852,7 @@ async function runAgentLoop(
 
   for (let iteration = 0; iteration < 5; iteration++) {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model,
       max_tokens: 4096,
       temperature: 0.3,
       system: systemPrompt,
@@ -862,6 +936,70 @@ async function runAgentLoop(
   }
 }
 
+async function verifyAnswer(
+  anthropic: Anthropic,
+  input: {
+    query: string
+    draft: string
+    sources: Source[]
+    toolCalls: ToolCallAudit[]
+  }
+): Promise<string> {
+  if (!CHAT_VERIFIER_ENABLED) return input.draft
+  if (input.toolCalls.length === 0) return input.draft
+
+  const sourceSummary = input.sources.slice(0, 12).map((source, index) => ({
+    index: index + 1,
+    label: source.label,
+    verification: source.verification,
+    review_status: source.metadata.review_status,
+    authority_score: source.metadata.authority_score,
+    preview: source.preview,
+  }))
+
+  const verifierPrompt = [
+    'You are a strict verifier for a financial/documentary RAG assistant.',
+    'Your job is to remove or qualify unsupported claims, not to add new facts.',
+    'If the draft is adequately grounded, return exactly the draft answer.',
+    'If material claims lack support from tool calls or source cards, rewrite the answer conservatively.',
+    'Keep the same language as the user query.',
+    'Do not mention this verification step.',
+    'Never invent citations or source labels.',
+  ].join('\n')
+
+  try {
+    const response = await anthropic.messages.create({
+      model: CHAT_VERIFIER_MODEL,
+      max_tokens: 4096,
+      temperature: 0,
+      system: verifierPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            `USER QUERY:\n${input.query}`,
+            `DRAFT ANSWER:\n${input.draft}`,
+            `TOOL CALLS:\n${JSON.stringify(input.toolCalls.map(call => ({
+              name: call.name,
+              input: call.input,
+              is_error: call.is_error,
+              source_count: call.source_count,
+              result_preview: call.result_preview,
+            })), null, 2)}`,
+            `SOURCE CARDS:\n${JSON.stringify(sourceSummary, null, 2)}`,
+            'Return only the final user-facing answer.',
+          ].join('\n\n---\n\n'),
+        },
+      ],
+    })
+
+    return response.content.find(block => block.type === 'text')?.text?.trim() || input.draft
+  } catch (err) {
+    console.warn('Chat verifier failed, returning draft answer:', err)
+    return input.draft
+  }
+}
+
 // ─── Main Chat Handler ───────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
@@ -881,6 +1019,7 @@ export async function POST(request: NextRequest) {
 
     const query = lastUserMessage.content
     const entities = detectEntities(query) // for UI entity badges only
+    const chatModel = chooseChatModel(query)
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -894,8 +1033,15 @@ export async function POST(request: NextRequest) {
     const { message: assistantContent, sources, toolCalls } = await runAgentLoop(
       historyMessages,
       SYSTEM_PROMPT,
-      anthropic
+      anthropic,
+      chatModel
     )
+    const verifiedAssistantContent = await verifyAnswer(anthropic, {
+      query,
+      draft: assistantContent,
+      sources,
+      toolCalls,
+    })
 
     // Save conversation to DB (only final user query + final assistant response, not tool calls)
     const supabase = createApiClient()
@@ -916,7 +1062,7 @@ export async function POST(request: NextRequest) {
         {
           conversation_id: convId,
           role: 'assistant',
-          content: assistantContent,
+          content: verifiedAssistantContent,
           sources: sources.map(s => ({
             chunk_id: s.id,
             relevance: s.relevance,
@@ -930,11 +1076,13 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      message: assistantContent,
+      message: verifiedAssistantContent,
       conversationId: convId,
       sources,
       toolCalls,
       entities,
+      model: chatModel,
+      verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
     })
   } catch (err: unknown) {
     console.error('Chat API error:', err)

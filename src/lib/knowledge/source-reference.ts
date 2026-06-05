@@ -34,10 +34,10 @@ function numberValue(value: unknown): number | undefined {
 function reviewStatusValue(value: unknown): ReviewStatus {
   return typeof value === 'string' && ['pending', 'approved', 'rejected', 'needs_review'].includes(value)
     ? value as ReviewStatus
-    : 'approved'
+    : 'needs_review'
 }
 
-function classificationSourceValue(value: unknown): ClassificationSource {
+function classificationSourceValue(value: unknown): ClassificationSource | 'unknown' {
   return typeof value === 'string' && [
     'human',
     'rule',
@@ -47,7 +47,7 @@ function classificationSourceValue(value: unknown): ClassificationSource {
     'agent_rejected',
   ].includes(value)
     ? value as ClassificationSource
-    : 'human'
+    : 'unknown'
 }
 
 function verificationFromGovernance(authority: number | undefined, reviewStatus: ReviewStatus): SourceVerification {
