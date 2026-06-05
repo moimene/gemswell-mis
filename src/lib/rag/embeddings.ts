@@ -6,13 +6,28 @@ const DIMENSIONS = 768
 const REST_EMBEDDING_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:embedContent`
 
 let genai: GoogleGenAI | null = null
-let embeddingLimiterTail: Promise<void> = Promise.resolve()
-let nextEmbeddingRequestAt = 0
 
 function numberEnv(name: string, fallback: number): number {
   const value = Number(process.env[name])
   return Number.isFinite(value) && value >= 0 ? value : fallback
 }
+
+// ─── Two-lane rate limiter ──────────────────────────────────────────
+// The bulk lane (ingest) and the interactive lane (chat query embed) hold
+// independent tail/nextAt state, so an interactive query is never queued
+// behind a long-running bulk ingest run.
+type EmbedLane = 'bulk' | 'interactive'
+type Limiter = { tail: Promise<void>; nextAt: number }
+const limiters: Record<EmbedLane, Limiter> = {
+  bulk: { tail: Promise.resolve(), nextAt: 0 },
+  interactive: { tail: Promise.resolve(), nextAt: 0 },
+}
+export function laneIntervalMs(lane: EmbedLane): number {
+  return lane === 'interactive'
+    ? numberEnv('GEMINI_EMBEDDING_INTERACTIVE_MIN_INTERVAL_MS', 250)
+    : numberEnv('GEMINI_EMBEDDING_MIN_INTERVAL_MS', 4000)
+}
+export type EmbedOpts = { lane?: EmbedLane }
 
 function getApiKey(): string {
   const key = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
@@ -29,14 +44,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function waitForEmbeddingSlot(): Promise<void> {
-  const minIntervalMs = numberEnv('GEMINI_EMBEDDING_MIN_INTERVAL_MS', 4000)
-  const run = embeddingLimiterTail.then(async () => {
-    const waitMs = nextEmbeddingRequestAt - Date.now()
+async function waitForEmbeddingSlot(lane: EmbedLane): Promise<void> {
+  const lim = limiters[lane]
+  const minIntervalMs = laneIntervalMs(lane)
+  const run = lim.tail.then(async () => {
+    const waitMs = lim.nextAt - Date.now()
     if (waitMs > 0) await sleep(waitMs)
-    nextEmbeddingRequestAt = Date.now() + minIntervalMs
+    lim.nextAt = Date.now() + minIntervalMs
   })
-  embeddingLimiterTail = run.catch(() => undefined)
+  lim.tail = run.catch(() => undefined)
   return run
 }
 
@@ -46,12 +62,12 @@ function isRateLimitError(err: unknown): boolean {
   return maybe.status === 429 || message.includes('429') || message.includes('RESOURCE_EXHAUSTED')
 }
 
-async function withEmbeddingRetry<T>(operation: () => Promise<T>): Promise<T> {
+async function withEmbeddingRetry<T>(operation: () => Promise<T>, lane: EmbedLane): Promise<T> {
   const maxRetries = numberEnv('GEMINI_EMBEDDING_MAX_RETRIES', 5)
   const baseDelayMs = numberEnv('GEMINI_EMBEDDING_BASE_DELAY_MS', 2000)
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    await waitForEmbeddingSlot()
+    await waitForEmbeddingSlot(lane)
     try {
       return await operation()
     } catch (err: unknown) {
@@ -72,17 +88,17 @@ function assertEmbeddingDimensions(embeddings: number[][]): number[][] {
   return embeddings
 }
 
-async function embedTextsWithSdkBatch(texts: string[]): Promise<number[][]> {
+async function embedTextsWithSdkBatch(texts: string[], lane: EmbedLane): Promise<number[][]> {
   const ai = getGenAI()
   const result = await withEmbeddingRetry(() => ai.models.embedContent({
     model: MODEL,
     contents: texts,
     config: { outputDimensionality: DIMENSIONS },
-  }))
+  }), lane)
   return (result.embeddings ?? []).map(embedding => embedding.values ?? [])
 }
 
-async function embedTextWithRest(text: string): Promise<number[]> {
+async function embedTextWithRest(text: string, lane: EmbedLane): Promise<number[]> {
   const response = await withEmbeddingRetry(async () => {
     const res = await fetch(REST_EMBEDDING_URL, {
       method: 'POST',
@@ -105,30 +121,31 @@ async function embedTextWithRest(text: string): Promise<number[]> {
     }
 
     return res.json() as Promise<{ embedding?: { values?: number[] } }>
-  })
+  }, lane)
 
   return response.embedding?.values ?? []
 }
 
-export async function embedText(text: string): Promise<number[]> {
-  return (await embedBatch([text]))[0] ?? []
+export async function embedText(text: string, opts: EmbedOpts = {}): Promise<number[]> {
+  return (await embedBatch([text], opts))[0] ?? []
 }
 
-export async function embedBatch(texts: string[]): Promise<number[][]> {
+export async function embedBatch(texts: string[], opts: EmbedOpts = {}): Promise<number[][]> {
   if (!texts.length) return []
   for (const text of texts) {
     if (!text.trim()) throw new Error('Cannot embed empty text')
   }
 
+  const lane: EmbedLane = opts.lane ?? 'bulk'
   const transport = process.env.GEMINI_EMBEDDING_TRANSPORT
   const useRest = transport === 'rest' || texts.length === 1
   const embeddings = useRest
     ? await texts.reduce<Promise<number[][]>>(async (promise, text) => {
       const results = await promise
-      results.push(await embedTextWithRest(text))
+      results.push(await embedTextWithRest(text, lane))
       return results
     }, Promise.resolve([]))
-    : await embedTextsWithSdkBatch(texts)
+    : await embedTextsWithSdkBatch(texts, lane)
 
   if (embeddings.length !== texts.length) {
     throw new Error(`Gemini embedding count mismatch: expected ${texts.length}, got ${embeddings.length}`)

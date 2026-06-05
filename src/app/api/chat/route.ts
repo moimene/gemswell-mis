@@ -424,7 +424,7 @@ async function executeSearchDocuments(
   const [vectorResults, keywordResults] = await Promise.all([
     (async () => {
       try {
-        const embedding = await embedText(input.query)
+        const embedding = await embedText(input.query, { lane: 'interactive' })
         const { data } = await supabase.rpc('match_chunks', {
           query_embedding: embedding,
           match_count: 25,
