@@ -15,8 +15,10 @@ export async function GET(request: NextRequest) {
       .from('rag_documents')
       .select(LIST_COLUMNS, { count: 'exact' })
 
-    // Retired docs hidden by default (mirrors RPC status='indexed'); includeRetired shows all
-    if (!p.includeRetired) query = query.eq('status', 'indexed')
+    // F7: retired docs hidden by default; includeRetired means indexed-OR-retired (not all statuses)
+    query = p.includeRetired
+      ? query.in('status', ['indexed', 'retired'])
+      : query.eq('status', 'indexed')
     if (p.status) query = query.eq('review_status', p.status)
     if (p.onlyNeedsReview) query = query.eq('review_status', 'needs_review')
     if (p.doc_type) query = query.eq('doc_type', p.doc_type)
@@ -24,7 +26,11 @@ export async function GET(request: NextRequest) {
     if (p.channel) query = query.eq('source_channel', p.channel)
     if (p.authorityMin != null) query = query.gte('authority_score', p.authorityMin)
     if (p.onlyNoMarkdown) query = query.is('md_path', null)
-    if (p.q) query = query.ilike('title', `%${p.q}%`)
+    // F12: escape LIKE wildcards (% _ \) so a literal search term isn't treated as a pattern
+    if (p.q) {
+      const safeQ = p.q.replace(/[%_\\]/g, m => '\\' + m)
+      query = query.ilike('title', `%${safeQ}%`)
+    }
 
     query = query
       .order('authority_score', { ascending: false })

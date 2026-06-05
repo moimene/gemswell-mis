@@ -10,6 +10,10 @@ const base: DocGovernanceState = {
   authority_tier: 'audited',
   current_version: 1,
   supersedes_document_id: null,
+  doc_type: 'general',
+  project_id: 'GVF',
+  period: '2025-Q1',
+  lifecycle: 'draft',
 }
 
 describe('computeGovernanceAction', () => {
@@ -52,6 +56,16 @@ describe('computeGovernanceAction', () => {
     expect(r.events.length).toBeGreaterThanOrEqual(1)
   })
 
+  it('reclassify logs the real prior value as old_value (F5)', () => {
+    const r = computeGovernanceAction({ action: 'reclassify', documentId: 'd1',
+      current: { ...base, doc_type: 'general', lifecycle: 'draft' },
+      fields: { doc_type: 'legal', lifecycle: 'signed' }, actor: 'a' })
+    const docTypeEv = r.events.find(e => e.field === 'doc_type')
+    expect(docTypeEv).toMatchObject({ old_value: 'general', new_value: 'legal' })
+    const lifecycleEv = r.events.find(e => e.field === 'lifecycle')
+    expect(lifecycleEv).toMatchObject({ old_value: 'draft', new_value: 'signed' })
+  })
+
   it('reclassify respects explicit authority_score over tier default', () => {
     const r = computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
       fields: { authority_tier: 'controller', authority_score: 88 }, actor: 'a' })
@@ -86,12 +100,62 @@ describe('computeGovernanceAction', () => {
     expect(r.patch.supersedes_document_id).toBe('old1')
     expect(r.patch.current_version).toBe(4) // max(1, 3+1)
     expect(r.related).toEqual({ id: 'old1', patch: { status: 'retired', lifecycle: 'superseded' } })
+    // new doc gets 1 event; old doc gets 2 (status + lifecycle, F5)
     const docIds = r.events.map(e => e.document_id).sort()
-    expect(docIds).toEqual(['new1', 'old1'])
+    expect(docIds).toEqual(['new1', 'old1', 'old1'])
+    const oldEvents = r.events.filter(e => e.document_id === 'old1')
+    expect(oldEvents).toHaveLength(2)
+    expect(oldEvents).toContainEqual(expect.objectContaining({
+      action: 'superseded_by', field: 'status', old_value: 'indexed', new_value: 'retired',
+    }))
+    expect(oldEvents).toContainEqual(expect.objectContaining({
+      action: 'superseded_by', field: 'lifecycle', old_value: 'draft', new_value: 'superseded',
+    }))
   })
 
   it('supersede self → InvalidTransitionError', () => {
     expect(() => computeGovernanceAction({ action: 'supersede', documentId: 'd1', current: base,
       supersede: { oldId: 'd1', oldDoc: base }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  // F3: approve must not resurrect a sticky agent_rejected doc
+  it('approve on agent_rejected doc → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'approve', documentId: 'd1',
+      current: { ...base, classification_source: 'agent_rejected' }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
+  // F4: restore must not resurrect a superseded doc
+  it('restore on retired+superseded doc → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'restore', documentId: 'd1',
+      current: { ...base, status: 'retired', lifecycle: 'superseded' }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
+  // F2: invalid enum/allow-list values fail loud (InvalidTransitionError → 409), not silent-corrupt
+  it('reclassify with invalid doc_type → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { doc_type: 'not_a_type' as never }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  it('reclassify with invalid project_id → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { project_id: 'XXX' }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  it('reclassify with invalid lifecycle → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { lifecycle: 'archived' as never }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  it('reclassify with invalid authority_tier → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { authority_tier: 'platinum' as never }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  it('reclassify with valid project_id passes (sanity)', () => {
+    const r = computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { project_id: 'MAD' }, actor: 'a' })
+    expect(r.patch.project_id).toBe('MAD')
   })
 })

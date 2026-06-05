@@ -1,4 +1,7 @@
-import { AUTHORITY_TIER_SCORE, HUMAN_VALIDATED_SOURCES, RETIRED_STATUS } from '@/lib/knowledge/contracts'
+import {
+  AUTHORITY_TIER_SCORE, AUTHORITY_TIERS, DOC_TYPES, HUMAN_VALIDATED_SOURCES,
+  LIFECYCLES, PROJECT_IDS, RETIRED_STATUS,
+} from '@/lib/knowledge/contracts'
 import type {
   ClassificationSource, DocGovernanceState, GovernanceAction, ReclassifyFields,
 } from '@/lib/knowledge/contracts'
@@ -53,6 +56,10 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
 
   switch (action) {
     case 'approve': {
+      // F3: a doc the agent explicitly rejected (sticky agent_rejected) must not be silently
+      // resurrected by approve — force an explicit reclassify/restore decision first.
+      if (current.classification_source === 'agent_rejected')
+        throw new InvalidTransitionError('document was auto-rejected (agent_rejected); reclassify or restore it explicitly before approving')
       // approve is idempotent: always (re)assert review_status='approved', and endorse
       // machine-classified docs to agent_reviewed (never downgrading human-validated sources).
       // Emits a single consolidated 'approve' event regardless of how many fields it touches.
@@ -76,12 +83,23 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
 
     case 'reclassify': {
       if (!fields || Object.keys(fields).length === 0) throw new InvalidTransitionError('reclassify requires fields')
+      // F2: validate against the allow-lists so bad values fail loud (409) instead of
+      // silently corrupting the row or surfacing as a raw 22P02/23514 500 from Postgres.
+      if (fields.doc_type !== undefined && !(DOC_TYPES as readonly string[]).includes(fields.doc_type))
+        throw new InvalidTransitionError(`invalid doc_type: ${fields.doc_type}`)
+      if (fields.project_id != null && !(PROJECT_IDS as readonly string[]).includes(fields.project_id))
+        throw new InvalidTransitionError(`invalid project_id: ${fields.project_id}`)
+      if (fields.lifecycle !== undefined && !(LIFECYCLES as readonly string[]).includes(fields.lifecycle))
+        throw new InvalidTransitionError(`invalid lifecycle: ${fields.lifecycle}`)
+      if (fields.authority_tier !== undefined && !(AUTHORITY_TIERS as readonly string[]).includes(fields.authority_tier))
+        throw new InvalidTransitionError(`invalid authority_tier: ${fields.authority_tier}`)
       const patch: Record<string, unknown> = {}
       const events: DocEventInsert[] = []
+      // F5: log the real prior value (from current) as old_value, not null.
       for (const key of ['project_id', 'doc_type', 'period', 'lifecycle'] as const) {
         if (fields[key] !== undefined) {
           patch[key] = fields[key]
-          events.push(ev(documentId, 'reclassify', key, null, fields[key], actor, reason))
+          events.push(ev(documentId, 'reclassify', key, current[key] ?? null, fields[key], actor, reason))
         }
       }
       if (fields.authority_tier !== undefined) {
@@ -112,6 +130,10 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
 
     case 'restore': {
       if (current.status !== RETIRED_STATUS) throw new InvalidTransitionError('document is not retired')
+      // F4: a superseded doc was retired by a successor — restoring it would silently re-create a
+      // duplicate source of record. Force the successor relationship to be undone explicitly first.
+      if (current.lifecycle === 'superseded')
+        throw new InvalidTransitionError('document was superseded; restore its successor relationship explicitly')
       return {
         patch: { status: 'indexed' },
         events: [ev(documentId, 'restore', 'status', current.status, 'indexed', actor, reason)],
@@ -128,6 +150,8 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
         events: [
           ev(documentId, 'supersede', 'supersedes_document_id', null, supersede.oldId, actor, reason),
           ev(supersede.oldId, 'superseded_by', 'status', supersede.oldDoc.status, RETIRED_STATUS, actor, reason),
+          // F5: the old doc's lifecycle moves to 'superseded' — record it as a faithful audit event.
+          ev(supersede.oldId, 'superseded_by', 'lifecycle', supersede.oldDoc.lifecycle ?? null, 'superseded', actor, reason),
         ],
       }
     }
