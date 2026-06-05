@@ -25,21 +25,26 @@ export type Confidentiality =
   | 'confidential'
   | 'restricted'
 
-export type DocType =
-  | 'legal'
-  | 'board'
-  | 'funding'
-  | 'capex'
-  | 'cash_flow'
-  | 'bp_model'
-  | 'financial_statements'
-  | 'tax'
-  | 'kyc'
-  | 'dd'
-  | 'asset_management'
-  | 'correspondence'
-  | 'general'
-  | 'unknown'
+export const DOC_TYPES = [
+  'legal',
+  'board',
+  'funding',
+  'capex',
+  'cash_flow',
+  'bp_model',
+  'financial_statements',
+  'tax',
+  'kyc',
+  'dd',
+  'asset_management',
+  'monitoring',
+  'correspondence',
+  'general',
+  'other',
+  'unknown',
+] as const
+
+export type DocType = typeof DOC_TYPES[number]
 
 export type Lifecycle =
   | 'draft'
