@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { liftUpFromChunks, decideReviewStatus, buildClassifyPrompt, parseClassifyResponse } from '@/lib/knowledge/classify'
+import { liftUpFromChunks, decideReviewStatus, buildClassifyPrompt, parseClassifyResponse, classifyResultSchema } from '@/lib/knowledge/classify'
+import { DOC_TYPES } from '@/lib/knowledge/contracts'
 
 describe('liftUpFromChunks', () => {
   it('takes max authority and modal doc_type/project', () => {
@@ -40,6 +41,26 @@ describe('buildClassifyPrompt', () => {
     expect(p).toContain('Acta JG')
     expect(p).toContain('aumento de capital')
     expect(p).toContain('JSON')
+  })
+})
+
+describe('DOC_TYPES taxonomy reconciliation (F8)', () => {
+  it('classifyResultSchema doc_type enum options are all in the canonical DOC_TYPES', () => {
+    // z.enum stores accepted values in .options (readonly tuple)
+    const schemaOptions = (classifyResultSchema.shape.doc_type as { options: readonly string[] }).options
+    const canonicalSet = new Set<string>(DOC_TYPES)
+    for (const opt of schemaOptions) {
+      expect(canonicalSet.has(opt), `"${opt}" is in classifyResultSchema but not in DOC_TYPES`).toBe(true)
+    }
+  })
+
+  it('canonical DOC_TYPES includes both legacy DocType values and classifier-only values', () => {
+    const set = new Set<string>(DOC_TYPES)
+    // Values that were only in contracts.ts DocType
+    expect(set.has('unknown')).toBe(true)
+    // Values that were only in classify.ts DOC_TYPES
+    expect(set.has('monitoring')).toBe(true)
+    expect(set.has('other')).toBe(true)
   })
 })
 

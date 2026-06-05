@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { scoreToTier, tierToScore } from '@/lib/knowledge/authority'
 import type { AuthorityTier, ReviewStatus } from '@/lib/knowledge/contracts'
+import { DOC_TYPES } from '@/lib/knowledge/contracts'
 
 export type ChunkMetaLite = {
   authority?: number | string | null
@@ -71,7 +72,6 @@ export function decideReviewStatus(labels: {
 
 // ─── Haiku document classifier ───────────────────────────────────────────────
 
-const DOC_TYPES = ['legal','board','funding','capex','cash_flow','bp_model','financial_statements','tax','kyc','dd','asset_management','monitoring','correspondence','general','other'] as const
 const TIERS = ['audited','executed','controller','board_pack','dd_memo','internal','narrative','unverified'] as const
 const LIFECYCLES = ['draft','signed','executed','filed','audited','working_paper','superseded','unknown'] as const
 

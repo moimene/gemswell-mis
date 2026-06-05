@@ -50,6 +50,19 @@ type RagDocumentInsert = {
 type ReservedDocument = {
   id: string
   reused: boolean
+  rejected?: boolean
+}
+
+let _anthropicClient: Anthropic | null = null
+function getAnthropic(): Anthropic {
+  if (!_anthropicClient) {
+    _anthropicClient = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+      timeout: 30000,
+      maxRetries: 3,
+    })
+  }
+  return _anthropicClient
 }
 
 const DEFAULT_EMBEDDING_BATCH_SIZE = numberEnv('INGEST_EMBEDDING_BATCH_SIZE', 5)
@@ -133,13 +146,16 @@ async function reserveRagDocument(
   if (error && (error as { code?: string }).code === '23505') {
     const { data: existing, error: existingError } = await supabase
       .from('rag_documents')
-      .select('id')
+      .select('id, review_status')
       .eq('source_hash', sourceHash)
       .maybeSingle()
 
     if (existingError) throw new Error(`rag_documents source_hash lookup failed: ${existingError.message}`)
     if (existing) {
-      const document = existing as RagDocumentInsert
+      const document = existing as RagDocumentInsert & { review_status?: string }
+      if (document.review_status === 'rejected') {
+        return { id: document.id, reused: true, rejected: true }
+      }
       await supabase.from('rag_chunks').delete().eq('document_id', document.id)
       await supabase
         .from('rag_documents')
@@ -263,6 +279,19 @@ export async function processIngestQueueItem(
     documentId = reserved.id
     log(`[ingest] Reserved document: ${documentId}${reserved.reused ? ' (existing source_hash)' : ''}`)
 
+    if (reserved.rejected) {
+      log(`[ingest] skipping re-ingest of human-rejected document ${documentId}`)
+      await supabase
+        .from('ingest_queue')
+        .update({
+          status: 'done',
+          error_message: 'skipped: human-rejected',
+          processed_at: new Date().toISOString(),
+        })
+        .eq('id', item.id)
+      return { file: item.file_name, status: 'done', chunks: 0 }
+    }
+
     const parsed = await parseDocument(fullPath, Buffer.from(buffer), item.file_name, getMimeType(item.file_ext))
     log(`[ingest] Parsed with: ${parsed.parser}`)
     log(`[ingest] Content length: ${parsed.content.length} chars`)
@@ -274,10 +303,9 @@ export async function processIngestQueueItem(
     // Classify the freshly-parsed document so governance is real, not trusted-by-default.
     let cls: Awaited<ReturnType<typeof classifyDocument>> = null
     try {
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
       cls = await classifyDocument(
         { title: item.file_name, sample: parsed.content.slice(0, 4000), dmsFolder: item.category ?? null },
-        anthropic
+        getAnthropic()
       )
     } catch (clsErr) {
       log(`[ingest] classify failed, falling back to rule governance: ${errorMessage(clsErr)}`)
@@ -386,7 +414,10 @@ export async function processIngestQueueItem(
         classification_confidence: govConfidence,
         review_status: govReview,
         lifecycle: govLifecycle,
-        ...(cls ? { summary: cls.result.summary || null, topics: cls.result.topics, currency: cls.result.currency, period: cls.result.period } : {}),
+        summary: cls?.result.summary ?? null,
+        topics: cls?.result.topics ?? null,
+        currency: cls?.result.currency ?? null,
+        period: cls?.result.period ?? null,
       })
       .eq('id', documentId)
 

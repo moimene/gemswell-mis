@@ -1,5 +1,7 @@
 import type { ClassificationSource, ReviewStatus } from '@/lib/knowledge/contracts'
 
+const HUMAN_VALIDATED_SOURCES = new Set<ClassificationSource>(['human', 'agent_reviewed', 'agent_corrected'])
+
 export type SourceVerification = 'source_of_record' | 'supporting' | 'context' | 'unverified'
 
 export type KnowledgeSource = {
@@ -50,10 +52,20 @@ function classificationSourceValue(value: unknown): ClassificationSource | 'unkn
     : 'unknown'
 }
 
-function verificationFromGovernance(authority: number | undefined, reviewStatus: ReviewStatus): SourceVerification {
+function verificationFromGovernance(
+  authority: number | undefined,
+  reviewStatus: ReviewStatus,
+  classificationSource: ClassificationSource | 'unknown'
+): SourceVerification {
   if (reviewStatus === 'rejected') return 'unverified'
   if (authority == null) return 'unverified'
-  if (authority >= 90 && reviewStatus === 'approved') return 'source_of_record'
+  if (
+    authority >= 90 &&
+    reviewStatus === 'approved' &&
+    classificationSource !== 'unknown' &&
+    HUMAN_VALIDATED_SOURCES.has(classificationSource as ClassificationSource)
+  ) return 'source_of_record'
+  if (authority >= 90 && reviewStatus === 'approved') return 'supporting'
   if (authority >= 75 && reviewStatus === 'approved') return 'supporting'
   if (authority >= 75) return 'context'
   return 'context'
@@ -70,7 +82,7 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
   const authority = numberValue(metadata.authority_score) ?? numberValue(metadata.authority)
   const reviewStatus = reviewStatusValue(metadata.review_status)
   const classificationSource = classificationSourceValue(metadata.classification_source)
-  const verification = verificationFromGovernance(authority, reviewStatus)
+  const verification = verificationFromGovernance(authority, reviewStatus, classificationSource)
 
   const dmsPath = dmsFolder ? `${dmsFolder}/${sourceFile}` : undefined
   const reviewSuffix = reviewStatus === 'pending' || reviewStatus === 'needs_review'

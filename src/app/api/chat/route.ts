@@ -493,7 +493,7 @@ async function executeSearchDocuments(
   const reranked = (await rerankChunks(input.query, pool, 10))
     .filter(c => !isRejectedSource(c.metadata))
     .map(c => {
-      const reviewStatus = metadataString(c.metadata, 'review_status') ?? 'approved'
+      const reviewStatus = metadataString(c.metadata, 'review_status') ?? 'needs_review'
       const authorityScore = metadataNumber(c.metadata, 'authority_score') ?? 0
       const authorityBoost = Math.min(authorityScore, 100) / 1000
       const reviewPenalty = reviewStatus === 'pending' || reviewStatus === 'needs_review'
