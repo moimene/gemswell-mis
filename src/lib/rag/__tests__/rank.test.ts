@@ -5,6 +5,7 @@ const md = (o: Record<string, unknown>) => o
 const sor = md({ authority_score: 95, review_status: 'approved', classification_source: 'agent_reviewed' }) // source_of_record
 const approved75 = md({ authority_score: 80, review_status: 'approved', classification_source: 'rule' })      // supporting
 const needs95 = md({ authority_score: 95, review_status: 'needs_review', classification_source: 'agent_auto' }) // context
+const approved40 = md({ authority_score: 40, review_status: 'approved', classification_source: 'rule' })        // context (approved, low authority)
 
 describe('trustTier', () => {
   it('ranks source_of_record > supporting > context', () => {
@@ -39,5 +40,14 @@ describe('rankBySourceTrust', () => {
       { metadata: approved75, relevanceScore: 0.1 },
     ])
     expect(ranked[0].metadata).toBe(approved75)
+  })
+  // R1 finding: within the 'context' tier, approved (human-reviewed) must lead needs_review (unreviewed)
+  it('within the same tier, an approved chunk leads a needs_review one even with lower relevance', () => {
+    expect(trustTier(approved40)).toBe(trustTier(needs95)) // both fall in the 'context' tier
+    const ranked = rankBySourceTrust([
+      { metadata: needs95, relevanceScore: 0.95 },
+      { metadata: approved40, relevanceScore: 0.30 },
+    ])
+    expect(ranked[0].metadata).toBe(approved40)
   })
 })

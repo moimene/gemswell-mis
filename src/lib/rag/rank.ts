@@ -26,10 +26,20 @@ export function trustTier(metadata: Record<string, unknown> | undefined): number
   return TIER_ORDER[verification] ?? 0
 }
 
-/** Order by trust tier (desc), then Cohere relevance (desc); stable for ties. */
+/**
+ * Human review rank, used as a secondary key below trust tier. The `context` tier
+ * (verificationFromGovernance) lumps `approved`-low-authority and `needs_review`
+ * chunks together; this ensures human-reviewed (approved) evidence leads unreviewed
+ * evidence within the same tier, so trust dominates relevance as the spec intends.
+ */
+function approvedRank(metadata: Record<string, unknown> | undefined): number {
+  return str(metadata?.review_status) === 'approved' ? 1 : 0
+}
+
+/** Order by trust tier (desc), then approved-ness (desc), then Cohere relevance (desc); stable for ties. */
 export function rankBySourceTrust<T extends RankableChunk>(chunks: T[]): T[] {
   return chunks
-    .map((c, i) => ({ c, i, tier: trustTier(c.metadata) }))
-    .sort((a, b) => (b.tier - a.tier) || (b.c.relevanceScore - a.c.relevanceScore) || (a.i - b.i))
+    .map((c, i) => ({ c, i, tier: trustTier(c.metadata), appr: approvedRank(c.metadata) }))
+    .sort((a, b) => (b.tier - a.tier) || (b.appr - a.appr) || (b.c.relevanceScore - a.c.relevanceScore) || (a.i - b.i))
     .map(x => x.c)
 }

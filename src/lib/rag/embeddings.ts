@@ -23,8 +23,10 @@ const limiters: Record<EmbedLane, Limiter> = {
   interactive: { tail: Promise.resolve(), nextAt: 0 },
 }
 export function laneIntervalMs(lane: EmbedLane): number {
+  // Interactive is a small spacing only to avoid 429 bursts; Gemini's per-key RPM is far
+  // higher, so keep it low (the lane serializes, so N concurrent queries wait ~N×interval).
   return lane === 'interactive'
-    ? numberEnv('GEMINI_EMBEDDING_INTERACTIVE_MIN_INTERVAL_MS', 250)
+    ? numberEnv('GEMINI_EMBEDDING_INTERACTIVE_MIN_INTERVAL_MS', 50)
     : numberEnv('GEMINI_EMBEDDING_MIN_INTERVAL_MS', 4000)
 }
 export type EmbedOpts = { lane?: EmbedLane }
@@ -44,7 +46,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function waitForEmbeddingSlot(lane: EmbedLane): Promise<void> {
+export async function waitForEmbeddingSlot(lane: EmbedLane): Promise<void> {
   const lim = limiters[lane]
   const minIntervalMs = laneIntervalMs(lane)
   const run = lim.tail.then(async () => {
@@ -54,6 +56,12 @@ async function waitForEmbeddingSlot(lane: EmbedLane): Promise<void> {
   })
   lim.tail = run.catch(() => undefined)
   return run
+}
+
+/** test-only: reset lane state so timing tests are deterministic */
+export function __resetEmbeddingLimiters(): void {
+  limiters.bulk = { tail: Promise.resolve(), nextAt: 0 }
+  limiters.interactive = { tail: Promise.resolve(), nextAt: 0 }
 }
 
 function isRateLimitError(err: unknown): boolean {
