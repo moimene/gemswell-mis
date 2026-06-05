@@ -5,14 +5,45 @@ import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ChevronDown, ChevronR
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
 
+type DocDetail = {
+  title: string | null
+  project_id: string | null
+  doc_type: string | null
+  period: string | null
+  source_channel: string | null
+  classification_source: string
+  source_hash: string | null
+  current_version: number | null
+  review_status: string
+  authority_score: number | null
+  authority_tier: string | null
+  status: string
+  summary: string | null
+}
+type DocEvent = {
+  action: string
+  field: string | null
+  old_value: string | null
+  new_value: string | null
+  actor: string
+  reason: string | null
+  created_at: string
+}
 type Detail = {
-  document: any
-  chunks: { chunk_index: number; content: string; metadata: any }[]
-  events: any[]
+  document: DocDetail
+  chunks: { chunk_index: number; content: string; metadata: unknown }[]
+  events: DocEvent[]
   markdown: { source: string; content: string }
 }
 
-async function patch(id: string, body: any): Promise<boolean> {
+type PatchBody = {
+  action: 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede'
+  fields?: Record<string, string>
+  supersedesId?: string
+  reason?: string
+}
+
+async function patch(id: string, body: PatchBody): Promise<boolean> {
   const r = await fetch(`/api/knowledge/documents/${id}`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
@@ -34,9 +65,17 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
     const r = await fetch(`/api/knowledge/documents/${docId}`)
     setD(await r.json())
   }, [docId])
-  useEffect(() => { load() }, [load])
 
-  const act = async (body: any) => { if (await patch(docId, body)) { await load(); onChanged() } }
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/knowledge/documents/${docId}`)
+      .then(r => r.json())
+      .then(j => { if (!cancelled) setD(j) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [docId])
+
+  const act = async (body: PatchBody) => { if (await patch(docId, body)) { await load(); onChanged() } }
 
   if (!d?.document) return <aside className="w-[460px] border-l bg-white p-6 text-sm text-slate-400">Cargando…</aside>
   const doc = d.document
@@ -85,7 +124,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
             <select value={reclass.authority_tier} onChange={e => setReclass(r => ({ ...r, authority_tier: e.target.value }))} className="w-full rounded border px-2 py-1 text-xs"><option value="">authority_tier…</option>{TIERS.map(t => <option key={t} value={t}>{t}</option>)}</select>
             <input value={reclass.project_id} onChange={e => setReclass(r => ({ ...r, project_id: e.target.value }))} placeholder="project_id (MAD/BHX/…)" className="w-full rounded border px-2 py-1 text-xs" />
             <button onClick={() => {
-              const fields: any = {}
+              const fields: Record<string, string> = {}
               if (reclass.doc_type) fields.doc_type = reclass.doc_type
               if (reclass.authority_tier) fields.authority_tier = reclass.authority_tier
               if (reclass.project_id) fields.project_id = reclass.project_id
