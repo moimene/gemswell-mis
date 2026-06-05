@@ -119,7 +119,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (rpcErr) {
       const code = (rpcErr as { code?: string }).code
       if (code === 'P0002') return NextResponse.json({ error: 'document not found' }, { status: 404 })
-      if (code === '40001' || code === '23505' || code === '22023')
+      // 40001 version conflict, 23505 double-supersede, 22023 self-supersede, 40P01 deadlock — all retryable
+      if (code === '40001' || code === '23505' || code === '22023' || code === '40P01')
         return NextResponse.json({ error: rpcErr.message }, { status: 409 })
       if (code === '22P02' || code === '23514') return NextResponse.json({ error: 'invalid field value' }, { status: 400 })
       return NextResponse.json({ error: rpcErr.message }, { status: 500 })

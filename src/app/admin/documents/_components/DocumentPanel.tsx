@@ -118,7 +118,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
           {retired
             ? <button onClick={() => act({ action: 'restore' })} className="flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Restaurar</button>
             : <button onClick={() => act({ action: 'retire' })} className="flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><Archive className="h-3.5 w-3.5" /> Retirar</button>}
-          <button onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
+          <button disabled={retired || doc.review_status === 'rejected'} title={retired || doc.review_status === 'rejected' ? 'Un documento retirado o rechazado no puede superseder a otro' : undefined} onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
         </div>
 
         {/* Reject inline form (F9): reason required; Cancel does NOT dispatch */}

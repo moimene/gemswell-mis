@@ -118,6 +118,19 @@ describe('computeGovernanceAction', () => {
       supersede: { oldId: 'd1', oldDoc: base }, actor: 'a' })).toThrow(InvalidTransitionError)
   })
 
+  // CX-B6: the superseding (newer) doc must itself be a live source — a retired/rejected one cannot supersede
+  it('supersede from a retired successor → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'supersede', documentId: 'new1',
+      current: { ...base, status: 'retired' }, supersede: { oldId: 'old1', oldDoc: base }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
+  it('supersede from a rejected successor → InvalidTransitionError', () => {
+    expect(() => computeGovernanceAction({ action: 'supersede', documentId: 'new1',
+      current: { ...base, review_status: 'rejected' }, supersede: { oldId: 'old1', oldDoc: base }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
   // F3: approve must not resurrect a sticky agent_rejected doc
   it('approve on agent_rejected doc → InvalidTransitionError', () => {
     expect(() => computeGovernanceAction({ action: 'approve', documentId: 'd1',
