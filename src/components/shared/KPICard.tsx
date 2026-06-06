@@ -6,7 +6,6 @@ interface KPICardProps {
   value: string | number
   subtitle?: string
   rag?: RAGColor
-  trend?: 'up' | 'down' | 'flat'
   className?: string
 }
 

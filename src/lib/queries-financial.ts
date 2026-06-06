@@ -89,24 +89,3 @@ export async function getFundingByProject(projectId: string) {
   return data
 }
 
-export async function getFundingSummary() {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from('fct_funding_snapshot')
-    .select('project_id, committed_amount, drawn_to_date, undrawn_available, dim_funding_instrument(instrument_type, currency)')
-  if (error) throw error
-  return data
-}
-
-// ─── Documents Queries ───────────────────────────────────────────
-export async function getDocuments(projectId?: string) {
-  const supabase = createClient()
-  let query = supabase
-    .from('mis_documents')
-    .select('*')
-    .order('created_at', { ascending: false })
-  if (projectId) query = query.eq('project_id', projectId)
-  const { data, error } = await query
-  if (error) throw error
-  return data
-}
