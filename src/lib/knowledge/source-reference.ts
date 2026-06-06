@@ -65,9 +65,10 @@ export function verificationFromGovernance(
     classificationSource !== 'unknown' &&
     HUMAN_VALIDATED_SOURCES.has(classificationSource as ClassificationSource)
   ) return 'source_of_record'
-  if (authority >= 90 && reviewStatus === 'approved') return 'supporting'
+  // Approved + meaningful authority = supporting; everything else (un-reviewed regardless of
+  // authority, or low authority) is context. Un-reviewed deliberately caps at context (fail-closed,
+  // per sub-project A's governance model) — not a gradation bug.
   if (authority >= 75 && reviewStatus === 'approved') return 'supporting'
-  if (authority >= 75) return 'context'
   return 'context'
 }
 

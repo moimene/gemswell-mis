@@ -629,17 +629,17 @@ async function executeGetCashRunway(input: { project_id: string }): Promise<Tool
   const fmt = (v: number) => `${ccy}${(Math.abs(v) / 1_000_000).toFixed(2)}M`
 
   // Aggregate by quarter
+  // fct_cash_13w.confidence_level is 'Actual' | 'Forecast' (DB casing). A quarter is only
+  // 'Actual' if every line is Actual; a single Forecast line downgrades the quarter to Forecast.
   const byQuarter: Record<string, { inflow: number; outflow: number; confidence: string }> = {}
   for (const r of safe) {
     const ws = new Date(r.week_start as string)
     const q = `Q${Math.ceil((ws.getMonth() + 1) / 3)} ${ws.getFullYear()}`
-    if (!byQuarter[q]) byQuarter[q] = { inflow: 0, outflow: 0, confidence: r.confidence_level as string || 'actual' }
+    if (!byQuarter[q]) byQuarter[q] = { inflow: 0, outflow: 0, confidence: 'Actual' }
     const amt = Number(r.amount_eur) || 0
     if (amt > 0) byQuarter[q].inflow += amt
     else byQuarter[q].outflow += amt
-    // Use lowest confidence as quarter confidence
-    if (r.confidence_level === 'low' || byQuarter[q].confidence === 'low') byQuarter[q].confidence = 'low'
-    else if (r.confidence_level === 'medium' || byQuarter[q].confidence === 'medium') byQuarter[q].confidence = 'medium'
+    if (r.confidence_level !== 'Actual') byQuarter[q].confidence = 'Forecast'
   }
 
   let result = `### 13-Week Cash Flow (last 9 months) — ${input.project_id}\n`
@@ -989,7 +989,8 @@ async function verifyAnswer(
 // ─── Main Chat Handler ───────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const user = await requireUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { messages, conversationId } = (await request.json()) as {
       messages: Message[]
       conversationId?: string
@@ -1037,7 +1038,7 @@ export async function POST(request: NextRequest) {
     if (!convId) {
       const { data: conv } = await supabase
         .from('rag_conversations')
-        .insert({ title: query.slice(0, 100), user_id: 'ceo' })
+        .insert({ title: query.slice(0, 100), user_id: user.email ?? user.id })
         .select('id')
         .single()
       convId = conv?.id

@@ -38,15 +38,17 @@ function getErrorMessage(err: unknown): string {
 
 export async function POST(request: NextRequest) {
   try {
-    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const user = await requireUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const body = await request.json() as ReviewRequestBody
     const {
       candidate_id,
       decision,          // 'accept' | 'reject' | 'override' | 'defer'
       override_value,    // numeric, only for 'override'
       override_reason,
-      decided_by = 'reviewer@gemswell.com',
     } = body
+    // Audit trail records the real authenticated reviewer, not a placeholder identity.
+    const decided_by = body.decided_by ?? user.email ?? user.id
 
     if (!candidate_id || !decision) {
       return NextResponse.json({ error: 'candidate_id and decision required' }, { status: 400 })
