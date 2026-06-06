@@ -29,10 +29,11 @@ Also: the middleware lives at **`src/proxy.ts`** (Next 16 rename — a root `mid
 - [ ] **Vercel production env vars set** (Project → Settings → Environment Variables, Production):
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  - `SUPABASE_SERVICE_ROLE_KEY` ← **mandatory.** `createApiClient()` *throws on boot in production* if missing (no anon fallback — that fallback would silently 500 every API route post-lockdown). Plus any app keys already in use (`OPENAI_API_KEY`, `COHERE_API_KEY`, `GEMINI_API_KEY`, etc.).
+  - `SUPABASE_SERVICE_ROLE_KEY` ← **mandatory.** `createApiClient()` *throws on boot in production* if missing (no anon fallback — that fallback would silently 500 every API route post-lockdown).
+  - **App keys the code actually reads** (verified against `src/`): `ANTHROPIC_API_KEY` (chat LLM + verifier — `api/chat/route.ts`; **without it every `/api/chat` 500s**, breaking the whole RAG UAT path), `COHERE_API_KEY` (rerank), `GOOGLE_AI_API_KEY` (embeddings — `lib/rag/embeddings.ts`; `GEMINI_API_KEY` accepted as fallback). **Do NOT set `OPENAI_API_KEY`** — it is not used anywhere (the chat is Anthropic, not GPT-4o).
 - [ ] **Branch merged to `main`** and `main` builds clean (`npm run build` → `ƒ Proxy (Middleware)` present; 59 tests green; lint clean).
 - [ ] **`013` proven via rollback probe** (already done this round — `CLAIMTEST anon=-1 auth_noclaim=0 auth_admin=5498`). To re-prove on demand, see §6 "dry-run".
-- [ ] **Local `.env.local` has `SUPABASE_SERVICE_ROLE_KEY`** (needed to run `seed-admins`).
+- [ ] **Local `.env.local` has `SUPABASE_SERVICE_ROLE_KEY`** (needed to run `seed-admins`). NB: the repo `.env.local` historically named this key `service_role_secret`; the canonical `SUPABASE_SERVICE_ROLE_KEY` (what `seed-admins.ts` and `supabase-server.ts` read) is now also present. If yours only has `service_role_secret`, add the `SUPABASE_SERVICE_ROLE_KEY` line (same value) or pass it inline: `SUPABASE_SERVICE_ROLE_KEY=… npx tsx scripts/seed-admins.ts …`.
 - [ ] **Pick a quiet window.** Confirm no other agent/session is mid-write on the shared DB.
 
 ---
