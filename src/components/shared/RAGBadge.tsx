@@ -1,18 +1,10 @@
-import { cn, type RAGColor, ragColorMap } from '@/lib/utils'
+import { type RAGColor } from '@/lib/utils'
+import { RagChip, RagDot } from '@/components/shared/terminal'
 
+// Re-skinned onto the shared terminal chip: soft tinted background + dark text
+// (fixes the old white-on-amber ~1.5:1 contrast and the palette divergence from the dashboard).
 export function RAGBadge({ status, label }: { status: RAGColor; label?: string }) {
-  return (
-    <span
-      className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium text-white')}
-      style={{ backgroundColor: ragColorMap[status] }}
-    >
-      {label || status}
-    </span>
-  )
+  return <RagChip status={status} label={label} />
 }
 
-export function RAGDot({ status }: { status: RAGColor }) {
-  return (
-    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ragColorMap[status] }} />
-  )
-}
+export { RagDot as RAGDot }

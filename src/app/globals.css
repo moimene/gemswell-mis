@@ -20,7 +20,8 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* use the loaded Inter (via --font-geist-sans); the Tailwind font-mono utility uses JetBrains Mono */
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 /* Belt-and-suspenders: any native form control inherits a readable dark text colour even if a

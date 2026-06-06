@@ -1,11 +1,14 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Providers } from '@/components/providers'
 import { Toaster } from 'sonner'
 
-const inter = Inter({ subsets: ['latin'] })
+// The whole "financial terminal" aesthetic depends on a real mono for figures/labels.
+// These feed the --font-geist-sans / --font-geist-mono vars the Tailwind theme references.
+const inter = Inter({ subsets: ['latin'], variable: '--font-geist-sans' })
+const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
   title: 'Gemswell MIS',
@@ -14,8 +17,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="es">
+      <body className={`${inter.variable} ${mono.variable} font-sans`}>
         <Providers>
           <div className="flex h-screen overflow-hidden">
             <Sidebar />
