@@ -67,46 +67,98 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={signInPassword} className="w-80 space-y-3 rounded-lg border bg-white p-6 shadow">
-      <h1 className="text-lg font-bold text-slate-900">Gemswell MIS</h1>
-      <input
-        type="email"
-        required
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="email"
-        className="w-full rounded border px-3 py-2 text-sm"
-      />
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        placeholder="contraseña"
-        className="w-full rounded border px-3 py-2 text-sm"
-      />
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-full rounded bg-slate-800 py-2 text-sm font-medium text-white disabled:opacity-50"
-      >
-        Entrar
-      </button>
-      <button
-        type="button"
-        onClick={sendMagicLink}
-        disabled={busy}
-        className="w-full rounded border py-2 text-sm disabled:opacity-50"
-      >
-        Enviar enlace mágico
-      </button>
+    <form
+      onSubmit={signInPassword}
+      className="w-[360px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-md"
+    >
+      {/* ── BRAND HEADER ──────────────────────────────────────────────────── */}
+      <div className="h-1 w-full bg-[#0B4A6F]" />
+      <div className="space-y-4 p-7">
+        <div>
+          <p className="font-mono text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase">
+            Gemswell Ventures · MIS
+          </p>
+          <h1 className="mt-1 text-[20px] font-bold tracking-tight text-slate-900">
+            Acceso al panel
+          </h1>
+          <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+            Portfolio MAD · BHX
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="login-email"
+            className="font-mono text-[10px] font-bold tracking-widest text-slate-500 uppercase"
+          >
+            Email
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="tu@empresa.com"
+            className="w-full rounded border border-slate-300 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-[#0B4A6F] focus:ring-1 focus:ring-[#0B4A6F] focus:outline-none"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="login-password"
+            className="font-mono text-[10px] font-bold tracking-widest text-slate-500 uppercase"
+          >
+            Contraseña
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            className="w-full rounded border border-slate-300 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-[#0B4A6F] focus:ring-1 focus:ring-[#0B4A6F] focus:outline-none"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full rounded bg-[#0B4A6F] py-2.5 text-sm font-medium text-white hover:bg-[#0a3f5e] disabled:opacity-50"
+        >
+          Entrar
+        </button>
+
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={sendMagicLink}
+            disabled={busy}
+            className="w-full text-center font-mono text-[11px] text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-50"
+          >
+            ¿Prefieres un enlace de acceso por email?
+          </button>
+        </div>
+      </div>
     </form>
   )
 }
 
 export default function LoginPage() {
   return (
-    <div className="fixed inset-0 z-50 flex min-h-screen items-center justify-center bg-slate-100">
-      <Suspense fallback={<div className="text-sm text-slate-500">Cargando…</div>}>
+    <div className="fixed inset-0 z-50 flex min-h-screen items-center justify-center bg-slate-50">
+      <Suspense
+        fallback={
+          <div className="w-[360px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-md">
+            <div className="h-1 w-full bg-[#0B4A6F]" />
+            <div className="p-7 text-center">
+              <div className="font-mono text-[11px] tracking-wide text-slate-400 uppercase">
+                Cargando…
+              </div>
+            </div>
+          </div>
+        }
+      >
         <LoginForm />
       </Suspense>
     </div>

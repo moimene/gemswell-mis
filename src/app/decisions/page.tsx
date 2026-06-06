@@ -1,8 +1,9 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { cn } from '@/lib/utils'
-import { CheckCircle } from 'lucide-react'
+import { cn, type RAGColor } from '@/lib/utils'
+import { CheckCircle, AlertTriangle } from 'lucide-react'
+import { PageHeader, RagChip, ProjectBadge } from '@/components/shared/terminal'
 
 type MaybeJoined<T> = T | T[] | null | undefined
 function firstJoined<T>(v: MaybeJoined<T>): T | null {
@@ -22,14 +23,12 @@ type Decision = {
   dim_owner?: MaybeJoined<{ full_name: string | null }>
 }
 
-const PROJECT_ACCENT: Record<string, string> = { MAD: '#0B4A6F', BHX: '#166534' }
-
 const OPEN_STATUSES = ['AS_OPEN', 'AS_PROG']
-const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  AS_OPEN: { label: 'Abierta', cls: 'bg-slate-100 text-slate-600' },
-  AS_PROG: { label: 'En curso', cls: 'bg-amber-100 text-amber-700' },
-  AS_DONE: { label: 'Cerrada', cls: 'bg-blue-100 text-blue-700' },
-  AS_CANC: { label: 'Cancelada', cls: 'bg-slate-100 text-slate-400' },
+const STATUS_LABEL: Record<string, { label: string; rag: RAGColor }> = {
+  AS_OPEN: { label: 'Abierta', rag: 'Grey' },
+  AS_PROG: { label: 'En curso', rag: 'Amber' },
+  AS_DONE: { label: 'Cerrada', rag: 'Blue' },
+  AS_CANC: { label: 'Cancelada', rag: 'Grey' },
 }
 
 function fmtDate(s: string | null): string {
@@ -67,11 +66,12 @@ export default function DecisionsPage() {
   const open = decisions.filter(d => OPEN_STATUSES.includes(d.status_code))
 
   return (
-    <div className="space-y-4 pb-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Decisiones</h1>
-        <p className="text-sm text-slate-500">Registro de decisiones de gobierno · {open.length} abiertas</p>
-      </div>
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        title="Decisiones"
+        subtitle={`Registro de decisiones de gobierno · ${open.length} abiertas`}
+      />
+
 
       {loadError ? (
         <div className="max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
@@ -105,14 +105,14 @@ export default function DecisionsPage() {
               </tr>
             </thead>
             <tbody>
-              {decisions.map((d, i) => {
+              {decisions.map((d) => {
                 const overdue = OPEN_STATUSES.includes(d.status_code) && d.implementation_due && new Date(d.implementation_due) < now
-                const status = STATUS_LABEL[d.status_code] || { label: d.status_code, cls: 'bg-slate-100 text-slate-600' }
+                const status = STATUS_LABEL[d.status_code] || { label: d.status_code, rag: 'Grey' as RAGColor }
                 return (
-                  <tr key={d.id} className={cn('border-b border-slate-50 last:border-0 align-top', i % 2 === 1 ? 'bg-slate-50/40' : '')}>
+                  <tr key={d.id} className={cn('border-b border-slate-50 align-top last:border-0 odd:bg-slate-50/30 hover:bg-slate-50')}>
                     <td className="px-3 py-2.5 font-mono text-[11px] text-slate-500 whitespace-nowrap">{d.decision_id || '—'}</td>
                     <td className="px-3 py-2.5">
-                      <span className="rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold text-white" style={{ backgroundColor: PROJECT_ACCENT[d.project_id] || '#475569' }}>{d.project_id}</span>
+                      <ProjectBadge projectId={d.project_id} />
                     </td>
                     <td className="px-3 py-2.5 max-w-[420px]">
                       <p className="font-medium text-slate-800">{d.decision_topic || '—'}</p>
@@ -120,8 +120,10 @@ export default function DecisionsPage() {
                     </td>
                     <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{firstJoined(d.dim_owner)?.full_name || 'Sin asignar'}</td>
                     <td className="px-3 py-2.5 font-mono text-[11px] text-slate-500 whitespace-nowrap">{d.meeting_type || '—'}</td>
-                    <td className="px-3 py-2.5"><span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', status.cls)}>{status.label}</span></td>
-                    <td className={cn('px-3 py-2.5 font-mono text-[11px] whitespace-nowrap', overdue ? 'font-bold text-red-600' : 'text-slate-400')}>{overdue ? '⚠ ' : ''}{fmtDate(d.implementation_due)}</td>
+                    <td className="px-3 py-2.5"><RagChip status={status.rag} label={status.label} /></td>
+                    <td className={cn('px-3 py-2.5 font-mono text-[11px] whitespace-nowrap', overdue ? 'font-bold text-red-600' : 'text-slate-400')}>
+                      {overdue && <AlertTriangle className="mr-1 inline h-3 w-3 text-red-600" />}{fmtDate(d.implementation_due)}
+                    </td>
                   </tr>
                 )
               })}

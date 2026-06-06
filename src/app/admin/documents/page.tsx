@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Search, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { PageHeader } from '@/components/shared/terminal'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './_components/badges'
 import { DocumentPanel } from './_components/DocumentPanel'
 import { CorpusHealth } from './_components/CorpusHealth'
@@ -16,6 +17,7 @@ type DocRow = {
 type ListResp = { items: DocRow[]; page: number; pageSize: number; total: number; totalPages: number }
 
 const REVIEW_OPTIONS = ['', 'needs_review', 'approved', 'rejected', 'pending']
+const REVIEW_LABELS: Record<string, string> = { needs_review: 'Sin revisar', approved: 'Aprobado', rejected: 'Rechazado', pending: 'Pendiente' }
 const DOCTYPE_OPTIONS = ['', 'legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other', 'unknown']
 const PROJECT_OPTIONS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
 
@@ -56,68 +58,90 @@ export default function DocumentsPage() {
 
   return (
     <div className="flex h-full">
-      <div className="flex-1 overflow-auto p-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-slate-900">Gestor Documental</h1>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowUpload(s => !s)} className="flex items-center gap-2 rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
-              <Upload className="h-4 w-4" /> Subir documento
-            </button>
-            <button onClick={load} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50">
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Actualizar
-            </button>
-          </div>
-        </div>
+      <div className="flex-1 space-y-4 overflow-auto p-6">
+        <PageHeader
+          eyebrow="Gemswell Ventures · MIS · Corpus"
+          title="Gestor Documental"
+          subtitle="Gobierno del corpus: verificación, autoridad y trazabilidad"
+          right={
+            <>
+              <button onClick={() => setShowUpload(s => !s)} className="flex items-center gap-2 rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/20">
+                <Upload className="h-4 w-4" /> Subir documento
+              </button>
+              <button onClick={load} className="flex items-center gap-2 rounded-md border border-white/20 px-3 py-1.5 text-sm text-white hover:bg-white/10">
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Actualizar
+              </button>
+            </>
+          }
+        />
 
         {showUpload && <UploadPanel onClose={() => setShowUpload(false)} onUploaded={() => { setPage(1); load() }} />}
 
         <CorpusHealth />
 
-        {/* Filters */}
-        <div className="mb-3 mt-4 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-md border px-2">
+        {/* Filtros */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-md border border-slate-200 px-2">
             <Search className="h-4 w-4 text-slate-400" />
             <input value={filters.q} onChange={e => setFilters(f => ({ ...f, q: e.target.value }))}
               onKeyDown={e => e.key === 'Enter' && (setPage(1), load())}
-              placeholder="Buscar título…" className="py-1.5 text-sm outline-none" />
+              placeholder="Buscar título…" className="py-1.5 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
           </div>
-          <select value={filters.status} onChange={e => { setPage(1); setFilters(f => ({ ...f, status: e.target.value })) }} className="rounded-md border px-2 py-1.5 text-sm">
-            {REVIEW_OPTIONS.map(o => <option key={o} value={o}>{o || 'Estado: todos'}</option>)}
+          <select value={filters.status} onChange={e => { setPage(1); setFilters(f => ({ ...f, status: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700">
+            {REVIEW_OPTIONS.map(o => <option key={o} value={o}>{o ? REVIEW_LABELS[o] : 'Estado: todos'}</option>)}
           </select>
-          <select value={filters.doc_type} onChange={e => { setPage(1); setFilters(f => ({ ...f, doc_type: e.target.value })) }} className="rounded-md border px-2 py-1.5 text-sm">
+          <select value={filters.doc_type} onChange={e => { setPage(1); setFilters(f => ({ ...f, doc_type: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700">
             {DOCTYPE_OPTIONS.map(o => <option key={o} value={o}>{o || 'Tipo: todos'}</option>)}
           </select>
-          <select value={filters.project} onChange={e => { setPage(1); setFilters(f => ({ ...f, project: e.target.value })) }} className="rounded-md border px-2 py-1.5 text-sm">
+          <select value={filters.project} onChange={e => { setPage(1); setFilters(f => ({ ...f, project: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700">
             {PROJECT_OPTIONS.map(o => <option key={o} value={o}>{o || 'Proyecto: todos'}</option>)}
           </select>
           <input value={filters.authority_min} onChange={e => { setPage(1); setFilters(f => ({ ...f, authority_min: e.target.value })) }}
-            placeholder="Auth≥" className="w-20 rounded-md border px-2 py-1.5 text-sm" />
-          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNoMarkdown} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNoMarkdown: e.target.checked })) }} /> sin markdown</label>
-          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.includeRetired} onChange={e => { setPage(1); setFilters(f => ({ ...f, includeRetired: e.target.checked })) }} /> incluir retirados</label>
+            placeholder="Auth ≥" className="w-20 rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700 placeholder:text-slate-400" />
+          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNoMarkdown} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNoMarkdown: e.target.checked })) }} /> Sin markdown</label>
+          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.includeRetired} onChange={e => { setPage(1); setFilters(f => ({ ...f, includeRetired: e.target.checked })) }} /> Incluir retirados</label>
         </div>
 
-        {/* Table */}
-        <table className="w-full text-sm">
-          <thead className="border-b text-left text-xs uppercase tracking-wide text-slate-400">
-            <tr><th className="py-2">Título</th><th>Proj</th><th>Tipo</th><th>Auth</th><th>Estado</th><th>Trust</th><th>Chk</th></tr>
-          </thead>
-          <tbody>
-            {rows.map(d => (
-              <tr key={d.id} onClick={() => setSelected(d.id)}
-                className={cn('cursor-pointer border-b hover:bg-slate-50', selected === d.id && 'bg-sky-50')}>
-                <td className="max-w-md truncate py-2 font-medium text-slate-800">{d.title ?? '(sin título)'}</td>
-                <td className="text-slate-500">{d.project_id ?? '—'}</td>
-                <td className="text-slate-500">{d.doc_type ?? '—'}</td>
-                <td><AuthorityBadge score={d.authority_score} tier={d.authority_tier} /></td>
-                <td><ReviewBadge status={d.review_status} /></td>
-                <td><VerificationBadge score={d.authority_score} review={d.review_status} source={d.classification_source} /></td>
-                <td className="text-slate-400">{d.chunk_count ?? 0}</td>
+        {/* Tabla */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <th className="px-3 py-2.5">Título</th>
+                <th className="px-3 py-2.5">Proyecto</th>
+                <th className="px-3 py-2.5">Tipo</th>
+                <th className="px-3 py-2.5">Autoridad</th>
+                <th className="px-3 py-2.5">Estado</th>
+                <th className="px-3 py-2.5">Verificación</th>
+                <th className="px-3 py-2.5 text-right">Fragm.</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map(d => (
+                <tr key={d.id} onClick={() => setSelected(d.id)}
+                  className={cn('cursor-pointer border-b border-slate-50 odd:bg-slate-50/30 hover:bg-slate-50', selected === d.id && 'bg-sky-50')}>
+                  <td className="max-w-md truncate px-3 py-2.5 font-medium text-slate-800">{d.title ?? '(sin título)'}</td>
+                  <td className="px-3 py-2.5 text-slate-600">{d.project_id ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-slate-600">{d.doc_type ?? '—'}</td>
+                  <td className="px-3 py-2.5"><AuthorityBadge score={d.authority_score} tier={d.authority_tier} /></td>
+                  <td className="px-3 py-2.5"><ReviewBadge status={d.review_status} /></td>
+                  <td className="px-3 py-2.5"><VerificationBadge score={d.authority_score} review={d.review_status} source={d.classification_source} /></td>
+                  <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-600">{d.chunk_count ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {loading && rows.length === 0 && !loadError && (
+            <div className="flex flex-col items-center gap-3 py-12">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+              <p className="font-mono text-xs text-slate-400">Cargando documentos…</p>
+            </div>
+          )}
+          {rows.length === 0 && !loading && !loadError && <p className="py-12 text-center font-mono text-xs text-slate-400">Sin documentos para estos filtros.</p>}
+        </div>
+
         {loadError && !loading && (
-          <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
             <p className="font-medium">No se pudo cargar el listado{loadError === 'auth' ? ' — la sesión pudo expirar.' : '.'}</p>
             <div className="mt-3 flex items-center gap-3">
               <button onClick={load} className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-amber-800 hover:bg-amber-100">Reintentar</button>
@@ -125,15 +149,14 @@ export default function DocumentsPage() {
             </div>
           </div>
         )}
-        {rows.length === 0 && !loading && !loadError && <p className="mt-6 text-center text-sm text-slate-400">Sin documentos para estos filtros.</p>}
 
-        {/* Pagination */}
-        <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
-          <span>{total} documentos</span>
+        {/* Paginación */}
+        <div className="flex items-center justify-between text-sm text-slate-500">
+          <span className="font-mono tabular-nums">{total} documentos</span>
           <div className="flex gap-2">
-            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded border px-2 py-1 disabled:opacity-40">Anterior</button>
-            <span className="px-2 py-1">Pág {page}</span>
-            <button disabled={page * 50 >= total} onClick={() => setPage(p => p + 1)} className="rounded border px-2 py-1 disabled:opacity-40">Siguiente</button>
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50 disabled:opacity-40">Anterior</button>
+            <span className="px-2 py-1 font-mono tabular-nums">Pág {page}</span>
+            <button disabled={page * 50 >= total} onClick={() => setPage(p => p + 1)} className="rounded border border-slate-200 px-2 py-1 hover:bg-slate-50 disabled:opacity-40">Siguiente</button>
           </div>
         </div>
       </div>

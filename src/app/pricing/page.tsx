@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { cn, formatCurrency, formatPercent, type RAGColor } from '@/lib/utils'
 import { KPICard } from '@/components/shared/KPICard'
-import { RAGBadge } from '@/components/shared/RAGBadge'
+import { PageHeader, RagChip } from '@/components/shared/terminal'
 import { Tag } from 'lucide-react'
 
 type ProjectTab = 'MAD' | 'BHX'
@@ -23,7 +23,7 @@ type CorridorRow = {
 }
 
 const occRAG = (p: number): RAGColor => p >= 70 ? 'Green' : p >= 40 ? 'Amber' : 'Red'
-const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+const DAYS = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']
 
 export default function PricingPage() {
   const [activeProject, setActiveProject] = useState<ProjectTab>('MAD')
@@ -91,7 +91,7 @@ export default function PricingPage() {
     if (!s.service_date) continue
     const d = new Date(s.service_date)
     if (d < today || d > in28) continue
-    const wk = `W+${Math.floor((d.getTime() - today.getTime()) / (7 * 86400000)) + 1}`
+    const wk = `S+${Math.floor((d.getTime() - today.getTime()) / (7 * 86400000)) + 1}`
     const dow = (d.getDay() + 6) % 7
     if (!heatMap[wk]) heatMap[wk] = {}
     heatMap[wk][dow] = (heatMap[wk][dow] || 0) + (s.occupancy_pct || 0)
@@ -99,32 +99,42 @@ export default function PricingPage() {
   const heatWeeks = Object.keys(heatMap).sort()
   const hasFuture = heatWeeks.length > 0
 
-  const TAB_CLS = (active: boolean) =>
-    `rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${active ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Pricing & Ticketing</h1>
-          <p className="text-sm text-slate-500">
-            {snapshotDate ? `Snapshot: ${new Date(snapshotDate).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}` : 'Revenue pricing by product & timeband'}
-          </p>
-        </div>
-        <div className="flex gap-1 rounded-lg border bg-white p-1">
-          {(['MAD','BHX'] as const).map(t => (
-            <button key={t} type="button" onClick={() => setActiveProject(t)} className={TAB_CLS(activeProject === t)}>
-              {t === 'MAD' ? 'Madrid Playa Surf' : 'Birmingham'}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Precios y Ticketing · MIS"
+        title="Precios y Ticketing"
+        subtitle={
+          snapshotDate
+            ? `Snapshot: ${new Date(snapshotDate).toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' })}`
+            : 'Precios de ingresos por producto y franja horaria'
+        }
+        right={
+          <div className="flex gap-1 rounded-lg border border-slate-700 bg-slate-800 p-1">
+            {(['MAD','BHX'] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setActiveProject(t)}
+                className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${activeProject === t ? 'bg-white text-slate-900' : 'text-slate-300 hover:bg-slate-700'}`}
+              >
+                {t === 'MAD' ? 'Madrid Playa Surf' : 'Birmingham'}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="flex items-center justify-center h-64"><p className="text-slate-400">Loading pricing data...</p></div>
+        <div className="flex h-64 items-center justify-center">
+          <div className="space-y-2 text-center">
+            <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+            <p className="font-mono text-xs text-slate-500">Cargando datos de precios…</p>
+          </div>
+        </div>
       ) : loadError ? (
-        <div className="rounded-lg border bg-white p-12 text-center">
-          <Tag className="h-10 w-10 mx-auto mb-3 text-slate-300" />
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+          <Tag className="h-10 w-10 mx-auto mb-3 text-slate-400" />
           <h3 className="text-base font-semibold text-slate-700 mb-1">No se pudo cargar</h3>
           <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
             La sesión pudo expirar. Inténtalo de nuevo o inicia sesión.
@@ -139,62 +149,62 @@ export default function PricingPage() {
             </button>
             <a
               href="/login"
-              className="rounded-md border px-4 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
+              className="rounded-md border border-slate-200 px-4 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
             >
               Iniciar sesión
             </a>
           </div>
         </div>
       ) : slots.length === 0 ? (
-        <div className="rounded-lg border bg-white p-12 text-center">
-          <Tag className="h-10 w-10 mx-auto mb-3 text-slate-300" />
-          <h3 className="text-base font-semibold text-slate-700 mb-1">Pricing data not yet available</h3>
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+          <Tag className="h-10 w-10 mx-auto mb-3 text-slate-400" />
+          <h3 className="text-base font-semibold text-slate-700 mb-1">Datos de precios aún no disponibles</h3>
           <p className="text-sm text-slate-500 max-w-md mx-auto">
             {activeProject === 'MAD'
-              ? 'Pricing data will be available when operations begin (Q1 2027 for MAD). The tariff structure is currently in design.'
-              : 'Pricing data will be available when Birmingham moves into operational planning.'}
+              ? 'Los precios estarán disponibles cuando arranque la operación (Q1 2027 para MAD). La estructura tarifaria está en diseño.'
+              : 'Los precios estarán disponibles cuando Birmingham entre en planificación operativa.'}
           </p>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KPICard title="Total Capacity" value={totalCapacity.toLocaleString()} subtitle="Units across all slots" />
-            <KPICard title="Units Sold" value={totalSold.toLocaleString()} subtitle={`${formatPercent(avgOcc)} occupancy`} />
-            <KPICard title="Avg Occupancy" value={formatPercent(avgOcc)} subtitle="Sold / Capacity" rag={occRAG(avgOcc)} />
-            <KPICard title="Gross Revenue" value={formatCurrency(grossRev, ccy)} subtitle="Sum of all slots" />
+            <KPICard title="Capacidad total" value={totalCapacity.toLocaleString('es-ES')} subtitle="Unidades en todos los slots" />
+            <KPICard title="Unidades vendidas" value={totalSold.toLocaleString('es-ES')} subtitle={`${formatPercent(avgOcc)} ocupación`} />
+            <KPICard title="Ocupación media" value={formatPercent(avgOcc)} subtitle="Vendido / Capacidad" rag={occRAG(avgOcc)} />
+            <KPICard title="Ingresos brutos" value={formatCurrency(grossRev, ccy)} subtitle="Suma de todos los slots" />
           </div>
 
-          <div className="rounded-lg border bg-white overflow-hidden">
-            <div className="px-6 py-4 border-b flex items-center gap-2">
-              <h3 className="text-sm font-medium text-slate-700">Pricing Corridor</h3>
-              <span className="text-xs text-slate-400">Floor · Base · Ceiling by product & daypart</span>
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-2">
+              <h3 className="font-mono text-[11px] font-bold tracking-widest uppercase text-slate-500">Corredor de precios</h3>
+              <span className="font-mono text-[10px] text-slate-400">Suelo · Base · Techo por producto y franja</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    {['Product','Daypart','Floor','Base','Ceiling','Net Price','Occupancy','Revenue'].map((h, i) => (
-                      <th key={h} className={`px-4 py-3 font-medium text-slate-600 ${i >= 2 && i !== 6 ? 'text-right' : i === 6 ? 'text-center' : ''}`}>{h}</th>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                    {['Producto','Franja','Suelo','Base','Techo','Precio neto','Ocupación','Ingresos'].map((h, i) => (
+                      <th key={h} className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 ${i >= 2 && i !== 6 ? 'text-right' : i === 6 ? 'text-center' : ''}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {corridorRows.map((row, i) => (
-                    <tr key={i} className="border-b hover:bg-slate-50">
+                    <tr key={i} className="border-b border-slate-100 odd:bg-slate-50/30 hover:bg-slate-50">
                       <td className="px-4 py-2.5 font-medium text-slate-900">
                         <span className="flex items-center gap-1.5">
                           {row.product_name}
-                          {row.is_peak && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Peak</span>}
-                          {row.waitlist_units > 0 && <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">Waitlist</span>}
+                          {row.is_peak && <span className="rounded-[2px] bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-700">Pico</span>}
+                          {row.waitlist_units > 0 && <span className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-blue-700">Lista espera</span>}
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-slate-600 text-xs">{row.daypart}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-slate-500 text-xs">{formatCurrency(row.floor_price, ccy)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs">{formatCurrency(row.base_price, ccy)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-slate-500 text-xs">{formatCurrency(row.ceiling_price, ccy)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono font-semibold text-xs">{formatCurrency(row.net_price, ccy)}</td>
-                      <td className="px-4 py-2.5 text-center"><RAGBadge status={occRAG(row.occupancy_pct)} label={formatPercent(row.occupancy_pct)} /></td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs font-medium">{formatCurrency(row.gross_revenue, ccy)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-500 text-xs">{formatCurrency(row.floor_price, ccy)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-700 text-xs">{formatCurrency(row.base_price, ccy)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-500 text-xs">{formatCurrency(row.ceiling_price, ccy)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums font-semibold text-slate-900 text-xs">{formatCurrency(row.net_price, ccy)}</td>
+                      <td className="px-4 py-2.5 text-center"><RagChip status={occRAG(row.occupancy_pct)} label={formatPercent(row.occupancy_pct)} /></td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-xs font-medium text-slate-700">{formatCurrency(row.gross_revenue, ccy)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -203,20 +213,20 @@ export default function PricingPage() {
           </div>
 
           {hasFuture && (
-            <div className="rounded-lg border bg-white overflow-hidden">
-              <div className="px-6 py-4 border-b"><h3 className="text-sm font-medium text-slate-700">Occupancy Heatmap — Next 4 Weeks</h3></div>
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200"><h3 className="font-mono text-[11px] font-bold tracking-widest uppercase text-slate-500">Mapa de calor de ocupación — Próximas 4 semanas</h3></div>
               <div className="overflow-x-auto p-4">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left">
-                      <th className="px-3 py-2 font-medium text-slate-500 text-xs w-16">Week</th>
-                      {DAYS.map(d => <th key={d} className="px-3 py-2 font-medium text-slate-500 text-xs text-center">{d}</th>)}
+                      <th className="px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 w-16">Semana</th>
+                      {DAYS.map(d => <th key={d} className="px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center">{d}</th>)}
                     </tr>
                   </thead>
                   <tbody>
                     {heatWeeks.map(wk => (
-                      <tr key={wk} className="border-t">
-                        <td className="px-3 py-2 text-xs font-medium text-slate-600">{wk}</td>
+                      <tr key={wk} className="border-t border-slate-100">
+                        <td className="px-3 py-2 font-mono text-xs font-medium text-slate-600">{wk}</td>
                         {DAYS.map((_, dow) => {
                           const occ = heatMap[wk][dow] ?? null
                           const bg = occ === null ? 'bg-slate-100' : occ >= 70 ? 'bg-green-200' : occ >= 40 ? 'bg-amber-200' : 'bg-red-200'

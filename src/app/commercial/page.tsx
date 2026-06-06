@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { formatCurrency, formatCompact, formatPercent, type RAGColor } from '@/lib/utils'
 import { KPICard } from '@/components/shared/KPICard'
-import { RAGBadge } from '@/components/shared/RAGBadge'
+import { PageHeader, RagChip } from '@/components/shared/terminal'
 import { BarChart3 } from 'lucide-react'
 
 type ProjectTab = 'MAD' | 'BHX'
@@ -23,11 +23,7 @@ type WeekRow = { week_ending: string; reservations: number; revenue: number; dep
 
 const convRAG = (p: number): RAGColor => p >= 30 ? 'Green' : p >= 10 ? 'Amber' : 'Red'
 const roasRAG = (r: number): RAGColor => r >= 5 ? 'Green' : r >= 2 ? 'Amber' : 'Red'
-const fmtWeek = (d: string) => new Date(d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'2-digit' })
-const CH_COLOR: Record<string, string> = {
-  Owned: 'bg-blue-50 text-blue-700', Paid: 'bg-purple-50 text-purple-700',
-  Earned: 'bg-green-50 text-green-700', Partner: 'bg-amber-50 text-amber-700',
-}
+const fmtWeek = (d: string) => new Date(d).toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'2-digit' })
 
 export default function CommercialPage() {
   const [activeProject, setActiveProject] = useState<ProjectTab>('MAD')
@@ -114,76 +110,81 @@ export default function CommercialPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Commercial</h1>
-          <p className="text-sm text-slate-500">
-            {latestWeek ? `Week ending ${fmtWeek(latestWeek)} — channel performance & pipeline` : 'Reservations, pipeline, and marketing performance'}
-          </p>
-        </div>
-        <div className="flex gap-1 rounded-lg border bg-white p-1">
-          {(['MAD','BHX'] as const).map(t => (
-            <button key={t} type="button" onClick={() => setActiveProject(t)} className={TAB_CLS(activeProject === t)}>
-              {t === 'MAD' ? 'Madrid Playa Surf' : 'Birmingham'}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        band={false}
+        eyebrow="Comercial · MIS"
+        title="Comercial"
+        subtitle={latestWeek ? `Semana hasta ${fmtWeek(latestWeek)} — rendimiento de canales y pipeline` : 'Reservas, pipeline y rendimiento de marketing'}
+        right={
+          <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+            {(['MAD','BHX'] as const).map(t => (
+              <button key={t} type="button" onClick={() => setActiveProject(t)} className={TAB_CLS(activeProject === t)}>
+                {t === 'MAD' ? 'Madrid Playa Surf' : 'Birmingham'}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="flex items-center justify-center h-64"><p className="text-slate-400">Loading commercial data...</p></div>
+        <div className="flex h-64 items-center justify-center">
+          <div className="space-y-2 text-center">
+            <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+            <p className="font-mono text-xs text-slate-500">Cargando datos comerciales...</p>
+          </div>
+        </div>
       ) : loadError ? (
-        <div className="rounded-lg border bg-white p-12 text-center">
-          <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-300" />
-          <h3 className="text-base font-semibold text-slate-700 mb-1">Unable to load commercial data</h3>
-          <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
-            Your session may have expired. Please retry, or sign in again.
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+          <BarChart3 className="mx-auto mb-3 h-10 w-10 text-slate-400" />
+          <h3 className="mb-1 text-base font-semibold text-slate-700">No se pudo cargar</h3>
+          <p className="mx-auto mb-4 max-w-md text-sm text-slate-500">
+            La sesión pudo expirar. Reintenta o inicia sesión.
           </p>
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-center gap-2">
             <button
               type="button"
               onClick={() => setReloadKey(k => k + 1)}
-              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
             >
-              Retry
+              Reintentar
             </button>
-            <a href="/login" className="rounded-md border px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
-              Sign in
+            <a href="/login" className="rounded-md border border-slate-200 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
+              Iniciar sesión
             </a>
           </div>
         </div>
       ) : rows.length === 0 ? (
-        <div className="rounded-lg border bg-white p-12 text-center">
-          <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-300" />
-          <h3 className="text-base font-semibold text-slate-700 mb-1">Commercial tracking not yet active</h3>
-          <p className="text-sm text-slate-500 max-w-md mx-auto">
-            Commercial tracking will be active from 12 months before opening. Channel performance,
-            reservation pipeline, and marketing ROI will appear here once pre-sales begin.
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm">
+          <BarChart3 className="mx-auto mb-3 h-10 w-10 text-slate-400" />
+          <h3 className="mb-1 text-base font-semibold text-slate-700">Seguimiento comercial aún no activo</h3>
+          <p className="mx-auto max-w-md text-sm text-slate-500">
+            El seguimiento comercial se activará desde 12 meses antes de la apertura. El rendimiento de
+            canales, el pipeline de reservas y el ROI de marketing aparecerán aquí cuando comience la preventa.
           </p>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KPICard title="Total Reservations" value={kpi.reservations.toLocaleString()} subtitle="Latest week, all channels" />
-            <KPICard title="Revenue Booked" value={formatCompact(kpi.revenue, ccy)} subtitle="Confirmed revenue" rag={kpi.revenue > 0 ? 'Green' : 'Grey'} />
-            <KPICard title="Total Deposits" value={formatCompact(kpi.deposits, ccy)} subtitle="Deposits collected" />
+            <KPICard title="Reservas totales" value={kpi.reservations.toLocaleString('es-ES')} subtitle="Última semana, todos los canales" />
+            <KPICard title="Ingresos confirmados" value={formatCompact(kpi.revenue, ccy)} subtitle="Ingresos confirmados" rag={kpi.revenue > 0 ? 'Green' : 'Grey'} />
+            <KPICard title="Depósitos totales" value={formatCompact(kpi.deposits, ccy)} subtitle="Depósitos cobrados" />
             <KPICard
-              title="Marketing Spend"
+              title="Inversión en marketing"
               value={formatCompact(kpi.spend, ccy)}
-              subtitle={kpi.spend > 0 ? `ROAS ${overallRoas.toFixed(1)}x` : 'Across all channels'}
+              subtitle={kpi.spend > 0 ? `ROAS ${overallRoas.toFixed(1)}x` : 'En todos los canales'}
               rag={kpi.spend > 0 ? roasRAG(overallRoas) : undefined}
             />
           </div>
 
-          {/* Channel Performance */}
-          <div className="rounded-lg border bg-white overflow-hidden">
-            <div className="px-6 py-4 border-b"><h3 className="text-sm font-medium text-slate-700">Channel Performance</h3></div>
+          {/* Rendimiento por canal */}
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4"><h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-slate-500">Rendimiento por canal</h3></div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    {['Channel','Type','Leads','Conv.%','Reservations','Revenue Booked','Spend','ROAS'].map((h, i) => (
-                      <th key={h} className={`px-4 py-3 font-medium text-slate-600 ${[2,4,5,6].includes(i) ? 'text-right' : [3,7].includes(i) ? 'text-center' : ''}`}>{h}</th>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                    {['Canal','Tipo','Leads','Conv.%','Reservas','Ingresos','Inversión','ROAS'].map((h, i) => (
+                      <th key={h} className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 ${[2,4,5,6].includes(i) ? 'text-right' : [3,7].includes(i) ? 'text-center' : ''}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -192,20 +193,20 @@ export default function CommercialPage() {
                     const convPct = ch.leads > 0 ? (ch.qualified_leads / ch.leads) * 100 : 0
                     const roas = ch.marketing_spend > 0 ? ch.revenue_booked / ch.marketing_spend : 0
                     return (
-                      <tr key={ch.channel_id} className="border-b hover:bg-slate-50">
+                      <tr key={ch.channel_id} className="border-b border-slate-200 odd:bg-slate-50/30 hover:bg-slate-50">
                         <td className="px-4 py-2.5 font-medium text-slate-900">{ch.channel_name}</td>
                         <td className="px-4 py-2.5">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${CH_COLOR[ch.channel_type] ?? 'bg-slate-50 text-slate-600'}`}>{ch.channel_type}</span>
+                          <span className="inline-flex rounded-[2px] bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-slate-600">{ch.channel_type}</span>
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs">{ch.leads.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-center"><RAGBadge status={convRAG(convPct)} label={formatPercent(convPct)} /></td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs">{ch.reservations.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs font-medium">{formatCurrency(ch.revenue_booked, ccy)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-500">{ch.marketing_spend > 0 ? formatCompact(ch.marketing_spend, ccy) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{ch.leads.toLocaleString('es-ES')}</td>
+                        <td className="px-4 py-2.5 text-center"><RagChip status={convRAG(convPct)} label={formatPercent(convPct)} /></td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{ch.reservations.toLocaleString('es-ES')}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs font-medium tabular-nums">{formatCurrency(ch.revenue_booked, ccy)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{ch.marketing_spend > 0 ? formatCompact(ch.marketing_spend, ccy) : '—'}</td>
                         <td className="px-4 py-2.5 text-center">
                           {ch.marketing_spend > 0
-                            ? <RAGBadge status={roasRAG(roas)} label={`${roas.toFixed(1)}x`} />
-                            : <span className="text-xs text-slate-400">—</span>}
+                            ? <RagChip status={roasRAG(roas)} label={`${roas.toFixed(1)}x`} />
+                            : <span className="font-mono text-xs text-slate-400">—</span>}
                         </td>
                       </tr>
                     )
@@ -215,30 +216,30 @@ export default function CommercialPage() {
             </div>
           </div>
 
-          {/* Weekly Trend */}
+          {/* Tendencia semanal */}
           {weekRows.length > 0 && (
-            <div className="rounded-lg border bg-white overflow-hidden">
-              <div className="px-6 py-4 border-b"><h3 className="text-sm font-medium text-slate-700">Weekly Trend — Last 8 Weeks</h3></div>
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 px-6 py-4"><h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-slate-500">Tendencia semanal — Últimas 8 semanas</h3></div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b bg-slate-50 text-left">
-                      {['Week Ending','Reservations','Revenue','Deposits','Spend'].map((h, i) => (
-                        <th key={h} className={`px-4 py-3 font-medium text-slate-600 ${i > 0 ? 'text-right' : ''}`}>{h}</th>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                      {['Semana','Reservas','Ingresos','Depósitos','Inversión'].map((h, i) => (
+                        <th key={h} className={`px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 ${i > 0 ? 'text-right' : ''}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {weekRows.map((w, i) => (
-                      <tr key={w.week_ending} className={`border-b hover:bg-slate-50 ${i === 0 ? 'bg-slate-50' : ''}`}>
+                      <tr key={w.week_ending} className={`border-b border-slate-200 hover:bg-slate-50 ${i === 0 ? 'bg-slate-50' : 'odd:bg-slate-50/30'}`}>
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-600">
                           {fmtWeek(w.week_ending)}
-                          {i === 0 && <span className="ml-2 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">Latest</span>}
+                          {i === 0 && <span className="ml-2 rounded-[2px] bg-slate-200 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-slate-600">Última</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs">{w.reservations.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs">{formatCompact(w.revenue, ccy)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs">{formatCompact(w.deposits, ccy)}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-500">{w.spend > 0 ? formatCompact(w.spend, ccy) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{w.reservations.toLocaleString('es-ES')}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{formatCompact(w.revenue, ccy)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{formatCompact(w.deposits, ccy)}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{w.spend > 0 ? formatCompact(w.spend, ccy) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>

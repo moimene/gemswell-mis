@@ -287,10 +287,10 @@ export default function CEODashboard() {
               Gemswell Ventures · MIS
             </p>
             <h1 className="mt-1 text-[20px] font-bold tracking-tight text-white">
-              CEO Dashboard — Portfolio View
+              CEO Dashboard — Vista de Portfolio
             </h1>
             <p className="mt-0.5 font-mono text-[11px] text-slate-400">
-              Schedule & Critical Path · CAPEX & Funding · Governance
+              Cronograma y camino crítico · CAPEX y financiación · Gobernanza
             </p>
           </div>
           <div className="text-right font-mono text-[11px] text-slate-400 leading-relaxed">
@@ -307,7 +307,7 @@ export default function CEODashboard() {
         <div className="grid gap-4 lg:grid-cols-2">
           {projects.map(project => {
             const pid    = project.project_id
-            const ccy    = pid === 'BHX' ? 'GBP' : 'EUR'
+            const ccy    = 'EUR'  // BHX figures are reported in EUR
             const accent = PROJECT_ACCENT[pid] || '#334155'
             const pCap   = capex[pid]
             const pCF    = cashFlow[pid]
@@ -450,7 +450,7 @@ export default function CEODashboard() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {(['MAD', 'BHX'] as const).map(pid => {
             const pCap = capex[pid]
-            const ccy  = pid === 'BHX' ? 'GBP' : 'EUR'
+            const ccy  = 'EUR'  // BHX figures are reported in EUR
             const accent = PROJECT_ACCENT[pid]
             const paidPct = pCap && pCap.budget > 0 ? pCap.paid / pCap.budget * 100 : 0
             return (
@@ -514,7 +514,7 @@ export default function CEODashboard() {
                         </div>
                         <div className="shrink-0 text-right">
                           <span className={cn('font-mono text-[10px]', isOverdue ? 'text-red-600 font-bold' : 'text-slate-400')}>
-                            {isOverdue ? '⚠ ' : ''}due {fmtDate(d.implementation_due)}
+                            {isOverdue && <AlertTriangle className="mr-0.5 -mt-0.5 inline h-3 w-3 text-red-600" />}vence {fmtDate(d.implementation_due)}
                           </span>
                         </div>
                       </div>
@@ -562,7 +562,7 @@ export default function CEODashboard() {
                         </div>
                         <div className="shrink-0 text-right">
                           <span className={cn('font-mono text-[10px]', isOverdue || isUrgent ? 'text-red-600 font-bold' : 'text-slate-400')}>
-                            {(isOverdue || isUrgent) ? '⚠ ' : ''}due {fmtDate(a.due_date)}
+                            {(isOverdue || isUrgent) && <AlertTriangle className="mr-0.5 -mt-0.5 inline h-3 w-3 text-red-600" />}vence {fmtDate(a.due_date)}
                           </span>
                         </div>
                       </div>

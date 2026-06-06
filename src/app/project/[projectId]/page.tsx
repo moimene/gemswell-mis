@@ -6,7 +6,7 @@ import { ArrowLeft, AlertTriangle, TrendingUp, Calendar } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
 import { cn, formatCompact, formatPercent, varianceColor, type RAGColor } from '@/lib/utils'
 import { KPICard } from '@/components/shared/KPICard'
-import { RAGBadge } from '@/components/shared/RAGBadge'
+import { RagChip, projectAccent } from '@/components/shared/terminal'
 
 type Project = {
   project_id: string
@@ -65,18 +65,40 @@ type RiskRow = {
   dim_risk_category: { category_name: string } | null
 }
 
+const COVENANT_LABEL: Record<string, string> = {
+  Satisfied: 'Cumplido',
+  Partially: 'Parcial',
+  'Partially Satisfied': 'Parcial',
+}
+
 function covenantBadge(status: string | null) {
   if (!status) return <span className="text-slate-400 text-xs">—</span>
-  const cls =
-    status === 'Satisfied' ? 'bg-green-50 text-green-700' :
-    status === 'Partially' || status === 'Partially Satisfied' ? 'bg-amber-50 text-amber-700' :
-    'bg-red-50 text-red-700'
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{status}</span>
+  const rag: RAGColor =
+    status === 'Satisfied' ? 'Green' :
+    status === 'Partially' || status === 'Partially Satisfied' ? 'Amber' :
+    'Red'
+  return <RagChip status={rag} label={COVENANT_LABEL[status] || status} />
 }
 
 function statusLabel(code: string) {
-  const map: Record<string, string> = { NS: 'Not Started', IP: 'In Progress', BL: 'Baseline', DL: 'Delayed', CP: 'Complete', AT: 'At Risk' }
+  const map: Record<string, string> = { NS: 'No iniciado', IP: 'En curso', BL: 'Base', DL: 'Retrasado', CP: 'Completado', AT: 'En riesgo' }
   return map[code] || code
+}
+
+function riskStatusLabel(code: string) {
+  const map: Record<string, string> = { Open: 'Abierto', Closed: 'Cerrado', IP: 'En curso', CP: 'Cerrado', NS: 'Abierto', Mitigating: 'En mitigación' }
+  return map[code] || code
+}
+
+function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-slate-200 pb-1.5 mb-3">
+      <h2 className="flex items-center gap-2 text-[11px] font-bold tracking-[0.15em] uppercase text-slate-500">
+        {icon}
+        {children}
+      </h2>
+    </div>
+  )
 }
 
 function daysToDate(dateStr: string): number {
@@ -88,7 +110,7 @@ function daysToDate(dateStr: string): number {
 export default function ProjectPage() {
   const params = useParams()
   const projectId = params.projectId as string
-  const ccy = projectId === 'BHX' ? 'GBP' : 'EUR'
+  const ccy = 'EUR'
 
   const [project, setProject] = useState<Project | null>(null)
   const [tasks, setTasks] = useState<TaskRow[]>([])
@@ -165,17 +187,18 @@ export default function ProjectPage() {
   }, [projectId])
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <p className="text-slate-400">Loading project...</p>
+    <div className="flex h-64 flex-col items-center justify-center gap-3">
+      <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+      <p className="font-mono text-xs text-slate-400">Cargando proyecto...</p>
     </div>
   )
 
   if (loadError) return (
     <div className="space-y-4">
       <Link href="/portfolio" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
-        <ArrowLeft className="h-4 w-4" /> Back to Portfolio
+        <ArrowLeft className="h-4 w-4" /> Volver al portfolio
       </Link>
-      <div className="rounded-lg border bg-white p-8 text-center space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm space-y-4">
         <div className="flex justify-center">
           <AlertTriangle className="h-8 w-8 text-amber-500" />
         </div>
@@ -184,13 +207,13 @@ export default function ProjectPage() {
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={() => { load() }}
-            className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
           >
             Reintentar
           </button>
           <a
             href="/login"
-            className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             Iniciar sesión
           </a>
@@ -202,10 +225,10 @@ export default function ProjectPage() {
   if (notFound || !project) return (
     <div className="space-y-4">
       <Link href="/portfolio" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
-        <ArrowLeft className="h-4 w-4" /> Back to Portfolio
+        <ArrowLeft className="h-4 w-4" /> Volver al portfolio
       </Link>
-      <div className="rounded-lg border bg-white p-8 text-center">
-        <p className="text-slate-500">Project not found: <span className="font-mono font-medium">{projectId}</span></p>
+      <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+        <p className="text-slate-500">Proyecto no encontrado: <span className="font-mono font-medium">{projectId}</span></p>
       </div>
     </div>
   )
@@ -236,20 +259,24 @@ export default function ProjectPage() {
   const committedPct = budgetTotal > 0 ? committedTotal / budgetTotal : 0
 
   const daysToOpening = project.opening_target ? daysToDate(project.opening_target) : null
+  const accent = projectAccent(project.project_id)
 
   return (
     <div className="space-y-8">
       {/* Header */}
       <div>
         <Link href="/portfolio" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 mb-4">
-          <ArrowLeft className="h-4 w-4" /> Back to Portfolio
+          <ArrowLeft className="h-4 w-4" /> Volver al portfolio
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-bold text-slate-900">{project.project_name}</h1>
-              <RAGBadge status={project.status_rag} label={project.status_rag} />
-              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+              <span className="rounded-[2px] px-1.5 py-0.5 font-mono text-[11px] font-bold text-white" style={{ backgroundColor: projectAccent(project.project_id) }}>
+                {project.project_id}
+              </span>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{project.project_name}</h1>
+              <RagChip status={project.status_rag} />
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-slate-700">
                 {project.stage}
               </span>
             </div>
@@ -259,17 +286,19 @@ export default function ProjectPage() {
             {project.opening_target && (
               <div className="text-right">
                 <div className="flex items-center gap-1.5 text-slate-500 text-xs mb-0.5">
-                  <Calendar className="h-3.5 w-3.5" /> Opening Target
+                  <Calendar className="h-3.5 w-3.5" /> Apertura objetivo
                 </div>
-                <p className="font-semibold text-slate-900">
-                  {new Date(project.opening_target).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                <p className="font-mono font-semibold tabular-nums text-slate-900">
+                  {new Date(project.opening_target).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </p>
               </div>
             )}
             {project.stage === 'Construction' && daysToOpening !== null && (
-              <div className={cn('rounded-lg border px-4 py-2 text-center', daysToOpening < 0 ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50')}>
-                <p className="text-2xl font-bold text-slate-900">{Math.abs(daysToOpening)}</p>
-                <p className="text-xs text-slate-500">{daysToOpening < 0 ? 'days overdue' : 'days to opening'}</p>
+              <div className={cn('rounded-lg border px-4 py-2 text-center',
+                daysToOpening < 0 ? 'border-red-200 bg-red-50' : daysToOpening < 90 ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'
+              )}>
+                <p className="font-mono text-3xl font-bold tabular-nums text-slate-900">{Math.abs(daysToOpening)}</p>
+                <p className="text-xs text-slate-500">{daysToOpening < 0 ? 'días de retraso' : 'días a apertura'}</p>
               </div>
             )}
           </div>
@@ -278,63 +307,61 @@ export default function ProjectPage() {
 
       {/* Section 1: Schedule Overview */}
       <section>
-        <h2 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-slate-400" /> Schedule Overview
-        </h2>
+        <SectionTitle icon={<TrendingUp className="h-3.5 w-3.5 text-slate-400" />}>Resumen de planning</SectionTitle>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-6">
-          <KPICard title="Total Tasks" value={totalTasks} subtitle="tracked in schedule" />
+          <KPICard title="Tareas totales" value={totalTasks} subtitle="en seguimiento" />
           <KPICard
-            title="On Track %"
+            title="En plazo %"
             value={formatPercent(onTrackPct)}
-            subtitle={`${onTrackTasks} of ${totalTasks} tasks`}
+            subtitle={`${onTrackTasks} de ${totalTasks} tareas`}
             rag={onTrackPct >= 80 ? 'Green' : onTrackPct >= 60 ? 'Amber' : 'Red'}
           />
           <KPICard
-            title="Blocked"
+            title="Bloqueadas"
             value={blockedCount}
-            subtitle="tasks with blockers"
+            subtitle="tareas con bloqueos"
             rag={blockedCount === 0 ? 'Green' : blockedCount <= 3 ? 'Amber' : 'Red'}
           />
           <KPICard
-            title="Critical Path Slip"
+            title="Desvío camino crítico"
             value={`${criticalSlip}d`}
-            subtitle="impact on opening"
+            subtitle="impacto en apertura"
             rag={criticalSlip === 0 ? 'Green' : criticalSlip <= 14 ? 'Amber' : 'Red'}
           />
         </div>
 
         {gates.length > 0 && (
-          <div className="rounded-lg border bg-white overflow-hidden">
-            <div className="px-6 py-4 border-b">
-              <h3 className="text-sm font-medium text-slate-700">L0 Opening Gates</h3>
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200">
+              <h3 className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Gates de apertura L0</h3>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-4 py-3 font-medium text-slate-600">Gate</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Forecast Finish</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Complete %</th>
-                    <th className="px-4 py-3 font-medium text-slate-600">Status</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Slip (days)</th>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Gate</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Forecast fin</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Avance %</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Estado</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Desvío (días)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {gates.map(t => (
-                    <tr key={t.task_id} className="border-b hover:bg-slate-50">
+                    <tr key={t.task_id} className="border-b border-slate-100 odd:bg-slate-50/30 hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">
                         {t.dim_task?.task_name || t.task_id}
                         {t.blocked_flag && <AlertTriangle className="inline h-3.5 w-3.5 text-red-500 ml-1.5" />}
                       </td>
-                      <td className="px-4 py-3 text-right text-slate-700">
-                        {t.forecast_finish ? new Date(t.forecast_finish).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                        {t.forecast_finish ? new Date(t.forecast_finish).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <div className="h-2 w-16 rounded-full bg-slate-100 overflow-hidden">
-                            <div className="h-full bg-blue-500" style={{ width: `${Math.min(t.percent_complete, 100)}%` }} />
+                            <div className="h-full rounded-full" style={{ width: `${Math.min(t.percent_complete, 100)}%`, backgroundColor: accent }} />
                           </div>
-                          <span className="font-mono text-slate-700">{formatPercent(t.percent_complete)}</span>
+                          <span className="font-mono tabular-nums text-slate-700">{formatPercent(t.percent_complete)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -347,7 +374,7 @@ export default function ProjectPage() {
                           {statusLabel(t.status_code)}
                         </span>
                       </td>
-                      <td className={cn('px-4 py-3 text-right font-mono',
+                      <td className={cn('px-4 py-3 text-right font-mono tabular-nums',
                         (t.impact_days_on_opening || 0) > 0 ? 'text-red-600 font-medium' : 'text-slate-400'
                       )}>
                         {t.impact_days_on_opening ? `+${t.impact_days_on_opening}` : '—'}
@@ -363,39 +390,39 @@ export default function ProjectPage() {
 
       {/* Section 2: CapEx Summary */}
       <section>
-        <h2 className="text-lg font-semibold text-slate-800 mb-4">CapEx Summary</h2>
+        <SectionTitle>Resumen CAPEX</SectionTitle>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-6">
-          <KPICard title="Budget" value={formatCompact(budgetTotal, ccy)} subtitle="approved current" />
-          <KPICard title="Committed" value={formatCompact(committedTotal, ccy)} subtitle={formatPercent(committedPct * 100) + ' of budget'} />
-          <KPICard title="Paid to Date" value={formatCompact(paidTotal, ccy)} subtitle={formatPercent(paidPct * 100) + ' executed'} />
+          <KPICard title="Presupuesto" value={formatCompact(budgetTotal, ccy)} subtitle="aprobado vigente" />
+          <KPICard title="Comprometido" value={formatCompact(committedTotal, ccy)} subtitle={formatPercent(committedPct * 100) + ' del presupuesto'} />
+          <KPICard title="Pagado a la fecha" value={formatCompact(paidTotal, ccy)} subtitle={formatPercent(paidPct * 100) + ' ejecutado'} />
           <KPICard
             title="EAC"
             value={formatCompact(eacTotal, ccy)}
-            subtitle={`Variance: ${eacVariance > 0 ? '+' : ''}${formatPercent(eacVariance * 100)}`}
+            subtitle={`Desviación: ${eacVariance > 0 ? '+' : ''}${formatPercent(eacVariance * 100)}`}
             rag={eacVariance > 0.05 ? 'Red' : eacVariance > 0.02 ? 'Amber' : 'Green'}
           />
         </div>
-        <div className="rounded-lg border bg-white p-6 space-y-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
           <div>
             <div className="flex justify-between text-xs text-slate-500 mb-1">
-              <span>Paid / Budget</span>
-              <span className="font-mono">{formatPercent(paidPct * 100)}</span>
+              <span>Pagado / Presupuesto</span>
+              <span className="font-mono tabular-nums">{formatPercent(paidPct * 100)}</span>
             </div>
             <div className="h-3 w-full rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${Math.min(paidPct * 100, 100)}%` }} />
+              <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(paidPct * 100, 100)}%`, backgroundColor: accent }} />
             </div>
           </div>
           <div>
             <div className="flex justify-between text-xs text-slate-500 mb-1">
-              <span>Committed / Budget</span>
-              <span className="font-mono">{formatPercent(committedPct * 100)}</span>
+              <span>Comprometido / Presupuesto</span>
+              <span className="font-mono tabular-nums">{formatPercent(committedPct * 100)}</span>
             </div>
             <div className="h-3 w-full rounded-full bg-slate-100 overflow-hidden">
-              <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: `${Math.min(committedPct * 100, 100)}%` }} />
+              <div className="h-full rounded-full transition-all opacity-50" style={{ width: `${Math.min(committedPct * 100, 100)}%`, backgroundColor: accent }} />
             </div>
           </div>
           <p className="text-xs text-slate-500">
-            EAC vs Budget variance: <span className={cn('font-semibold font-mono', varianceColor(eacVariance))}>
+            Desviación EAC vs presupuesto: <span className={cn('font-semibold font-mono tabular-nums', varianceColor(eacVariance))}>
               {eacVariance > 0 ? '+' : ''}{formatPercent(eacVariance * 100)}
             </span>
           </p>
@@ -405,39 +432,39 @@ export default function ProjectPage() {
       {/* Section 3: Funding Status */}
       {funding.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">Funding Status</h2>
-          <div className="rounded-lg border bg-white overflow-hidden">
+          <SectionTitle>Estado de financiación</SectionTitle>
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-4 py-3 font-medium text-slate-600">Instrument</th>
-                    <th className="px-4 py-3 font-medium text-slate-600">Type</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Committed</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Drawn</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Undrawn</th>
-                    <th className="px-4 py-3 font-medium text-slate-600">Covenant</th>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Instrumento</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipo</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Comprometido</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Dispuesto</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">No dispuesto</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Covenant</th>
                   </tr>
                 </thead>
                 <tbody>
                   {funding.map((row, i) => (
-                    <tr key={i} className="border-b hover:bg-slate-50">
+                    <tr key={i} className="border-b border-slate-100 odd:bg-slate-50/30 hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">
                         {row.dim_funding_instrument?.instrument_name || '—'}
                         {row.default_risk_flag && (
                           <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-xs text-red-700">
-                            <AlertTriangle className="h-3 w-3" /> Default Risk
+                            <AlertTriangle className="h-3 w-3" /> Riesgo de impago
                           </span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] tracking-wide text-slate-700">
                           {row.dim_funding_instrument?.instrument_type || '—'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono">{formatCompact(row.committed_amount || 0, ccy)}</td>
-                      <td className="px-4 py-3 text-right font-mono">{formatCompact(row.drawn_to_date || 0, ccy)}</td>
-                      <td className="px-4 py-3 text-right font-mono">{formatCompact(row.undrawn_available || 0, ccy)}</td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCompact(row.committed_amount || 0, ccy)}</td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCompact(row.drawn_to_date || 0, ccy)}</td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums">{formatCompact(row.undrawn_available || 0, ccy)}</td>
                       <td className="px-4 py-3">{covenantBadge(row.covenant_overall_status)}</td>
                     </tr>
                   ))}
@@ -451,32 +478,30 @@ export default function ProjectPage() {
       {/* Section 4: Top Risks */}
       {risks.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-amber-400" /> Top Risks
-          </h2>
-          <div className="rounded-lg border bg-white overflow-hidden">
+          <SectionTitle icon={<AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}>Riesgos principales</SectionTitle>
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b bg-slate-50 text-left">
-                    <th className="px-4 py-3 font-medium text-slate-600">Title</th>
-                    <th className="px-4 py-3 font-medium text-slate-600">Category</th>
-                    <th className="px-4 py-3 font-medium text-slate-600 text-right">Severity</th>
-                    <th className="px-4 py-3 font-medium text-slate-600">Status</th>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-left">
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Título</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Categoría</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400 text-right">Severidad</th>
+                    <th className="px-4 py-3 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Estado</th>
                   </tr>
                 </thead>
                 <tbody>
                   {risks.map((r, i) => (
-                    <tr key={i} className="border-b hover:bg-slate-50">
+                    <tr key={i} className="border-b border-slate-100 odd:bg-slate-50/30 hover:bg-slate-50">
                       <td className="px-4 py-3 font-medium text-slate-900">
                         {r.risk_title}
                         {r.escalation_flag && (
-                          <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs text-red-700">Escalated</span>
+                          <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs text-red-700">Escalado</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-500">{r.dim_risk_category?.category_name || '—'}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className={cn('font-mono font-semibold',
+                        <span className={cn('font-mono font-semibold tabular-nums',
                           r.severity_score >= 20 ? 'text-red-600' :
                           r.severity_score >= 12 ? 'text-amber-600' :
                           'text-slate-600'
@@ -490,7 +515,7 @@ export default function ProjectPage() {
                           r.status_code === 'Open' || r.status_code === 'IP' ? 'bg-amber-50 text-amber-700' :
                           'bg-slate-50 text-slate-600'
                         )}>
-                          {r.status_code}
+                          {riskStatusLabel(r.status_code)}
                         </span>
                       </td>
                     </tr>

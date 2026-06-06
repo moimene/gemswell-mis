@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
+import { projectAccent } from '@/components/shared/terminal'
 
 type DmsFile = {
   name: string
@@ -76,7 +77,7 @@ export default function IngestPage() {
       .then((m: Manifest) => {
         setManifest(m)
         // Default to NOTHING selected — queueing inserts real ingest jobs; a stray click must not
-        // enqueue hundreds of files. Use "Seleccionar relevantes" to opt into the relevance>=75 set.
+        // enqueue hundreds of files. Use "Auto-seleccionar alta" to opt into the relevance>=75 set.
         setFiles(m.files.map(f => ({ ...f, selected: false })))
         setLoading(false)
       })
@@ -148,7 +149,7 @@ export default function IngestPage() {
       })
       const data = await res.json()
       if (res.ok) {
-        setQueueResult(`Queued ${data.queued} files for ingestion`)
+        setQueueResult(`${data.queued} archivo(s) encolado(s) para ingesta`)
         // Mark as queued in UI
         const selectedPaths = new Set(selected.map(f => f.relPath))
         setFiles(prev => prev.map(f =>
@@ -158,7 +159,7 @@ export default function IngestPage() {
         setQueueResult(`Error: ${data.error}`)
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Queue request failed'
+      const message = err instanceof Error ? err.message : 'Fallo al encolar la solicitud'
       setQueueResult(`Error: ${message}`)
     } finally {
       setQueueing(false)
@@ -167,16 +168,21 @@ export default function IngestPage() {
 
   if (loading) {
     return (
-      <div className="p-8 text-center text-slate-500">
-        Loading DMS manifest...
+      <div className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+        <p className="font-mono text-xs text-slate-400">Cargando manifiesto DMS…</p>
       </div>
     )
   }
 
   if (!manifest) {
     return (
-      <div className="p-8 text-center text-slate-500">
-        No manifest found. Run the DMS scanner first.
+      <div className="flex h-[calc(100vh-4rem)] flex-col items-center justify-center p-8">
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-8 py-10 text-center shadow-sm">
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Sin manifiesto</p>
+          <p className="mt-2 text-sm text-slate-600">No se encontró el manifiesto DMS. Ejecuta primero el escáner.</p>
+          <code className="mt-3 inline-block rounded bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600">npm run dms:scan</code>
+        </div>
       </div>
     )
   }
@@ -186,113 +192,134 @@ export default function IngestPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* Header */}
-      <div className="flex-none border-b bg-white px-6 py-4">
-        <div className="flex items-center justify-between">
+      <div className="flex-none border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">Document Ingestion</h1>
-            <p className="text-sm text-slate-500">
-              Scanned {s.totalFiles} files — {s.byRelevance.high} high relevance — {s.versionGroups} version groups ({s.olderVersions} older versions)
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Gemswell Ventures · MIS</p>
+            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-slate-900">Ingesta de Documentos</h1>
+            <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+              {s.totalFiles} archivos escaneados — {s.byRelevance.high} de alta relevancia — {s.versionGroups} grupos de versión ({s.olderVersions} versiones antiguas)
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-500">
-              {selectedCount} selected ({(selectedSize / 1024 / 1024).toFixed(1)} MB)
+            <span className="font-mono text-xs tabular-nums text-slate-500">
+              {selectedCount} seleccionados ({(selectedSize / 1024 / 1024).toFixed(1)} MB)
             </span>
             <button
               onClick={queueSelected}
               disabled={selectedCount === 0 || queueing}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {queueing ? 'Queueing...' : `Queue ${selectedCount} for Ingestion`}
+              {queueing ? 'Encolando…' : `Encolar ${selectedCount} para ingesta`}
             </button>
           </div>
         </div>
         {queueResult && (
-          <div className={`mt-2 text-sm px-3 py-2 rounded ${queueResult.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+          <div className={`mt-2 rounded px-3 py-2 text-sm ${queueResult.startsWith('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
             {queueResult}
           </div>
         )}
       </div>
 
       {/* Summary Cards */}
-      <div className="flex-none px-6 py-3 bg-slate-50 border-b grid grid-cols-6 gap-3">
-        {Object.entries(s.byProject).map(([p, count]) => (
-          <button key={p} onClick={() => setFilterProject(filterProject === p ? 'all' : p)}
-            className={`text-center p-2 rounded-lg border text-sm ${filterProject === p ? 'bg-blue-100 border-blue-300' : 'bg-white border-slate-200 hover:bg-slate-100'}`}>
-            <div className="font-semibold">{p}</div>
-            <div className="text-slate-500">{count} files</div>
-          </button>
-        ))}
-        {Object.entries(s.byType).map(([t, count]) => (
-          <button key={t} onClick={() => setFilterType(filterType === t ? 'all' : t)}
-            className={`text-center p-2 rounded-lg border text-sm ${filterType === t ? 'bg-blue-100 border-blue-300' : 'bg-white border-slate-200 hover:bg-slate-100'}`}>
-            <div className="font-semibold">{t}</div>
-            <div className="text-slate-500">{count}</div>
-          </button>
-        ))}
+      <div className="flex-none border-b border-slate-200 bg-slate-50 px-6 py-3">
+        <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
+          <div className="min-w-0">
+            <p className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Por proyecto</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {Object.entries(s.byProject).map(([p, count]) => {
+                const active = filterProject === p
+                return (
+                  <button key={p} onClick={() => setFilterProject(active ? 'all' : p)}
+                    className={`min-w-[5rem] rounded-lg border bg-white p-2 text-center text-sm transition-colors hover:bg-slate-100 ${active ? 'border-slate-400 ring-2 ring-slate-300' : 'border-slate-200'}`}>
+                    <div className="font-mono text-xs font-bold" style={{ color: projectAccent(p) }}>{p}</div>
+                    <div className="font-mono text-[11px] tabular-nums text-slate-500">{count} archivos</div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className="min-w-0">
+            <p className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Por tipo</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+              {Object.entries(s.byType).map(([t, count]) => {
+                const active = filterType === t
+                return (
+                  <button key={t} onClick={() => setFilterType(active ? 'all' : t)}
+                    className={`min-w-[4rem] rounded-lg border bg-white p-2 text-center text-sm transition-colors hover:bg-slate-100 ${active ? 'border-slate-400 ring-2 ring-slate-300' : 'border-slate-200'}`}>
+                    <div className="font-mono text-xs font-bold text-slate-700">{t}</div>
+                    <div className="font-mono text-[11px] tabular-nums text-slate-500">{count}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Filters Bar */}
-      <div className="flex-none px-6 py-3 border-b bg-white flex items-center gap-3 flex-wrap">
+      <div className="flex flex-none flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-6 py-3">
         <input
           type="text"
-          placeholder="Search files..."
+          placeholder="Buscar archivos…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="px-3 py-1.5 border rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-64 rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
         />
         <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
-          className="px-3 py-1.5 border rounded-lg text-sm bg-white">
-          <option value="all">All categories</option>
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+          <option value="all">Todas las categorías</option>
           {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
         <select value={filterRelevance} onChange={e => setFilterRelevance(e.target.value)}
-          className="px-3 py-1.5 border rounded-lg text-sm bg-white">
-          <option value="all">All relevance</option>
-          <option value="high">High (≥75)</option>
-          <option value="medium">Medium (50-74)</option>
-          <option value="low">Low (&lt;50)</option>
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+          <option value="all">Todas las relevancias</option>
+          <option value="high">Alta (≥75)</option>
+          <option value="medium">Media (50-74)</option>
+          <option value="low">Baja (&lt;50)</option>
         </select>
         <select value={filterVersion} onChange={e => setFilterVersion(e.target.value)}
-          className="px-3 py-1.5 border rounded-lg text-sm bg-white">
-          <option value="all">All versions</option>
-          <option value="latest">Latest only</option>
-          <option value="older">Older versions</option>
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+          <option value="all">Todas las versiones</option>
+          <option value="latest">Solo última</option>
+          <option value="older">Versiones antiguas</option>
         </select>
         <div className="flex-1" />
-        <button onClick={() => selectAll(true)}
-          className="text-xs text-blue-600 hover:text-blue-800">Select filtered</button>
-        <button onClick={() => selectAll(false)}
-          className="text-xs text-slate-500 hover:text-slate-700">Deselect filtered</button>
-        <button onClick={selectHighRelevance}
-          className="text-xs text-emerald-600 hover:text-emerald-800">Auto-select high</button>
+        <div className="inline-flex items-center overflow-hidden rounded-lg border border-slate-200">
+          <button onClick={() => selectAll(true)}
+            className="border-r border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Seleccionar filtrados</button>
+          <button onClick={() => selectAll(false)}
+            className="border-r border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">Quitar selección</button>
+          <button onClick={selectHighRelevance}
+            className="px-2.5 py-1 text-xs font-medium text-[#166534] hover:bg-slate-50">Auto-seleccionar alta</button>
+        </div>
       </div>
 
       {/* File List */}
       <div className="flex-1 overflow-y-auto">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 sticky top-0">
-            <tr className="text-left text-xs text-slate-500 uppercase">
-              <th className="px-6 py-2 w-8">
+          <thead className="sticky top-0 bg-slate-50">
+            <tr className="text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+              <th className="w-8 px-6 py-2">
                 <input type="checkbox"
                   checked={filtered.length > 0 && filtered.every(f => f.selected)}
                   onChange={e => selectAll(e.target.checked)}
                   className="rounded" />
               </th>
-              <th className="px-2 py-2 w-12">Score</th>
-              <th className="px-2 py-2 w-12">Proj</th>
-              <th className="px-2 py-2 w-32">Category</th>
-              <th className="px-2 py-2">File</th>
-              <th className="px-2 py-2 w-16 text-right">Size</th>
-              <th className="px-2 py-2 w-20">Status</th>
+              <th className="w-12 px-2 py-2">Score</th>
+              <th className="w-12 px-2 py-2">Proy</th>
+              <th className="w-32 px-2 py-2">Categoría</th>
+              <th className="px-2 py-2">Archivo</th>
+              <th className="w-16 px-2 py-2 text-right">Tamaño</th>
+              <th className="w-20 px-2 py-2">Estado</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filtered.slice(0, 200).map(f => (
               <tr key={f.relPath}
-                className={`hover:bg-slate-50 ${f.isOlderVersion ? 'opacity-50' : ''} ${f.selected ? 'bg-blue-50' : ''}`}>
+                className={`odd:bg-slate-50/30 hover:bg-slate-50 ${f.isOlderVersion ? 'opacity-50' : ''} ${f.selected ? 'bg-blue-50' : ''}`}>
                 <td className="px-6 py-2">
                   <input type="checkbox"
                     checked={f.selected || false}
@@ -300,7 +327,7 @@ export default function IngestPage() {
                     className="rounded" />
                 </td>
                 <td className="px-2 py-2">
-                  <span className={`inline-flex items-center justify-center w-8 h-5 rounded text-xs font-medium ${
+                  <span className={`inline-flex h-5 w-8 items-center justify-center rounded font-mono text-xs font-bold tabular-nums ${
                     f.relevance >= 75 ? 'bg-emerald-100 text-emerald-700' :
                     f.relevance >= 50 ? 'bg-amber-100 text-amber-700' :
                     f.relevance > 0 ? 'bg-slate-100 text-slate-500' :
@@ -310,46 +337,50 @@ export default function IngestPage() {
                   </span>
                 </td>
                 <td className="px-2 py-2">
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                    f.project === 'MAD' ? 'bg-orange-100 text-orange-700' :
-                    f.project === 'BHX' ? 'bg-purple-100 text-purple-700' :
-                    'bg-slate-100 text-slate-600'
-                  }`}>{f.project}</span>
+                  <span
+                    className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
+                    style={{ color: projectAccent(f.project), backgroundColor: `${projectAccent(f.project)}1A` }}
+                  >{f.project}</span>
                 </td>
                 <td className="px-2 py-2 text-xs text-slate-500">
                   {CATEGORY_LABELS[f.category] || f.category}
                 </td>
                 <td className="px-2 py-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono bg-slate-100 px-1 rounded">{f.ext}</span>
-                    <span className="truncate max-w-md" title={f.relPath}>
+                    <span className="rounded bg-slate-100 px-1 font-mono text-xs text-slate-600">{f.ext}</span>
+                    <span className="max-w-md truncate" title={f.relPath}>
                       {f.name}
                     </span>
                     {f.isLatestVersion && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">
-                        LATEST ({f.versionGroup?.length} ver)
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-xs font-bold text-emerald-700">
+                        ÚLTIMA ({f.versionGroup?.length})
                       </span>
                     )}
                     {f.isOlderVersion && (
-                      <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full">
-                        OLD → {f.supersededBy}
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 font-mono text-xs font-bold text-slate-500">
+                        ANTIGUA → {f.supersededBy}
                       </span>
                     )}
                   </div>
                 </td>
-                <td className="px-2 py-2 text-right text-xs text-slate-500">
+                <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-slate-500">
                   {f.size > 1048576 ? `${(f.size / 1048576).toFixed(1)}M` :
                    f.size > 1024 ? `${(f.size / 1024).toFixed(0)}K` :
                    `${f.size}B`}
                 </td>
                 <td className="px-2 py-2">
                   {f.status && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                    <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide ${
                       f.status === 'queued' ? 'bg-blue-100 text-blue-700' :
                       f.status === 'done' ? 'bg-green-100 text-green-700' :
                       f.status === 'error' ? 'bg-red-100 text-red-700' :
                       'bg-slate-100 text-slate-500'
-                    }`}>{f.status}</span>
+                    }`}>{
+                      f.status === 'queued' ? 'Encolado' :
+                      f.status === 'done' ? 'Listo' :
+                      f.status === 'error' ? 'Error' :
+                      f.status
+                    }</span>
                   )}
                 </td>
               </tr>
@@ -357,8 +388,8 @@ export default function IngestPage() {
           </tbody>
         </table>
         {filtered.length > 200 && (
-          <div className="p-4 text-center text-sm text-slate-400">
-            Showing 200 of {filtered.length} files. Use filters to narrow.
+          <div className="p-4 text-center font-mono text-xs text-slate-400">
+            Mostrando 200 de {filtered.length} archivos. Usa los filtros para acotar.
           </div>
         )}
       </div>

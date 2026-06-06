@@ -4,10 +4,12 @@ import { useParams } from 'next/navigation'
 import { cn, formatCompact } from '@/lib/utils'
 import {
   FileText, ChevronDown, ChevronUp, AlertTriangle,
-  CheckCircle, Clock, ArrowLeft, BookOpen,
+  CheckCircle, ArrowLeft, BookOpen,
   GitMerge, CircleDot, Ban, Hourglass, Link2
 } from 'lucide-react'
 import Link from 'next/link'
+import { PageHeader, RagChip, ProjectBadge } from '@/components/shared/terminal'
+import type { RAGColor } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,21 +59,28 @@ type ValidationNotes = string | Array<{ code?: string; message?: string } | stri
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const DOMAIN_LABELS: Record<string, string> = {
-  capex:    'CapEx & Budget',
-  funding:  'Funding & Facility',
-  cash:     'Cash Position',
-  cash_flow:'Cash Flow',
-  revenue:  'Revenue & Commercial',
+  capex:    'CapEx y Presupuesto',
+  funding:  'Financiación y Líneas',
+  cash:     'Posición de Caja',
+  cash_flow:'Flujo de Caja',
+  revenue:  'Ingresos y Comercial',
   covenant: 'Covenants',
 }
 
 const DOMAIN_ORDER = ['capex', 'funding', 'cash', 'cash_flow', 'revenue', 'covenant']
 
-const STATUS_STYLES: Record<string, string> = {
-  accepted:          'bg-green-50 text-green-700 border-green-200',
-  rejected:          'bg-red-50 text-red-600 border-red-200',
-  pending_review:    'bg-amber-50 text-amber-700 border-amber-200',
-  validation_failed: 'bg-slate-100 text-slate-500 border-slate-200',
+const STATUS_LABELS: Record<string, string> = {
+  accepted:          'Aceptado',
+  rejected:          'Rechazado',
+  pending_review:    'Pendiente',
+  validation_failed: 'Fallido',
+}
+
+const STATUS_RAG_MAP: Record<string, RAGColor> = {
+  accepted:          'Green',
+  rejected:          'Red',
+  pending_review:    'Amber',
+  validation_failed: 'Grey',
 }
 
 function confBar(confidence: number) {
@@ -82,7 +91,7 @@ function confBar(confidence: number) {
       <div className="h-1.5 w-16 rounded-full bg-slate-200">
         <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs tabular-nums text-slate-500">{pct}%</span>
+      <span className="font-mono text-xs tabular-nums text-slate-600">{pct}%</span>
     </div>
   )
 }
@@ -92,7 +101,7 @@ function AuthBadge({ score }: { score: number | null }) {
   const label = score >= 90 ? 'Ejecutado' : score >= 80 ? 'Controlling' : score >= 70 ? 'Board' : score >= 60 ? 'DD Memo' : 'Interno'
   const color = score >= 80 ? 'text-green-700 bg-green-50' : score >= 60 ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'
   return (
-    <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium shrink-0', color)}>
+    <span className={cn('rounded px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums shrink-0', color)}>
       {label} {score}
     </span>
   )
@@ -146,44 +155,38 @@ function MetricRow({ candidate, index }: { candidate: Candidate; index: number }
   return (
     <>
       <tr className={cn(
-        'border-b transition-colors',
+        'border-b border-slate-200 transition-colors odd:bg-slate-50/30 hover:bg-slate-50',
         !isAccepted && 'opacity-50',
         open && 'bg-slate-50'
       )}>
         {/* # */}
-        <td className="py-3 pl-4 pr-2 text-xs text-slate-400 tabular-nums w-8">{index + 1}</td>
+        <td className="py-3 pl-4 pr-2 font-mono text-xs text-slate-400 tabular-nums w-8">{index + 1}</td>
 
         {/* Metric name */}
         <td className="py-3 pr-4">
           <p className="text-sm font-medium text-slate-900">{def?.display_name || candidate.metric_id}</p>
-          <p className="text-xs text-slate-400 font-mono">{candidate.metric_id}</p>
+          <p className="font-mono text-xs text-slate-400">{candidate.metric_id}</p>
         </td>
 
         {/* Value */}
         <td className="py-3 pr-4 text-right">
           <p className={cn(
-            'text-lg font-bold tabular-nums',
+            'font-mono text-lg font-bold tabular-nums',
             prov ? 'text-amber-600' : 'text-slate-900'
           )}>
             {fmtValue(candidate)}
           </p>
-          <p className="text-xs text-slate-500">{candidate.period_label || candidate.period_date?.slice(0, 7) || '—'}</p>
+          <p className="font-mono text-xs text-slate-500">{candidate.period_label || candidate.period_date?.slice(0, 7) || '—'}</p>
         </td>
 
         {/* Status badge */}
         <td className="py-3 pr-4">
           {prov ? (
-            <span className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 border-amber-200">
-              <AlertTriangle className="h-3 w-3" /> Provisional
-            </span>
+            <RagChip status="Amber" label="Provisional" />
           ) : isAccepted ? (
-            <span className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium bg-green-50 text-green-700 border-green-200">
-              <CheckCircle className="h-3 w-3" /> Aceptado
-            </span>
+            <RagChip status="Green" label="Aceptado" />
           ) : (
-            <span className={cn('rounded border px-1.5 py-0.5 text-xs', STATUS_STYLES[candidate.status] || 'bg-slate-100 text-slate-500 border-slate-200')}>
-              {candidate.status}
-            </span>
+            <RagChip status={STATUS_RAG_MAP[candidate.status] || 'Grey'} label={STATUS_LABELS[candidate.status] || candidate.status} />
           )}
         </td>
 
@@ -202,7 +205,7 @@ function MetricRow({ candidate, index }: { candidate: Candidate; index: number }
             </div>
           )}
           {doc?.doc_type && (
-            <span className="mt-0.5 inline-block rounded bg-slate-100 px-1 py-0.5 text-xs text-slate-500">
+            <span className="mt-0.5 inline-block rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px] uppercase tracking-wide text-slate-500">
               {doc.doc_type}
             </span>
           )}
@@ -317,7 +320,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
   if (summary.total_items === 0 && summary.published_count > 0) return null
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-xl border border-amber-200 bg-white shadow-sm overflow-hidden">
       {/* Header */}
       <button
         type="button"
@@ -358,7 +361,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
           {/* Contradictions */}
           {rec.contradictions.length > 0 && (
             <div className="p-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-red-700">
+              <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-red-700">
                 <AlertTriangle className="h-3.5 w-3.5" /> Contradicciones entre fuentes
               </p>
               <div className="space-y-2">
@@ -393,7 +396,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
           {/* Provisional */}
           {rec.provisional.length > 0 && (
             <div className="p-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700">
+              <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-amber-700">
                 <CircleDot className="h-3.5 w-3.5" /> Valores provisionales (requieren confirmación)
               </p>
               <div className="space-y-1.5">
@@ -406,10 +409,10 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
                         <p className="text-xs text-slate-500">{validationNotesText(c.validation_notes)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-bold text-amber-700 tabular-nums">
+                        <p className="font-mono text-sm font-bold text-amber-700 tabular-nums">
                           {c.extracted_value != null ? formatCompact(c.extracted_value, c.currency === 'GBP' ? 'GBP' : 'EUR') : '—'}
                         </p>
-                        <p className="text-xs text-slate-500">{c.period_label || '—'}</p>
+                        <p className="font-mono text-xs text-slate-500">{c.period_label || '—'}</p>
                       </div>
                     </div>
                   )
@@ -421,7 +424,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
           {/* Missing metrics */}
           {rec.missing_metrics.length > 0 && (
             <div className="p-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-600">
                 <Ban className="h-3.5 w-3.5" /> Métricas sin evidencia documental
               </p>
               <div className="flex flex-wrap gap-2">
@@ -438,7 +441,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
           {/* Stale */}
           {rec.stale.length > 0 && (
             <div className="p-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-600">
                 <Hourglass className="h-3.5 w-3.5" /> Datos con antigüedad &gt;90 días
               </p>
               <div className="space-y-1.5">
@@ -454,8 +457,8 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
                         <p className="text-xs text-slate-500">Período: {c.period_label || c.period_date?.slice(0,7) || '—'}</p>
                       </div>
                       {ageMonths !== null && (
-                        <span className="rounded bg-slate-200 px-2 py-0.5 text-xs text-slate-600 font-medium">
-                          {ageMonths}m de antigüedad
+                        <span className="rounded bg-slate-200 px-2 py-0.5 font-mono text-xs tabular-nums text-slate-600 font-medium">
+                          {ageMonths} {ageMonths === 1 ? 'mes' : 'meses'} de antigüedad
                         </span>
                       )}
                     </div>
@@ -468,7 +471,7 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
           {/* Publication trail */}
           {rec.publications.length > 0 && (
             <div className="p-4">
-              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-green-700">
+              <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-widest text-green-700">
                 <Link2 className="h-3.5 w-3.5" /> Publicaciones en fact tables ({rec.publications.length})
               </p>
               <div className="space-y-1">
@@ -495,39 +498,39 @@ function ReconciliationPanel({ rec }: { rec: Reconciliation }) {
 
 // ─── Pack Header ──────────────────────────────────────────────────────────────
 
-function PackHeader({ pack }: { pack: Pack }) {
-  const statusColor = pack.status === 'submitted' ? 'text-blue-600 bg-blue-50' :
-                      pack.status === 'published'  ? 'text-green-700 bg-green-50' :
-                                                     'text-amber-700 bg-amber-50'
-  return (
-    <div className="rounded-lg border bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-mono text-slate-400">{pack.project_id}</span>
-            <span className="text-slate-300">·</span>
-            <span className="text-xs text-slate-500 capitalize">{pack.area}</span>
-            {pack.is_critical && (
-              <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Crítico</span>
-            )}
-          </div>
-          <h1 className="text-xl font-bold text-slate-900">
-            {pack.project_id} Finance Pack
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {pack.submitted_at ? `Enviado ${fmtDate(pack.submitted_at)}` : 'Borrador'} · Due {fmtDate(pack.due_at)}
-          </p>
-        </div>
-        <span className={cn('rounded-full px-3 py-1 text-sm font-medium', statusColor)}>
-          {pack.status}
-        </span>
-      </div>
+const PACK_STATUS_LABELS: Record<string, string> = {
+  in_progress: 'En curso',
+  submitted:   'Enviado',
+  published:   'Publicado',
+}
 
-      {/* Completeness bar */}
-      <div className="mt-4">
+const PACK_STATUS_RAG: Record<string, RAGColor> = {
+  in_progress: 'Amber',
+  submitted:   'Blue',
+  published:   'Green',
+}
+
+function PackHeader({ pack }: { pack: Pack }) {
+  return (
+    <div className="space-y-3">
+      <PageHeader
+        eyebrow={`${pack.area} · Pack financiero`}
+        title={`Pack financiero ${pack.project_id}`}
+        subtitle={`${pack.submitted_at ? `Enviado ${fmtDate(pack.submitted_at)}` : 'Borrador'} · Vencimiento ${fmtDate(pack.due_at)}`}
+        right={
+          <>
+            <ProjectBadge projectId={pack.project_id} />
+            {pack.is_critical && <RagChip status="Red" label="Crítico" />}
+            <RagChip status={PACK_STATUS_RAG[pack.status] || 'Grey'} label={PACK_STATUS_LABELS[pack.status] || pack.status} />
+          </>
+        }
+      />
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        {/* Completeness bar */}
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs text-slate-500">Completeness</span>
-          <span className="text-xs font-medium text-slate-700">{pack.completeness_score}%</span>
+          <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Completitud</span>
+          <span className="font-mono text-xs font-medium tabular-nums text-slate-700">{pack.completeness_score}%</span>
         </div>
         <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
           <div
@@ -535,11 +538,11 @@ function PackHeader({ pack }: { pack: Pack }) {
             style={{ width: `${pack.completeness_score}%` }}
           />
         </div>
-      </div>
 
-      {pack.notes && (
-        <p className="mt-3 text-xs text-slate-500 italic border-t pt-3">{pack.notes}</p>
-      )}
+        {pack.notes && (
+          <p className="mt-3 text-xs text-slate-600 italic border-t border-slate-200 pt-3">{pack.notes}</p>
+        )}
+      </div>
     </div>
   )
 }
@@ -559,7 +562,7 @@ export default function PackGroundingPage() {
       const res = await fetch(`/api/intel/packs/${params.id}`)
       if (!res.ok) {
         const d = await res.json()
-        setError(d.error || 'Pack not found')
+        setError(d.error || 'Pack no encontrado')
         setLoading(false)
         return
       }
@@ -575,7 +578,10 @@ export default function PackGroundingPage() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Clock className="h-6 w-6 animate-spin text-slate-400" />
+        <div className="space-y-2 text-center">
+          <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+          <p className="font-mono text-xs text-slate-400">Cargando pack...</p>
+        </div>
       </div>
     )
   }
@@ -619,16 +625,16 @@ export default function PackGroundingPage() {
       <PackHeader pack={pack} />
 
       {/* Summary counts */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: 'Aceptados',  value: accepted.length,  color: 'text-green-600' },
-          { label: 'Rechazados', value: rejected.length,  color: 'text-red-500' },
+          { label: 'Rechazados', value: rejected.length,  color: 'text-red-600' },
           { label: 'Fallidos',   value: failed.length,    color: 'text-slate-400' },
           { label: 'Pendientes', value: pending.length,   color: 'text-amber-600' },
         ].map(s => (
-          <div key={s.label} className="rounded-lg border bg-white p-3 shadow-sm text-center">
-            <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
-            <p className="text-xs text-slate-500">{s.label}</p>
+          <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
+            <p className={cn('mt-2 font-mono text-2xl font-bold tabular-nums', s.color)}>{s.value}</p>
           </div>
         ))}
       </div>
@@ -638,25 +644,25 @@ export default function PackGroundingPage() {
 
       {/* Accepted metrics with grounding — grouped by domain */}
       {orderedDomains.map(domain => (
-        <div key={domain} className="rounded-lg border bg-white shadow-sm overflow-hidden">
-          <div className="border-b bg-slate-50 px-4 py-2.5 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700">
+        <div key={domain} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 flex items-center justify-between">
+            <h2 className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-500">
               {DOMAIN_LABELS[domain] || domain}
             </h2>
-            <span className="text-xs text-slate-400">{byDomain[domain].length} métricas</span>
+            <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">{byDomain[domain].length} métricas</span>
           </div>
 
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-xs text-slate-500 uppercase tracking-wide">
-                <th className="py-2 pl-4 pr-2 text-left w-8">#</th>
-                <th className="py-2 pr-4 text-left">Métrica</th>
-                <th className="py-2 pr-4 text-right">Valor</th>
-                <th className="py-2 pr-4 text-left">Estado</th>
-                <th className="py-2 pr-4 text-left">Confianza</th>
-                <th className="py-2 pr-4 text-left">Autoridad</th>
-                <th className="py-2 pr-4 text-left">Fuente</th>
-                <th className="py-2 pr-4 text-right">Evidencia</th>
+              <tr className="border-b border-slate-200">
+                <th className="py-2 pl-4 pr-2 text-left w-8 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">#</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Métrica</th>
+                <th className="py-2 pr-4 text-right font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Valor</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Estado</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Confianza</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Autoridad</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Fuente</th>
+                <th className="py-2 pr-4 text-right font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Evidencia</th>
               </tr>
             </thead>
             <tbody>
@@ -670,29 +676,27 @@ export default function PackGroundingPage() {
 
       {/* Rejected / failed — collapsed summary */}
       {(rejected.length > 0 || failed.length > 0) && (
-        <details className="rounded-lg border bg-white shadow-sm">
+        <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50">
             Candidatos no aceptados ({rejected.length + failed.length})
           </summary>
-          <table className="w-full text-sm border-t">
+          <table className="w-full text-sm border-t border-slate-200">
             <thead>
-              <tr className="border-b text-xs text-slate-500 uppercase tracking-wide">
-                <th className="py-2 pl-4 pr-4 text-left">Métrica</th>
-                <th className="py-2 pr-4 text-left">Estado</th>
-                <th className="py-2 pr-4 text-left">Notas</th>
+              <tr className="border-b border-slate-200">
+                <th className="py-2 pl-4 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Métrica</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Estado</th>
+                <th className="py-2 pr-4 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Notas</th>
               </tr>
             </thead>
             <tbody>
               {[...rejected, ...failed].map(c => (
-                <tr key={c.id} className="border-b opacity-70">
+                <tr key={c.id} className="border-b border-slate-200 odd:bg-slate-50/30 hover:bg-slate-50 opacity-70">
                   <td className="py-2.5 pl-4 pr-4">
                     <p className="text-xs font-medium text-slate-700">{c.intel_metric_definition?.display_name || c.metric_id}</p>
-                    <p className="text-xs text-slate-400 font-mono">{c.metric_id}</p>
+                    <p className="font-mono text-xs text-slate-400">{c.metric_id}</p>
                   </td>
                   <td className="py-2.5 pr-4">
-                    <span className={cn('rounded border px-1.5 py-0.5 text-xs', STATUS_STYLES[c.status] || 'bg-slate-100 text-slate-500 border-slate-200')}>
-                      {c.status}
-                    </span>
+                    <RagChip status={STATUS_RAG_MAP[c.status] || 'Grey'} label={STATUS_LABELS[c.status] || c.status} />
                   </td>
                   <td className="py-2.5 pr-4 text-xs text-slate-500">{validationNotesText(c.validation_notes) || '—'}</td>
                 </tr>

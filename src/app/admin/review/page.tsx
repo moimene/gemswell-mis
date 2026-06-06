@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { cn, formatCompact } from '@/lib/utils'
+import { PageHeader, RagChip } from '@/components/shared/terminal'
 import {
   CheckCircle, XCircle, AlertTriangle, Clock, RefreshCw,
   ChevronDown, ChevronUp, FileText, Zap, Filter
@@ -94,12 +95,12 @@ const DOMAIN_LABELS: Record<string, string> = {
 }
 
 const STATUS_CONFIG = {
-  pending_review:  { label: 'Pending Review',  color: 'bg-amber-100 text-amber-800',  dot: 'bg-amber-500' },
-  auto_accepted:   { label: 'Auto-Accepted',   color: 'bg-blue-100 text-blue-800',    dot: 'bg-blue-500' },
-  accepted:        { label: 'Accepted',         color: 'bg-green-100 text-green-800',  dot: 'bg-green-500' },
-  rejected:        { label: 'Rejected',         color: 'bg-red-100 text-red-800',      dot: 'bg-red-500' },
-  validation_failed: { label: 'Failed',         color: 'bg-slate-100 text-slate-600',  dot: 'bg-slate-400' },
-} as Record<string, { label: string; color: string; dot: string }>
+  pending_review:    { label: 'Pendientes',     rag: 'Amber' as const },
+  auto_accepted:     { label: 'Auto-aceptados', rag: 'Blue' as const },
+  accepted:          { label: 'Aceptados',      rag: 'Green' as const },
+  rejected:          { label: 'Rechazados',     rag: 'Red' as const },
+  validation_failed: { label: 'Fallidos',       rag: 'Grey' as const },
+} as Record<string, { label: string; rag: 'Green' | 'Amber' | 'Red' | 'Blue' | 'Grey' }>
 
 function confidenceBar(confidence: number) {
   const pct = Math.round(confidence * 100)
@@ -116,10 +117,10 @@ function confidenceBar(confidence: number) {
 
 function authorityBadge(score: number | null) {
   if (score == null) return null
-  const label = score >= 90 ? 'Executed' : score >= 80 ? 'Controller' : score >= 70 ? 'Board Pack' : score >= 60 ? 'DD Memo' : score >= 40 ? 'Internal' : 'Narrative'
+  const label = score >= 90 ? 'Ejecutado' : score >= 80 ? 'Controlling' : score >= 70 ? 'Board Pack' : score >= 60 ? 'Memo DD' : score >= 40 ? 'Interno' : 'Narrativo'
   const color = score >= 80 ? 'text-green-700 bg-green-50' : score >= 60 ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'
   return (
-    <span className={cn('rounded px-1.5 py-0.5 text-xs font-medium', color)}>
+    <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-medium', color)}>
       Auth {score} · {label}
     </span>
   )
@@ -163,7 +164,7 @@ function CandidateCard({
 
   return (
     <div className={cn(
-      'rounded-lg border bg-white p-4 shadow-sm transition-shadow hover:shadow-md',
+      'rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md',
       candidate.status === 'validation_failed' && 'border-slate-300 opacity-70',
       candidate.status === 'auto_accepted' && 'border-blue-200 bg-blue-50/30'
     )}>
@@ -171,55 +172,52 @@ function CandidateCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium', statusCfg.color)}>
-              <span className={cn('h-1.5 w-1.5 rounded-full', statusCfg.dot)} />
-              {statusCfg.label}
-            </span>
+            <RagChip status={statusCfg.rag} label={statusCfg.label} />
             {candidate.status === 'auto_accepted' && (
-              <span className="flex items-center gap-1 text-xs text-blue-600">
+              <span className="flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide text-blue-600">
                 <Zap className="h-3 w-3" /> Auto
               </span>
             )}
             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
               {DOMAIN_LABELS[metric?.domain || ''] || metric?.domain}
             </span>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono text-slate-600">
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">
               {metric?.project_id}
             </span>
           </div>
-          <p className="mt-1 text-sm font-semibold text-slate-900 truncate">
+          <p className="mt-1 truncate text-sm font-semibold text-slate-900">
             {metric?.display_name || candidate.metric_id}
           </p>
-          <p className="text-xs text-slate-500 truncate">{candidate.metric_id}</p>
+          <p className="truncate font-mono text-[10px] text-slate-400">{candidate.metric_id}</p>
         </div>
 
         {/* Value */}
         <div className="shrink-0 text-right">
-          <p className="text-2xl font-bold text-slate-900">{valueFormatted}</p>
-          <p className="text-xs text-slate-500">{candidate.period_label || '—'}</p>
+          <p className="font-mono text-2xl font-bold tabular-nums text-slate-900">{valueFormatted}</p>
+          <p className="font-mono text-[11px] text-slate-500">{candidate.period_label || '—'}</p>
         </div>
       </div>
 
       {/* Quality row */}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-slate-500">Confidence</span>
+          <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Confianza</span>
           {confidenceBar(candidate.confidence)}
         </div>
         {authorityBadge(candidate.authority_score)}
-        {candidate.validation_notes?.length && (
+        {candidate.validation_notes?.length ? (
           <span className="flex items-center gap-1 text-xs text-amber-700">
             <AlertTriangle className="h-3 w-3" />
-            {candidate.validation_notes.length} warning{candidate.validation_notes.length > 1 ? 's' : ''}
+            {candidate.validation_notes.length} aviso{candidate.validation_notes.length > 1 ? 's' : ''}
           </span>
-        )}
+        ) : null}
       </div>
 
       {/* Source */}
       {doc && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-600">
           <FileText className="h-3 w-3 shrink-0" />
-          <span className="truncate">{doc.title || doc.source_file || 'Unknown source'}</span>
+          <span className="truncate">{doc.title || doc.source_file || 'Origen desconocido'}</span>
           {doc.doc_type && (
             <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-xs">{doc.doc_type}</span>
           )}
@@ -231,10 +229,10 @@ function CandidateCard({
         <div className="mt-2">
           <button
             onClick={() => setExpanded(!expanded)}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600"
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
           >
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            Evidence quote
+            Cita de evidencia
           </button>
           {expanded && (
             <div className="mt-2 rounded bg-slate-50 p-2 text-xs text-slate-600 italic border-l-2 border-slate-300">
@@ -245,48 +243,48 @@ function CandidateCard({
       )}
 
       {/* Validation warnings */}
-      {expanded && candidate.validation_notes?.length && (
+      {expanded && candidate.validation_notes?.length ? (
         <div className="mt-2 space-y-1">
           {candidate.validation_notes.map((n, i) => (
             <div key={i} className="flex items-start gap-1.5 rounded bg-amber-50 p-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>[{n.code || 'note'}] {n.message || String(n)}</span>
+              <span>[{n.code || 'nota'}] {n.message || String(n)}</span>
             </div>
           ))}
         </div>
-      )}
+      ) : null}
 
       {/* Override input */}
       {overrideMode && (
         <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3">
-          <p className="text-xs font-medium text-slate-700">Override value ({candidate.currency})</p>
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Sobrescribir valor ({candidate.currency})</p>
           <input
             type="number"
             value={overrideInput}
             onChange={e => setOverrideInput(e.target.value)}
             placeholder={candidate.extracted_value?.toString() || '0'}
-            className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+            className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
           <input
             type="text"
             value={overrideReason}
             onChange={e => setOverrideReason(e.target.value)}
-            placeholder="Reason for override (optional)"
+            placeholder="Motivo de la sobrescritura (opcional)"
             className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
           <div className="flex gap-2">
             <button
               onClick={() => handle('override')}
               disabled={!overrideInput || loading}
-              className="flex-1 rounded bg-slate-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              className="flex-1 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              Confirm override
+              Confirmar sobrescritura
             </button>
             <button
               onClick={() => setOverrideMode(false)}
               className="rounded px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
             >
-              Cancel
+              Cancelar
             </button>
           </div>
         </div>
@@ -301,7 +299,7 @@ function CandidateCard({
             className="flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
             <CheckCircle className="h-3.5 w-3.5" />
-            Accept
+            Aceptar
           </button>
           <button
             onClick={() => handle('reject')}
@@ -309,14 +307,14 @@ function CandidateCard({
             className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             <XCircle className="h-3.5 w-3.5" />
-            Reject
+            Rechazar
           </button>
           <button
             onClick={() => setOverrideMode(true)}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            Override
+            Sobrescribir
           </button>
         </div>
       )}
@@ -332,16 +330,16 @@ function StatsBar({ stats }: { stats: Stats }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {[
-        { label: 'Pending Review', value: totals.pending_review, color: 'text-amber-600' },
-        { label: 'Auto-Accepted', value: totals.auto_accepted,  color: 'text-blue-600' },
-        { label: 'Accepted',       value: totals.accepted,       color: 'text-green-600' },
-        { label: 'Rejected',       value: totals.rejected,       color: 'text-red-600' },
-        { label: 'Failed',         value: totals.validation_failed, color: 'text-slate-500' },
-        { label: 'Contradictions', value: contradictions.length,    color: contradictions.length > 0 ? 'text-red-600' : 'text-slate-500' },
+        { label: 'Pendientes',     value: totals.pending_review, color: 'text-amber-600' },
+        { label: 'Auto-aceptados', value: totals.auto_accepted,  color: 'text-blue-600' },
+        { label: 'Aceptados',      value: totals.accepted,       color: 'text-green-600' },
+        { label: 'Rechazados',     value: totals.rejected,       color: 'text-red-600' },
+        { label: 'Fallidos',       value: totals.validation_failed, color: 'text-slate-500' },
+        { label: 'Contradicciones', value: contradictions.length,   color: contradictions.length > 0 ? 'text-red-600' : 'text-slate-500' },
       ].map(s => (
-        <div key={s.label} className="rounded-lg border bg-white p-3 shadow-sm">
-          <p className={cn('text-2xl font-bold', s.color)}>{s.value}</p>
-          <p className="text-xs text-slate-500">{s.label}</p>
+        <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <p className={cn('font-mono text-2xl font-bold tabular-nums', s.color)}>{s.value}</p>
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
         </div>
       ))}
     </div>
@@ -361,10 +359,10 @@ function ContradictionsPanel({ contradictions }: { contradictions: Contradiction
   }
 
   return (
-    <div className="rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+    <div className="rounded-xl border border-red-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <AlertTriangle className="h-4 w-4 text-red-500" />
-        <h3 className="text-sm font-semibold text-slate-900">Open Contradictions ({contradictions.length})</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Contradicciones abiertas ({contradictions.length})</h3>
       </div>
       <div className="space-y-2">
         {contradictions.slice(0, 8).map(c => (
@@ -375,10 +373,10 @@ function ContradictionsPanel({ contradictions }: { contradictions: Contradiction
                 <p className="text-xs text-slate-600">{c.project_id} · {c.period_label}</p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="text-xs font-mono text-slate-800">
+                <p className="font-mono text-xs tabular-nums text-slate-800">
                   {c.value_a?.toLocaleString()} vs {c.value_b?.toLocaleString()}
                 </p>
-                <p className="text-xs text-red-600">Δ {((c.delta_pct ?? 0) * 100).toFixed(1)}%</p>
+                <p className="font-mono text-xs tabular-nums text-red-600">Δ {((c.delta_pct ?? 0) * 100).toFixed(1)}%</p>
               </div>
             </div>
           </div>
@@ -478,10 +476,10 @@ export default function ReviewPage() {
 
     if (res.ok) {
       const labels: Record<string, string> = {
-        accept: 'Accepted ✓',
-        reject: 'Rejected',
-        override: 'Overridden ✓',
-        defer: 'Deferred',
+        accept: 'Aceptado',
+        reject: 'Rechazado',
+        override: 'Sobrescrito',
+        defer: 'Aplazado',
       }
       toast.success(labels[decision] || decision)
       // Remove from list immediately for responsive UX
@@ -508,7 +506,10 @@ export default function ReviewPage() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
+        <div className="space-y-2 text-center">
+          <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+          <p className="font-mono text-xs text-slate-400">Cargando candidatos...</p>
+        </div>
       </div>
     )
   }
@@ -516,13 +517,11 @@ export default function ReviewPage() {
   if (loadError) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Evidence Review</h1>
-          <p className="text-sm text-slate-500">
-            Layer 3 — Review extracted metric candidates before publishing to fact tables
-          </p>
-        </div>
-        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+        <PageHeader
+          title="Revisión de Evidencia"
+          subtitle="Capa 3 — Revisa candidatos de métricas antes de publicarlos en las fact tables"
+        />
+        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-xl border border-red-200 bg-white p-4 shadow-sm">
           <AlertTriangle className="h-8 w-8 text-red-400" />
           <p className="text-sm font-medium text-slate-900">
             {loadError === 'auth'
@@ -553,22 +552,20 @@ export default function ReviewPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Evidence Review</h1>
-          <p className="text-sm text-slate-500">
-            Layer 3 — Review extracted metric candidates before publishing to fact tables
-          </p>
-        </div>
-        <button
-          onClick={refresh}
-          disabled={refreshing}
-          className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-        >
-          <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Revisión de Evidencia"
+        subtitle="Capa 3 — Revisa candidatos de métricas antes de publicarlos en las fact tables"
+        right={
+          <button
+            onClick={refresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+            Actualizar
+          </button>
+        }
+      />
 
       {/* Stats bar */}
       {stats && <StatsBar stats={stats} />}
@@ -579,8 +576,8 @@ export default function ReviewPage() {
       ) : null}
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white p-3 shadow-sm">
-        <Filter className="h-4 w-4 text-slate-400 shrink-0" />
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <Filter className="h-4 w-4 shrink-0 text-slate-400" />
 
         {/* Status tabs */}
         <div className="flex gap-1 rounded-md bg-slate-100 p-1">
@@ -595,7 +592,7 @@ export default function ReviewPage() {
                   : 'text-slate-600 hover:text-slate-800'
               )}
             >
-              {STATUS_CONFIG[s]?.label || 'All'}
+              {STATUS_CONFIG[s]?.label || 'Todos'}
               {stats && s !== 'all' && s in stats.totals && (
                 <span className="ml-1 text-slate-400">
                   ({stats.totals[s as keyof typeof stats.totals]})
@@ -613,7 +610,7 @@ export default function ReviewPage() {
           onChange={e => setProjectFilter(e.target.value)}
           className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"
         >
-          <option value="all">All Projects</option>
+          <option value="all">Todos los proyectos</option>
           <option value="MAD">MAD — Madrid</option>
           <option value="BHX">BHX — Birmingham</option>
         </select>
@@ -624,25 +621,25 @@ export default function ReviewPage() {
           onChange={e => setDomainFilter(e.target.value)}
           className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400"
         >
-          <option value="all">All Domains</option>
+          <option value="all">Todos los dominios</option>
           {Object.entries(DOMAIN_LABELS).map(([k, v]) => (
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
 
-        <span className="ml-auto text-xs text-slate-500">
-          {candidates.length} candidate{candidates.length !== 1 ? 's' : ''}
+        <span className="ml-auto font-mono text-xs tabular-nums text-slate-500">
+          {candidates.length} candidato{candidates.length !== 1 ? 's' : ''}
         </span>
       </div>
 
       {/* Candidate grid */}
       {candidates.length === 0 ? (
-        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white">
-          <Clock className="h-8 w-8 text-slate-300" />
+        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white">
+          <Clock className="h-8 w-8 text-slate-400" />
           <p className="text-sm text-slate-500">
             {statusFilter === 'pending_review'
-              ? 'No pending candidates — run the extraction engine to generate candidates'
-              : 'No candidates match the current filter'}
+              ? 'Sin candidatos pendientes — ejecuta el motor de extracción para generar candidatos'
+              : 'Ningún candidato coincide con el filtro actual'}
           </p>
           {statusFilter === 'pending_review' && (
             <p className="text-xs text-slate-400 font-mono">
@@ -654,10 +651,10 @@ export default function ReviewPage() {
         <div className="space-y-6">
           {domains.map(domain => (
             <div key={domain}>
-              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 uppercase tracking-wide">
+              <h2 className="mb-3 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 <span className="h-px flex-1 bg-slate-200" />
                 <span>{DOMAIN_LABELS[domain] || domain}</span>
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-normal text-slate-600">
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 font-mono text-xs font-normal tabular-nums text-slate-600">
                   {grouped[domain].length}
                 </span>
                 <span className="h-px flex-1 bg-slate-200" />

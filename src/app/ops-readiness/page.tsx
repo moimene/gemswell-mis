@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { cn, type RAGColor } from '@/lib/utils'
 import { KPICard } from '@/components/shared/KPICard'
-import { RAGBadge, RAGDot } from '@/components/shared/RAGBadge'
+import { PageHeader, RagChip, RagDot, projectAccent } from '@/components/shared/terminal'
 import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react'
 
 type ProjectTab = 'MAD' | 'BHX'
@@ -50,19 +50,19 @@ function statusToRAG(code: string, blocked: boolean): RAGColor {
 
 function statusLabel(code: string): string {
   switch (code) {
-    case 'NS': return 'Not Started'
-    case 'IP': return 'In Progress'
-    case 'BL': return 'Blocked'
-    case 'DL': return 'Delayed'
-    case 'CP': return 'Complete'
-    case 'AT': return 'At Risk'
+    case 'NS': return 'Sin iniciar'
+    case 'IP': return 'En curso'
+    case 'BL': return 'Bloqueado'
+    case 'DL': return 'Retrasado'
+    case 'CP': return 'Completado'
+    case 'AT': return 'En riesgo'
     default: return code
   }
 }
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })
+  return new Date(d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: '2-digit' })
 }
 
 function slipDays(baseline: string, forecast: string): number {
@@ -163,37 +163,39 @@ export default function OpsReadinessPage() {
     .sort((a, b) => Number(b.dim_readiness_item.weight) - Number(a.dim_readiness_item.weight))
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Ops Readiness</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Operations, staffing & systems pre-opening checklist</p>
-        </div>
-        <div className="flex rounded-lg border bg-slate-50 p-1 gap-1">
-          {(['MAD', 'BHX'] as const).map(p => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setTab(p)}
-              className={cn(
-                'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                tab === p
-                  ? 'bg-white shadow text-slate-900'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Preparación Operaciones"
+        subtitle="Checklist de preapertura: operaciones, plantilla y sistemas"
+        right={
+          <div className="flex gap-1 rounded-lg bg-slate-800/60 p-1">
+            {(['MAD', 'BHX'] as const).map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setTab(p)}
+                className={cn(
+                  'rounded-md px-4 py-1.5 font-mono text-xs font-bold tracking-wide transition-colors',
+                  tab === p ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                )}
+                style={tab === p ? { backgroundColor: projectAccent(p) } : undefined}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {loading ? (
         <div className="flex h-64 items-center justify-center">
-          <p className="text-slate-400">Loading...</p>
+          <div className="space-y-2 text-center">
+            <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+            <p className="font-mono text-xs text-slate-500">Cargando...</p>
+          </div>
         </div>
       ) : loadError ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-8">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 shadow-sm">
           <div className="flex flex-col items-center text-center gap-3">
             <AlertTriangle className="h-8 w-8 text-amber-500" />
             <div>
@@ -221,27 +223,27 @@ export default function OpsReadinessPage() {
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <KPICard
-              title="Overall Readiness"
+              title="Preparación global"
               value={`${overallScore}%`}
-              subtitle={`${complete} of ${total} items complete`}
+              subtitle={`${complete} de ${total} ítems completados`}
               rag={overallScore >= 80 ? 'Green' : overallScore >= 50 ? 'Amber' : 'Red'}
             />
             <KPICard
-              title="Complete"
+              title="Completados"
               value={complete}
-              subtitle={`${total - complete} still open`}
+              subtitle={`${total - complete} aún abiertos`}
               rag={complete === total ? 'Green' : 'Grey'}
             />
             <KPICard
-              title="Blocked"
+              title="Bloqueados"
               value={blocked}
-              subtitle="items with active blockers"
+              subtitle="ítems con bloqueantes activos"
               rag={blocked === 0 ? 'Green' : blocked <= 2 ? 'Amber' : 'Red'}
             />
             <KPICard
-              title="Opening Blockers"
+              title="Bloqueantes de apertura"
               value={openingBlockers}
-              subtitle="critical items not yet complete"
+              subtitle="ítems críticos sin completar"
               rag={openingBlockers === 0 ? 'Green' : openingBlockers <= 2 ? 'Amber' : 'Red'}
             />
           </div>
@@ -249,7 +251,7 @@ export default function OpsReadinessPage() {
           {groups.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400">
               <CheckCircle className="mb-2 h-8 w-8 opacity-40" />
-              <p className="text-sm">No ops readiness items found for this project</p>
+              <p className="text-sm">No hay ítems de preparación operativa para este proyecto</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -257,67 +259,67 @@ export default function OpsReadinessPage() {
                 const gRAG = worstRAG(items.map(r => statusToRAG(r.status_code, r.blocked_flag)))
                 const gScore = groupScore(items)
                 return (
-                  <div key={group} className="rounded-lg border overflow-hidden">
-                    <div className="flex items-center gap-3 bg-slate-50 px-4 py-2.5 border-b">
-                      <RAGDot status={gRAG} />
-                      <span className="font-semibold text-slate-700 text-sm">{group}</span>
-                      <div className="ml-2 flex items-center gap-1.5 flex-1">
-                        <div className="h-1.5 w-20 rounded-full bg-slate-200 overflow-hidden">
+                  <div key={group} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+                      <RagDot status={gRAG} />
+                      <span className="text-sm font-semibold text-slate-700">{group}</span>
+                      <div className="ml-2 flex flex-1 items-center gap-1.5">
+                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
                           <div
                             className={cn('h-full rounded-full', gScore >= 80 ? 'bg-green-500' : gScore >= 50 ? 'bg-amber-400' : 'bg-red-400')}
                             style={{ width: `${gScore}%` }}
                           />
                         </div>
-                        <span className="text-xs text-slate-400 tabular-nums">{gScore}%</span>
+                        <span className="font-mono text-xs font-semibold tabular-nums text-slate-600">{gScore}%</span>
                       </div>
-                      <span className="ml-auto text-xs text-slate-400">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+                      <span className="ml-auto font-mono text-xs text-slate-400">{items.length} ítem{items.length !== 1 ? 's' : ''}</span>
                     </div>
                     <table className="w-full text-sm">
-                      <thead className="bg-white text-xs font-semibold uppercase text-slate-400">
+                      <thead className="bg-slate-50 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         <tr>
-                          <th className="px-4 py-2 text-left">Item</th>
-                          <th className="px-4 py-2 text-left">Baseline</th>
-                          <th className="px-4 py-2 text-left">Forecast</th>
-                          <th className="px-4 py-2 text-left">Status</th>
-                          <th className="px-4 py-2 text-right">Slip</th>
-                          <th className="px-4 py-2 text-left">Owner</th>
-                          <th className="px-4 py-2 text-left">Blocker</th>
+                          <th className="px-4 py-2 text-left">Ítem</th>
+                          <th className="px-4 py-2 text-left">Línea base</th>
+                          <th className="px-4 py-2 text-left">Previsión</th>
+                          <th className="px-4 py-2 text-left">Estado</th>
+                          <th className="px-4 py-2 text-right">Desvío</th>
+                          <th className="px-4 py-2 text-left">Responsable</th>
+                          <th className="px-4 py-2 text-left">Bloqueante</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y">
+                      <tbody className="divide-y divide-slate-100">
                         {items.map(r => {
                           const rag = statusToRAG(r.status_code, r.blocked_flag)
                           const slip = slipDays(r.baseline_target, r.forecast_target)
                           return (
-                            <tr key={r.id} className="hover:bg-slate-50/60">
+                            <tr key={r.id} className="odd:bg-slate-50/30 hover:bg-slate-50">
                               <td className="px-4 py-2.5 text-slate-800">
                                 <span>{r.dim_readiness_item.item_name}</span>
                                 {r.dim_readiness_item.opening_blocker_flag && (
-                                  <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Gate</span>
+                                  <span className="ml-2 rounded-[2px] bg-red-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-red-700">Apertura</span>
                                 )}
                                 {r.dim_readiness_item.critical_flag && !r.dim_readiness_item.opening_blocker_flag && (
-                                  <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">Critical</span>
+                                  <span className="ml-2 rounded-[2px] bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-amber-700">Crítico</span>
                                 )}
                               </td>
-                              <td className="px-4 py-2.5 text-slate-500">{fmtDate(r.baseline_target)}</td>
-                              <td className="px-4 py-2.5 text-slate-500">{fmtDate(r.forecast_target)}</td>
+                              <td className="px-4 py-2.5 font-mono tabular-nums text-slate-600">{fmtDate(r.baseline_target)}</td>
+                              <td className="px-4 py-2.5 font-mono tabular-nums text-slate-600">{fmtDate(r.forecast_target)}</td>
                               <td className="px-4 py-2.5">
-                                <RAGBadge status={rag} label={statusLabel(r.status_code)} />
+                                <RagChip status={rag} label={statusLabel(r.status_code)} />
                               </td>
-                              <td className="px-4 py-2.5 text-right font-mono text-sm">
+                              <td className="px-4 py-2.5 text-right font-mono tabular-nums text-sm">
                                 {slip === 0 ? (
-                                  <span className="text-green-600">On time</span>
+                                  <span className="text-green-600">En plazo</span>
                                 ) : (
                                   <span className={slip > 0 ? 'text-red-600' : 'text-green-600'}>
                                     {slip > 0 ? `+${slip}d` : `${slip}d`}
                                   </span>
                                 )}
                               </td>
-                              <td className="px-4 py-2.5 text-xs text-slate-500">{r.owner_id || '—'}</td>
-                              <td className="px-4 py-2.5 text-slate-500 max-w-xs truncate">
+                              <td className="px-4 py-2.5 text-xs text-slate-600">{r.owner_id || 'Sin asignar'}</td>
+                              <td className="max-w-xs truncate px-4 py-2.5 text-slate-600">
                                 {r.blocked_flag && r.blocker_reason
-                                  ? <span className="text-red-600 text-xs">{r.blocker_reason}</span>
-                                  : <span className="text-slate-300">—</span>}
+                                  ? <span className="text-xs text-red-600">{r.blocker_reason}</span>
+                                  : <span className="text-slate-400">—</span>}
                               </td>
                             </tr>
                           )
@@ -334,28 +336,28 @@ export default function OpsReadinessPage() {
             <section>
               <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
                 <AlertTriangle className="h-4 w-4 text-red-500" />
-                Open Blockers
-                <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                Bloqueantes abiertos
+                <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 font-mono text-xs font-bold text-red-700">
                   {blockers.length}
                 </span>
               </h2>
-              <div className="overflow-x-auto rounded-lg border">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                  <thead className="bg-slate-50 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                     <tr>
-                      <th className="px-4 py-2.5 text-left">Item</th>
-                      <th className="px-4 py-2.5 text-left">Group</th>
-                      <th className="px-4 py-2.5 text-left">Reason</th>
-                      <th className="px-4 py-2.5 text-left">Dependency</th>
+                      <th className="px-4 py-2.5 text-left">Ítem</th>
+                      <th className="px-4 py-2.5 text-left">Grupo</th>
+                      <th className="px-4 py-2.5 text-left">Motivo</th>
+                      <th className="px-4 py-2.5 text-left">Dependencia</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
+                  <tbody className="divide-y divide-slate-100">
                     {blockers.map(r => (
-                      <tr key={r.id} className="hover:bg-red-50/30">
+                      <tr key={r.id} className="odd:bg-slate-50/30 hover:bg-slate-50">
                         <td className="px-4 py-2.5 font-medium text-slate-800">{r.dim_readiness_item.item_name}</td>
-                        <td className="px-4 py-2.5 text-slate-500">{r.dim_readiness_item.readiness_group}</td>
-                        <td className="px-4 py-2.5 text-slate-600 max-w-xs">{r.blocker_reason ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-slate-500 text-xs">
+                        <td className="px-4 py-2.5 text-slate-600">{r.dim_readiness_item.readiness_group}</td>
+                        <td className="max-w-xs px-4 py-2.5 text-slate-600">{r.blocker_reason ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-600">
                           {r.dependency_task_id ?? r.dependency_other ?? '—'}
                         </td>
                       </tr>
@@ -367,18 +369,18 @@ export default function OpsReadinessPage() {
           )}
 
           {blockers.length === 0 && rows.length > 0 && (
-            <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+            <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-4 py-3 shadow-sm">
               <Shield className="h-4 w-4 text-green-600" />
-              <p className="text-sm text-green-700 font-medium">No open blockers — ops readiness is on track</p>
+              <p className="text-sm font-medium text-green-700">Sin bloqueantes — preparación en curso</p>
             </div>
           )}
 
           {rows.length === 0 && (
-            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8">
-              <div className="flex flex-col items-center text-center gap-2">
-                <Clock className="h-8 w-8 text-slate-300" />
-                <p className="font-medium text-slate-500">No readiness data yet for {tab}</p>
-                <p className="text-sm text-slate-400">Ops readiness items will appear here once the project enters pre-opening stage.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-8">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <Clock className="h-8 w-8 text-slate-400" />
+                <p className="font-medium text-slate-600">Aún no hay datos de preparación para {tab}</p>
+                <p className="text-sm text-slate-400">Los ítems de preparación operativa aparecerán aquí cuando el proyecto entre en fase de preapertura.</p>
               </div>
             </div>
           )}

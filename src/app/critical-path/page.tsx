@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { cn, type RAGColor } from '@/lib/utils'
 import { KPICard } from '@/components/shared/KPICard'
-import { RAGBadge, RAGDot } from '@/components/shared/RAGBadge'
+import { PageHeader, RagChip, RagDot, projectAccent } from '@/components/shared/terminal'
 import { AlertTriangle, CheckCircle, Clock, Flag } from 'lucide-react'
 
 type ProjectTab = 'MAD' | 'BHX'
@@ -63,12 +63,12 @@ function statusToRAG(statusCode: string, blocked: boolean): RAGColor {
 
 function statusLabel(code: string): string {
   switch (code) {
-    case 'NS': return 'Not Started'
-    case 'IP': return 'In Progress'
-    case 'BL': return 'Blocked'
-    case 'DL': return 'Delayed'
-    case 'CP': return 'Complete'
-    case 'AT': return 'At Risk'
+    case 'NS': return 'Sin iniciar'
+    case 'IP': return 'En curso'
+    case 'BL': return 'Bloqueada'
+    case 'DL': return 'Retrasada'
+    case 'CP': return 'Completada'
+    case 'AT': return 'En riesgo'
     case 'NA': return 'N/A'
     default: return code
   }
@@ -83,7 +83,7 @@ function daysBetween(a: string | null, b: string | null): number | null {
 
 function fmtDate(d: string | null): string {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })
+  return new Date(d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: '2-digit' })
 }
 
 function worstRAG(rags: RAGColor[]): RAGColor {
@@ -204,35 +204,35 @@ export default function CriticalPathPage() {
     .sort((a, b) => (b.impact_days_on_opening ?? 0) - (a.impact_days_on_opening ?? 0))
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       {/* Header + Tab switcher */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Critical Path</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Programme schedule · gate status · open blockers</p>
-        </div>
-        <div className="flex rounded-lg border bg-slate-50 p-1 gap-1">
-          {(['MAD', 'BHX'] as const).map(p => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setTab(p)}
-              className={cn(
-                'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                tab === p
-                  ? 'bg-white shadow text-slate-900'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Ruta Crítica"
+        subtitle="Cronograma del programa · estado de hitos · bloqueos abiertos"
+        right={
+          <div className="flex gap-1 rounded-lg bg-slate-800 p-1">
+            {(['MAD', 'BHX'] as const).map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setTab(p)}
+                className={cn(
+                  'rounded-md px-4 py-1.5 font-mono text-xs font-bold tracking-wide transition-colors',
+                  tab === p ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                )}
+                style={tab === p ? { backgroundColor: projectAccent(p) } : undefined}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="flex h-64 items-center justify-center">
-          <p className="text-slate-400">Loading...</p>
+        <div className="flex h-64 flex-col items-center justify-center gap-3">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+          <p className="font-mono text-xs text-slate-400">Cargando ruta crítica…</p>
         </div>
       ) : loadError ? (
         <div className="flex h-64 items-center justify-center">
@@ -261,49 +261,49 @@ export default function CriticalPathPage() {
         <>
           {/* ── KPI Row ─────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <KPICard title="Total Tasks" value={total} subtitle="active on critical path" rag="Grey" />
+            <KPICard title="Tareas totales" value={total} subtitle="activas en ruta crítica" rag="Grey" />
             <KPICard
-              title="On Track"
+              title="En curso"
               value={onTrack}
-              subtitle={`${total ? Math.round((onTrack / total) * 100) : 0}% of tasks`}
+              subtitle={`${total ? Math.round((onTrack / total) * 100) : 0}% de tareas`}
               rag={kpiRAG(total - onTrack, Math.ceil(total * 0.1), Math.ceil(total * 0.25))}
             />
             <KPICard
-              title="Blocked"
+              title="Bloqueadas"
               value={blocked}
-              subtitle="tasks with active blockers"
+              subtitle="tareas con bloqueos activos"
               rag={blocked === 0 ? 'Green' : blocked <= 2 ? 'Amber' : 'Red'}
             />
             <KPICard
-              title="Critical Path Impact"
+              title="Impacto en ruta crítica"
               value={`${critImpact}d`}
-              subtitle="cumulative days at risk on opening"
+              subtitle="días acumulados en riesgo de apertura"
               rag={critImpact === 0 ? 'Green' : critImpact <= 14 ? 'Amber' : 'Red'}
             />
           </div>
 
           {/* ── Gate Tracker ──────────────────────────────────────────────── */}
           <section>
-            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
+            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900">
               <Flag className="h-4 w-4 text-slate-500" />
-              Gate Tracker — L0 Milestones
+              Hitos L0
             </h2>
             {gates.length === 0 ? (
-              <EmptyState message="No L0 gates found for this project" />
+              <EmptyState message="No hay hitos L0 para este proyecto" />
             ) : (
-              <div className="overflow-x-auto rounded-lg border">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                  <thead className="bg-slate-50 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                     <tr>
-                      <th className="px-4 py-2.5 text-left">Gate / Milestone</th>
-                      <th className="px-4 py-2.5 text-left">Baseline</th>
-                      <th className="px-4 py-2.5 text-left">Forecast</th>
-                      <th className="px-4 py-2.5 text-left">Status</th>
-                      <th className="px-4 py-2.5 text-right">Slip</th>
-                      <th className="px-4 py-2.5 text-right">% Done</th>
+                      <th className="px-4 py-2.5 text-left">Hito</th>
+                      <th className="px-4 py-2.5 text-left">Línea base</th>
+                      <th className="px-4 py-2.5 text-left">Previsión</th>
+                      <th className="px-4 py-2.5 text-left">Estado</th>
+                      <th className="px-4 py-2.5 text-right">Desvío</th>
+                      <th className="px-4 py-2.5 text-right">% Avance</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
+                  <tbody className="divide-y divide-slate-100">
                     {gates.map(s => {
                       const slip = daysBetween(s.dim_task.baseline_finish, s.forecast_finish)
                       const rag: RAGColor =
@@ -312,29 +312,29 @@ export default function CriticalPathPage() {
                         : (slip ?? 0) > 0 ? 'Amber'
                         : 'Green'
                       return (
-                        <tr key={s.id} className="hover:bg-slate-50/60">
+                        <tr key={s.id} className="odd:bg-slate-50/30 hover:bg-slate-50">
                           <td className="px-4 py-2.5 font-medium text-slate-800">
                             {s.dim_task.task_name}
                           </td>
-                          <td className="px-4 py-2.5 text-slate-600">
+                          <td className="px-4 py-2.5 font-mono tabular-nums text-slate-600">
                             {fmtDate(s.dim_task.baseline_finish)}
                           </td>
-                          <td className="px-4 py-2.5 text-slate-600">
+                          <td className="px-4 py-2.5 font-mono tabular-nums text-slate-600">
                             {fmtDate(s.forecast_finish)}
                           </td>
                           <td className="px-4 py-2.5">
-                            <RAGBadge status={rag} label={statusLabel(s.status_code)} />
+                            <RagChip status={rag} label={statusLabel(s.status_code)} />
                           </td>
-                          <td className="px-4 py-2.5 text-right font-mono">
-                            {slip === null ? '—' : slip === 0 ? (
-                              <span className="text-green-600">On time</span>
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums">
+                            {slip === null ? <span className="text-slate-400">—</span> : slip === 0 ? (
+                              <span className="text-green-600">En plazo</span>
                             ) : (
                               <span className={slip > 0 ? 'text-red-600' : 'text-green-600'}>
                                 {slip > 0 ? `+${slip}d` : `${slip}d`}
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-2.5 text-right text-slate-600">
+                          <td className="px-4 py-2.5 text-right font-mono tabular-nums text-slate-600">
                             {s.percent_complete != null ? `${Number(s.percent_complete).toFixed(0)}%` : '—'}
                           </td>
                         </tr>
@@ -348,52 +348,52 @@ export default function CriticalPathPage() {
 
           {/* ── Task Table by Workstream (L1) ──────────────────────────────── */}
           <section>
-            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
+            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900">
               <Clock className="h-4 w-4 text-slate-500" />
-              L1 Tasks by Workstream
+              Tareas L1 por flujo de trabajo
             </h2>
             {workstreams.length === 0 ? (
-              <EmptyState message="No L1 tasks found for this project" />
+              <EmptyState message="No hay tareas L1 para este proyecto" />
             ) : (
               <div className="space-y-4">
                 {workstreams.map(([wsId, { name, tasks }]) => {
                   const wsRAG = worstRAG(tasks.map(t => statusToRAG(t.status_code, t.blocked_flag)))
                   return (
-                    <div key={wsId} className="rounded-lg border overflow-hidden">
-                      <div className="flex items-center gap-3 bg-slate-50 px-4 py-2.5 border-b">
-                        <RAGDot status={wsRAG} />
-                        <span className="font-semibold text-slate-700 text-sm">{name}</span>
-                        <span className="ml-auto text-xs text-slate-400">{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
+                    <div key={wsId} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                      <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+                        <RagDot status={wsRAG} />
+                        <span className="text-sm font-semibold text-slate-700">{name}</span>
+                        <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-slate-400">{tasks.length} tarea{tasks.length !== 1 ? 's' : ''}</span>
                       </div>
                       <table className="w-full text-sm">
-                        <thead className="bg-white text-xs font-semibold uppercase text-slate-400">
+                        <thead className="bg-white font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                           <tr>
-                            <th className="px-4 py-2 text-left">Task</th>
-                            <th className="px-4 py-2 text-left">Baseline Finish</th>
-                            <th className="px-4 py-2 text-left">Forecast</th>
-                            <th className="px-4 py-2 text-left">Status</th>
-                            <th className="px-4 py-2 text-right">%</th>
-                            <th className="px-4 py-2 text-left">Blocker</th>
+                            <th className="px-4 py-2 text-left">Tarea</th>
+                            <th className="px-4 py-2 text-left">Línea base</th>
+                            <th className="px-4 py-2 text-left">Previsión</th>
+                            <th className="px-4 py-2 text-left">Estado</th>
+                            <th className="px-4 py-2 text-right">% Avance</th>
+                            <th className="px-4 py-2 text-left">Bloqueo</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y">
+                        <tbody className="divide-y divide-slate-100">
                           {tasks.map(s => {
                             const rag = statusToRAG(s.status_code, s.blocked_flag)
                             return (
-                              <tr key={s.id} className="hover:bg-slate-50/60">
+                              <tr key={s.id} className="odd:bg-slate-50/30 hover:bg-slate-50">
                                 <td className="px-4 py-2 text-slate-800">{s.dim_task.task_name}</td>
-                                <td className="px-4 py-2 text-slate-500">{fmtDate(s.dim_task.baseline_finish)}</td>
-                                <td className="px-4 py-2 text-slate-500">{fmtDate(s.forecast_finish)}</td>
+                                <td className="px-4 py-2 font-mono tabular-nums text-slate-600">{fmtDate(s.dim_task.baseline_finish)}</td>
+                                <td className="px-4 py-2 font-mono tabular-nums text-slate-600">{fmtDate(s.forecast_finish)}</td>
                                 <td className="px-4 py-2">
-                                  <RAGBadge status={rag} label={statusLabel(s.status_code)} />
+                                  <RagChip status={rag} label={statusLabel(s.status_code)} />
                                 </td>
-                                <td className="px-4 py-2 text-right text-slate-500">
+                                <td className="px-4 py-2 text-right font-mono tabular-nums text-slate-600">
                                   {s.percent_complete != null ? `${Number(s.percent_complete).toFixed(0)}%` : '—'}
                                 </td>
-                                <td className="px-4 py-2 text-slate-500 max-w-xs truncate">
+                                <td className="max-w-xs truncate px-4 py-2 text-slate-600">
                                   {s.blocked_flag && s.blocker_reason
-                                    ? <span className="text-red-600 text-xs">{s.blocker_reason}</span>
-                                    : <span className="text-slate-300">—</span>}
+                                    ? <span className="text-xs text-red-600">{s.blocker_reason}</span>
+                                    : <span className="text-slate-400">—</span>}
                                 </td>
                               </tr>
                             )
@@ -409,49 +409,49 @@ export default function CriticalPathPage() {
 
           {/* ── Blockers Board ─────────────────────────────────────────────── */}
           <section>
-            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
+            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900">
               <AlertTriangle className="h-4 w-4 text-red-500" />
-              Open Blockers
+              Bloqueos abiertos
               {blockers.length > 0 && (
-                <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 font-mono text-xs font-semibold text-red-700">
                   {blockers.length}
                 </span>
               )}
             </h2>
             {blockers.length === 0 ? (
-              <EmptyState message="No open blockers — critical path is clear" />
+              <EmptyState message="Sin bloqueos abiertos — la ruta crítica está despejada" />
             ) : (
-              <div className="overflow-x-auto rounded-lg border">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                  <thead className="bg-slate-50 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
                     <tr>
-                      <th className="px-4 py-2.5 text-left">Task</th>
-                      <th className="px-4 py-2.5 text-left">Category</th>
-                      <th className="px-4 py-2.5 text-left">Reason</th>
-                      <th className="px-4 py-2.5 text-right">Impact</th>
-                      <th className="px-4 py-2.5 text-left">Next Action</th>
-                      <th className="px-4 py-2.5 text-left">Due</th>
+                      <th className="px-4 py-2.5 text-left">Tarea</th>
+                      <th className="px-4 py-2.5 text-left">Categoría</th>
+                      <th className="px-4 py-2.5 text-left">Motivo</th>
+                      <th className="px-4 py-2.5 text-right">Impacto</th>
+                      <th className="px-4 py-2.5 text-left">Próxima acción</th>
+                      <th className="px-4 py-2.5 text-left">Vence</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
+                  <tbody className="divide-y divide-slate-100">
                     {blockers.map(s => (
-                      <tr key={s.id} className="hover:bg-red-50/30">
+                      <tr key={s.id} className="odd:bg-slate-50/30 hover:bg-slate-50">
                         <td className="px-4 py-2.5 font-medium text-slate-800">
                           {s.dim_task.task_name}
                         </td>
                         <td className="px-4 py-2.5 text-slate-600">
-                          {s.blocker_category ?? '—'}
+                          {s.blocker_category ?? <span className="text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-slate-600 max-w-xs">
-                          {s.blocker_reason ?? '—'}
+                        <td className="max-w-xs px-4 py-2.5 text-slate-600">
+                          {s.blocker_reason ?? <span className="text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono font-semibold text-red-600">
-                          {s.impact_days_on_opening != null ? `+${s.impact_days_on_opening}d` : '—'}
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-red-600">
+                          {s.impact_days_on_opening != null ? `+${s.impact_days_on_opening}d` : <span className="text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-slate-600 max-w-xs">
-                          {s.next_action_summary ?? '—'}
+                        <td className="max-w-xs px-4 py-2.5 text-slate-600">
+                          {s.next_action_summary ?? <span className="text-slate-400">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
+                        <td className="whitespace-nowrap px-4 py-2.5 font-mono tabular-nums text-slate-600">
                           {fmtDate(s.next_action_due_date)}
                         </td>
                       </tr>
