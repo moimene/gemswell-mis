@@ -34,9 +34,15 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // Fail CLOSED: if Supabase is unreachable or env is misconfigured, getUser() throws — treat that
+  // as "not authenticated" (deny) rather than letting the error 500 every request through the proxy.
+  let user = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    user = null
+  }
   const path = request.nextUrl.pathname
   const isPublic = PUBLIC_PATHS.some((re) => re.test(path))
 
