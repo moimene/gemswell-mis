@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { buildCorpusHealth } from '@/lib/knowledge/corpus-health'
 
 function getErrorMessage(err: unknown): string {
@@ -26,6 +26,7 @@ type HealthRpc = {
 
 export async function GET() {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const sb = createApiClient()
 
     // F6: single-query corpus health via RPC — replaces 9 head-counts + a full ~5.5k authority

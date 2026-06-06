@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { parseListParams, LIST_COLUMNS } from '@/lib/knowledge/documents-query'
 
 function getErrorMessage(err: unknown): string {
@@ -8,6 +8,7 @@ function getErrorMessage(err: unknown): string {
 
 export async function GET(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const p = parseListParams(request.nextUrl.searchParams)
     const supabase = createApiClient()
 
