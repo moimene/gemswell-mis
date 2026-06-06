@@ -12,15 +12,25 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* The app is a light-themed dashboard (all surfaces use explicit light backgrounds).
+   We intentionally do NOT follow prefers-color-scheme: dark — doing so flipped the inherited
+   text colour to light (#ededed) while components stayed on white, making input/edit fields
+   and the chat box unreadable (light text on a white field). Force the light palette. */
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Belt-and-suspenders: any native form control inherits a readable dark text colour even if a
+   component forgets to set one (this is what caused the unreadable chat box / edit fields). */
+input,
+textarea,
+select {
+  color: #0f172a; /* slate-900 */
+}
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8; /* slate-400 */
 }

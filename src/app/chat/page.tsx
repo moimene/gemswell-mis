@@ -82,9 +82,11 @@ export default function ChatPage() {
     setStage(0)
     setLoading(true)
 
-    // client-side timeout so a stalled agent loop never spins forever with no recovery
+    // client-side timeout so a stalled agent loop never spins forever with no recovery.
+    // Generous (4.5 min) because the reasoning path uses Opus + a verifier pass and can produce
+    // long analytical answers; the server route allows up to 800s.
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 120_000)
+    const timeout = setTimeout(() => controller.abort(), 270_000)
 
     try {
       const res = await fetch('/api/chat', {

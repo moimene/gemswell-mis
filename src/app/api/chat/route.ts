@@ -115,10 +115,15 @@ type DetectedEntity = {
   docTypeFilter?: string
 }
 
-const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514'
+// Model tiers (overridable by env). Analytical/document queries route to REASONING (see
+// chooseChatModel) — that path uses Opus for the most accurate document interpretation; simple
+// queries use the newer Sonnet for speed.
+const DEFAULT_CHAT_MODEL = process.env.CHAT_MODEL || 'claude-sonnet-4-6'
 const CHAT_FAST_MODEL = process.env.CHAT_FAST_MODEL || DEFAULT_CHAT_MODEL
-const CHAT_REASONING_MODEL = process.env.CHAT_REASONING_MODEL || CHAT_FAST_MODEL
+const CHAT_REASONING_MODEL = process.env.CHAT_REASONING_MODEL || 'claude-opus-4-8'
 const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASONING_MODEL
+// Generous output budget so long analytical answers aren't truncated (user-requested ~15k tokens).
+const CHAT_MAX_TOKENS = Number(process.env.CHAT_MAX_TOKENS || '16000')
 const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
 // Deliberately permissive (recall-first): the vector floor only drops obvious noise; precision is
 // handled downstream by the Cohere reranker + trust-tier ordering (rankBySourceTrust). 0.18 is below
@@ -200,7 +205,9 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 - Lead with the answer, then evidence and caveats.
 - Cite concrete numbers only when they appear in tool results.
 - Include source limitations when relevant: unreviewed source, low authority, missing markdown artifact, or conflicting evidence.
-- For CEO/CFO questions, end with practical implications or next checks when the evidence supports them.`
+- For CEO/CFO questions, end with practical implications or next checks when the evidence supports them.
+- Interpret retrieved documents faithfully and carefully: read the actual chunk text before drawing conclusions, quote or closely paraphrase the specific passages you rely on, and do not generalise beyond what the text says. When a document is ambiguous or partial, state that rather than guessing.
+- For complex, analytical or multi-document questions, be thorough rather than terse — walk through the relevant figures, clauses and their implications, and cover material nuances. Do not pad simple questions, but never sacrifice accuracy or completeness for brevity when the question warrants depth.`
 
 function chooseChatModel(query: string): string {
   const q = query.toLowerCase()
@@ -839,7 +846,7 @@ async function runAgentLoop(
   for (let iteration = 0; iteration < 5; iteration++) {
     const response = await anthropic.messages.create({
       model,
-      max_tokens: 4096,
+      max_tokens: CHAT_MAX_TOKENS,
       temperature: 0.3,
       system: systemPrompt,
       tools: TOOLS,
@@ -956,7 +963,7 @@ async function verifyAnswer(
   try {
     const response = await anthropic.messages.create({
       model: CHAT_VERIFIER_MODEL,
-      max_tokens: 4096,
+      max_tokens: CHAT_MAX_TOKENS,
       temperature: 0,
       system: verifierPrompt,
       messages: [
