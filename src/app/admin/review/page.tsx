@@ -526,8 +526,8 @@ export default function ReviewPage() {
           <AlertTriangle className="h-8 w-8 text-red-400" />
           <p className="text-sm font-medium text-slate-900">
             {loadError === 'auth'
-              ? 'No se pudieron cargar los candidatos — vuelve a iniciar sesión'
-              : 'No se pudieron cargar los candidatos — la sesión pudo expirar'}
+              ? 'No se pudieron cargar los candidatos — la sesión pudo expirar, vuelve a iniciar sesión'
+              : 'No se pudieron cargar los candidatos — inténtalo de nuevo'}
           </p>
           <div className="flex items-center gap-2">
             <button

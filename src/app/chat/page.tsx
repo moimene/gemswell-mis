@@ -148,7 +148,7 @@ export default function ChatPage() {
           </div>
           {conversationId && (
             <button
-              onClick={() => { setMessages([]); setConversationId(null) }}
+              onClick={() => { setMessages([]); setConversationId(null); setCollapsedSources(new Set()) }}
               className="text-xs text-slate-400 hover:text-slate-600 px-3 py-1.5 rounded-md border hover:border-slate-300 transition-colors"
             >
               Nueva conversación

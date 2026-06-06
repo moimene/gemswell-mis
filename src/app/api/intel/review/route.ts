@@ -47,8 +47,9 @@ export async function POST(request: NextRequest) {
       override_value,    // numeric, only for 'override'
       override_reason,
     } = body
-    // Audit trail records the real authenticated reviewer, not a placeholder identity.
-    const decided_by = body.decided_by ?? user.email ?? user.id
+    // Audit trail records the real authenticated reviewer. Do NOT honour a client-supplied
+    // decided_by — that would let a caller spoof the reviewer identity in the governance log.
+    const decided_by = user.email ?? user.id
 
     if (!candidate_id || !decision) {
       return NextResponse.json({ error: 'candidate_id and decision required' }, { status: 400 })

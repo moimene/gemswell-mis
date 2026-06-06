@@ -158,7 +158,7 @@ export default function PortfolioPage() {
               <tr className="border-b hover:bg-slate-50">
                 <td className="px-4 py-3 text-slate-700">Execution %</td>
                 {projects.map(p => {
-                  const pct = capex[p.project_id] ? capex[p.project_id].paid / capex[p.project_id].budget : 0
+                  const pct = capex[p.project_id]?.budget > 0 ? capex[p.project_id].paid / capex[p.project_id].budget : 0
                   return (
                     <td key={p.project_id} className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -174,7 +174,7 @@ export default function PortfolioPage() {
               <tr className="border-b hover:bg-slate-50">
                 <td className="px-4 py-3 text-slate-700">EAC Variance</td>
                 {projects.map(p => {
-                  const v = capex[p.project_id] ? (capex[p.project_id].eac - capex[p.project_id].budget) / capex[p.project_id].budget : 0
+                  const v = capex[p.project_id]?.budget > 0 ? (capex[p.project_id].eac - capex[p.project_id].budget) / capex[p.project_id].budget : 0
                   return (
                     <td key={p.project_id} className={`px-4 py-3 text-right font-mono font-medium ${v > 0.02 ? 'text-red-600' : v < -0.02 ? 'text-green-600' : 'text-slate-600'}`}>
                       {v > 0 ? '+' : ''}{formatPercent(v * 100)}

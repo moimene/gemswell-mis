@@ -42,7 +42,7 @@ export default function DocumentsPage() {
       if (filters.onlyNoMarkdown) sp.set('onlyNoMarkdown', 'true')
       if (filters.includeRetired) sp.set('includeRetired', 'true')
       const r = await fetch(`/api/knowledge/documents?${sp.toString()}`)
-      if (!r.ok) { setLoadError(r.status === 401 ? 'auth' : 'error'); return }
+      if (!r.ok) { setRows([]); setTotal(0); setLoadError(r.status === 401 ? 'auth' : 'error'); return }
       const j: ListResp = await r.json()
       setRows(j.items ?? []); setTotal(j.total ?? 0)
     } catch (e) {

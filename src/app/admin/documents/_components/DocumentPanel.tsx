@@ -67,9 +67,12 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
   const [reclass, setReclass] = useState({ doc_type: '', authority_tier: '', project_id: '' })
 
   const load = useCallback(async () => {
+    // Post-action refresh: a transient failure here must NOT replace an already-populated panel
+    // with the full error screen (the action itself succeeded). Toast and keep the panel.
     const r = await fetch(`/api/knowledge/documents/${docId}`)
-    if (!r.ok) { setLoadErr(r.status); return }
+    if (!r.ok) { toast.error('No se pudo refrescar el documento'); return }
     setD(await r.json())
+    setLoadErr(null)
   }, [docId])
 
   useEffect(() => {

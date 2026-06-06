@@ -43,7 +43,7 @@ export default function PricingPage() {
         .from('fct_pricing_slot').select('snapshot_date')
         .eq('project_id', activeProject).order('snapshot_date', { ascending: false }).limit(1).maybeSingle()
       if (latestError) throw latestError
-      if (!latest) { if (!cancelled) setSlots([]); return }
+      if (!latest) { if (!cancelled) { setSlots([]); setSnapshotDate(null) } return }
       if (!cancelled) setSnapshotDate(latest.snapshot_date)
       const { data, error } = await sb
         .from('fct_pricing_slot')

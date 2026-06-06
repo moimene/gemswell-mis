@@ -164,6 +164,7 @@ export default function RisksPage() {
         if (cancelled) return
         setRisks(data.risks)
         setActions(data.actions)
+        setLoadError(false)  // clear a prior tab's error when a fresh load succeeds
         setLoading(false)
       })
       .catch(e => {
