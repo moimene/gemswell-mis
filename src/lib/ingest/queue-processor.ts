@@ -478,6 +478,124 @@ export async function processIngestQueueItem(
   }
 }
 
+export type UploadIngestInput = {
+  fileName: string        // e.g. "Acta consejo 2026-03.pdf"
+  fileExt: string         // e.g. ".pdf" (lowercased, with dot)
+  buffer: Buffer          // the uploaded file bytes
+  projectId?: string | null
+  docTypeHint?: string | null  // optional doc_type/category hint (classifier may override)
+}
+
+/**
+ * Ingest a single in-memory file (browser upload) through the SAME governed pipeline as the queue:
+ * reserve -> parse -> Haiku classify -> markdown artifact -> chunk -> embed -> index. No filesystem
+ * (works on serverless) and no ingest_queue coupling. Uploaded docs land as review_status the
+ * classifier decides (typically needs_review), so they appear in the gestor for human governance.
+ */
+export async function ingestBuffer(
+  supabase: SupabaseClient,
+  input: UploadIngestInput,
+  options?: { embeddingBatchSize?: number; artifactBucket?: string; log?: (message: string) => void }
+): Promise<IngestProcessResult & { documentId?: string; reused?: boolean }> {
+  const startTime = Date.now()
+  const log = options?.log ?? (() => undefined)
+  const embeddingBatchSize = options?.embeddingBatchSize ?? DEFAULT_EMBEDDING_BATCH_SIZE
+  const artifactBucket = options?.artifactBucket ?? process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+  // Reuse the queue row shape so we can call the shared helpers unchanged.
+  const item: IngestQueueRow = {
+    id: '', rel_path: input.fileName, file_name: input.fileName, file_ext: input.fileExt,
+    project_id: input.projectId ?? null, category: input.docTypeHint ?? null, relevance: null,
+  }
+  let documentId: string | null = null
+  try {
+    const buffer = input.buffer
+    const sourceHash = sha256(buffer)
+    log(`[upload] ${input.fileName} (${(buffer.length / 1024).toFixed(0)} KB)`)
+
+    const reserved = await reserveRagDocument(supabase, item, sourceHash)
+    documentId = reserved.id
+    if (reserved.rejected) {
+      return { file: input.fileName, status: 'done', chunks: 0, documentId, reused: true }
+    }
+    if (reserved.reused) log(`[upload] existing source_hash — re-ingesting document ${documentId}`)
+
+    const parsed = await parseDocument(input.fileName, buffer, input.fileName, getMimeType(input.fileExt))
+    if (!parsed.content || parsed.content.trim().length < 50) {
+      throw new Error(`Parsed content too short: ${parsed.content.length} chars`)
+    }
+
+    let cls: Awaited<ReturnType<typeof classifyDocument>> = null
+    try {
+      cls = await classifyDocument(
+        { title: input.fileName, sample: parsed.content.slice(0, 4000), dmsFolder: input.docTypeHint ?? null },
+        getAnthropic()
+      )
+    } catch (clsErr) {
+      log(`[upload] classify failed, using rule governance: ${errorMessage(clsErr)}`)
+    }
+    const govDocType = cls?.result.doc_type ?? input.docTypeHint ?? null
+    const govTier: AuthorityTier = cls?.result.authority_tier ?? DEFAULT_AUTHORITY_TIER
+    const govScore = cls?.authority_score ?? DEFAULT_AUTHORITY_SCORE
+    const govConfidence = cls?.result.confidence ?? 0
+    const govLifecycle: Lifecycle = (cls?.result.lifecycle as Lifecycle) ?? DEFAULT_LIFECYCLE
+    const govReview = decideReviewStatus({ doc_type: govDocType, authority_tier: govTier, confidence: govConfidence })
+    const govSource: ClassificationSource = cls ? 'agent_auto' : 'rule'
+
+    const mdFrontmatter: MarkdownFrontmatter = {
+      document_id: documentId, source_channel: DEFAULT_SOURCE_CHANNEL, source_hash: sourceHash,
+      file_name: input.fileName, mime_type: getMimeType(input.fileExt), business_line_id: null,
+      project_id: input.projectId || null, doc_type: govDocType, lifecycle: govLifecycle,
+      authority_tier: govTier, authority_score: govScore, classification_source: govSource,
+      review_status: govReview, parser: parsed.parser, ocr_used: false,
+      generated_at: new Date().toISOString(), version: 1,
+    }
+    const finalMarkdown = buildMarkdownArtifact(parsed.content, mdFrontmatter)
+    const mdPath = await saveMarkdownArtifact(supabase, documentId, finalMarkdown, artifactBucket, log)
+
+    const baseMetadata: ChunkMetadata = {
+      project_id: input.projectId || undefined, doc_type: govDocType ?? undefined,
+      source_file: input.fileName, document_id: documentId, source_hash: sourceHash,
+      source_channel: DEFAULT_SOURCE_CHANNEL, review_status: govReview, classification_source: govSource,
+      lifecycle: govLifecycle, authority_tier: govTier, authority_score: govScore,
+      parser_used: parsed.parser, ocr_used: false, ...(mdPath ? { md_path: mdPath } : {}),
+    }
+    const chunks = chunkFinancialContent(finalMarkdown, baseMetadata)
+    if (chunks.length === 0) throw new Error('No chunks generated from content')
+
+    let insertedChunks = 0
+    for (let i = 0; i < chunks.length; i += embeddingBatchSize) {
+      await insertChunkBatch(supabase, documentId, chunks.slice(i, i + embeddingBatchSize), i)
+      insertedChunks += Math.min(embeddingBatchSize, chunks.length - i)
+    }
+
+    const { error: finalUpdateErr } = await supabase
+      .from('rag_documents')
+      .update({
+        status: 'indexed', chunk_count: insertedChunks, doc_type: govDocType, authority_tier: govTier,
+        authority_score: govScore, classification_source: govSource, classification_confidence: govConfidence,
+        review_status: govReview, lifecycle: govLifecycle, summary: cls?.result.summary ?? null,
+        topics: cls?.result.topics ?? null, currency: cls?.result.currency ?? null, period: cls?.result.period ?? null,
+      })
+      .eq('id', documentId)
+    if (finalUpdateErr) throw new Error(`rag_documents final update failed: ${finalUpdateErr.message}`)
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+    log(`[upload] Done: ${input.fileName} -> ${insertedChunks} chunks in ${elapsed}s (parser: ${parsed.parser})`)
+    return {
+      file: input.fileName, status: 'done', chunks: insertedChunks, parser: parsed.parser,
+      parseChars: parsed.content.length, documentId, reused: reserved.reused,
+    }
+  } catch (err: unknown) {
+    const message = errorMessage(err)
+    log(`[upload] Failed: ${input.fileName}: ${message}`)
+    if (documentId) {
+      await supabase.from('rag_chunks').delete().eq('document_id', documentId)
+      await supabase.from('rag_documents').update({ status: 'error', chunk_count: 0 }).eq('id', documentId)
+    }
+    return { file: input.fileName, status: 'error', error: message, documentId: documentId ?? undefined }
+  }
+}
+
 export async function processIngestQueueBatch(
   supabase: SupabaseClient,
   batchSize: number,

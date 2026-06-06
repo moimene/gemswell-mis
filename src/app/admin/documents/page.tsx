@@ -1,10 +1,11 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './_components/badges'
 import { DocumentPanel } from './_components/DocumentPanel'
 import { CorpusHealth } from './_components/CorpusHealth'
+import { UploadPanel } from './_components/UploadPanel'
 
 type DocRow = {
   id: string; title: string | null; project_id: string | null; doc_type: string | null
@@ -25,6 +26,7 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<false | 'auth' | 'error'>(false)
   const [selected, setSelected] = useState<string | null>(null)
+  const [showUpload, setShowUpload] = useState(false)
   const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', authority_min: '', q: '', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false })
 
   const load = useCallback(async () => {
@@ -57,10 +59,17 @@ export default function DocumentsPage() {
       <div className="flex-1 overflow-auto p-6">
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-slate-900">Gestor Documental</h1>
-          <button onClick={load} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50">
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Actualizar
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowUpload(s => !s)} className="flex items-center gap-2 rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
+              <Upload className="h-4 w-4" /> Subir documento
+            </button>
+            <button onClick={load} className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-slate-50">
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Actualizar
+            </button>
+          </div>
         </div>
+
+        {showUpload && <UploadPanel onClose={() => setShowUpload(false)} onUploaded={() => { setPage(1); load() }} />}
 
         <CorpusHealth />
 

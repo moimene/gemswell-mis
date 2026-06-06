@@ -1,0 +1,87 @@
+'use client'
+import { useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { Upload, X, Loader2 } from 'lucide-react'
+
+const PROJECTS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
+const DOCTYPES = ['', 'legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other']
+const ACCEPT = '.pdf,.docx,.xlsx,.xls,.csv,.txt,.pptx'
+
+/** Browser upload → governed ingest (POST /api/knowledge/upload). The doc is parsed, classified,
+ *  chunked, embedded and indexed, then appears in the list (typically as "needs_review"). */
+export function UploadPanel({ onClose, onUploaded }: { onClose: () => void; onUploaded: () => void }) {
+  const [file, setFile] = useState<File | null>(null)
+  const [project, setProject] = useState('')
+  const [docType, setDocType] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function submit() {
+    if (!file || busy) return
+    setBusy(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    if (project) fd.append('project_id', project)
+    if (docType) fd.append('doc_type', docType)
+    try {
+      const r = await fetch('/api/knowledge/upload', { method: 'POST', body: fd })
+      const j = await r.json().catch(() => ({}))
+      if (r.status === 401) { toast.error('Sesión expirada — vuelve a iniciar sesión'); return }
+      if (!r.ok) { toast.error(j.error || 'No se pudo procesar el documento'); return }
+      toast.success(`«${j.file}» ingestado: ${j.chunks} fragmentos${j.reused ? ' (re-ingesta)' : ''}. Queda en revisión.`)
+      onUploaded()
+      onClose()
+    } catch {
+      toast.error('Fallo de red al subir el documento')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-800">Subir documento al corpus</h2>
+        <button onClick={onClose} disabled={busy} className="text-slate-400 hover:text-slate-700 disabled:opacity-40"><X className="h-4 w-4" /></button>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-slate-500">Archivo (PDF, DOCX, XLSX, CSV, TXT · ≤25 MB)</label>
+          <input
+            ref={inputRef}
+            type="file"
+            accept={ACCEPT}
+            onChange={e => setFile(e.target.files?.[0] ?? null)}
+            disabled={busy}
+            className="text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-white hover:file:bg-slate-700"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-slate-500">Proyecto</label>
+          <select value={project} onChange={e => setProject(e.target.value)} disabled={busy} className="rounded border bg-white px-2 py-1.5 text-sm">
+            {PROJECTS.map(p => <option key={p} value={p}>{p || '— (auto)'}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-slate-500">Tipo (opcional)</label>
+          <select value={docType} onChange={e => setDocType(e.target.value)} disabled={busy} className="rounded border bg-white px-2 py-1.5 text-sm">
+            {DOCTYPES.map(d => <option key={d} value={d}>{d || '— (auto-clasificar)'}</option>)}
+          </select>
+        </div>
+        <button
+          onClick={submit}
+          disabled={!file || busy}
+          className="flex items-center gap-2 rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {busy ? 'Procesando…' : 'Subir e ingestar'}
+        </button>
+      </div>
+      {busy && (
+        <p className="mt-2 text-[11px] text-slate-500">
+          Parseando, clasificando y generando embeddings… Un documento grande puede tardar 1–2 min. No cierres la página.
+        </p>
+      )}
+    </div>
+  )
+}
