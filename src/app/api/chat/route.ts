@@ -120,6 +120,10 @@ const CHAT_FAST_MODEL = process.env.CHAT_FAST_MODEL || DEFAULT_CHAT_MODEL
 const CHAT_REASONING_MODEL = process.env.CHAT_REASONING_MODEL || CHAT_FAST_MODEL
 const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASONING_MODEL
 const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
+// Deliberately permissive (recall-first): the vector floor only drops obvious noise; precision is
+// handled downstream by the Cohere reranker + trust-tier ordering (rankBySourceTrust). 0.18 is below
+// the typical gemini-embedding-001 relevant-chunk cosine, so it rarely bites — intentional, not inert.
+// Tighten only with a live service-role probe (anon can't run match_chunks within its 3s timeout).
 const RAG_MATCH_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD || '0.18')
 
 const DOC_TYPE_ALIASES: Record<string, string> = {

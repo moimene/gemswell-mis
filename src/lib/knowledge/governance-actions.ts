@@ -2,6 +2,7 @@ import {
   AUTHORITY_TIER_SCORE, AUTHORITY_TIERS, DOC_TYPES, HUMAN_VALIDATED_SOURCES,
   LIFECYCLES, PROJECT_IDS, RETIRED_STATUS,
 } from '@/lib/knowledge/contracts'
+import { scoreToTier } from '@/lib/knowledge/authority'
 import type {
   ClassificationSource, DocGovernanceState, GovernanceAction, ReclassifyFields,
 } from '@/lib/knowledge/contracts'
@@ -113,6 +114,12 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
       } else if (fields.authority_score !== undefined) {
         patch.authority_score = fields.authority_score
         events.push(ev(documentId, 'reclassify', 'authority_score', current.authority_score, fields.authority_score, actor, reason))
+        // B-R1: a score-only reclassify must keep the tier consistent (else 'Auth 95 · unverified').
+        const derivedTier = scoreToTier(fields.authority_score)
+        if (derivedTier !== current.authority_tier) {
+          patch.authority_tier = derivedTier
+          events.push(ev(documentId, 'reclassify', 'authority_tier', current.authority_tier, derivedTier, actor, reason))
+        }
       }
       // human correction
       patch.classification_source = 'agent_corrected' as ClassificationSource

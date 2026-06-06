@@ -72,6 +72,14 @@ describe('computeGovernanceAction', () => {
     expect(r.patch.authority_score).toBe(88)
   })
 
+  // B-R1: score-only reclassify keeps the tier consistent (base is audited/95 → score 40 → internal)
+  it('reclassify with authority_score only derives the matching tier', () => {
+    const r = computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
+      fields: { authority_score: 40 }, actor: 'a' })
+    expect(r.patch.authority_score).toBe(40)
+    expect(r.patch.authority_tier).toBe('internal')
+  })
+
   it('retire from indexed → status retired', () => {
     const r = computeGovernanceAction({ action: 'retire', documentId: 'd1', current: base, actor: 'a' })
     expect(r.patch.status).toBe('retired')

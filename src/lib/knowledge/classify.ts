@@ -40,7 +40,8 @@ function mode(values: (string | null | undefined)[]): { value: string | null; sh
 export function liftUpFromChunks(metas: ChunkMetaLite[]): LiftedLabels {
   const authorities = metas
     .map(m => (m.authority == null ? NaN : Number(m.authority)))
-    .filter(n => Number.isFinite(n)) as number[]
+    // guard against garbage/out-of-range chunk authorities (DB CHECKs authority_score 0..100)
+    .filter(n => Number.isFinite(n) && n >= 0 && n <= 100) as number[]
   const authority_score = authorities.length ? Math.max(...authorities) : null
   const docTypeMode = mode(metas.map(m => m.doc_type))
   const projectMode = mode(metas.map(m => m.project_id))
