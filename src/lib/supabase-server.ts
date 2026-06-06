@@ -33,3 +33,10 @@ export function createApiClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   return createSupabaseClient(url, key)
 }
+
+/** Returns the authenticated user (validated via getUser) or null. Use to gate API routes. */
+export async function requireUser() {
+  const supabase = await createServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
