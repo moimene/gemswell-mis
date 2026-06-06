@@ -33,7 +33,10 @@ export async function rerankChunks(
   topK = 5
 ): Promise<RankedChunk[]> {
   if (chunks.length === 0) return []
-  if (chunks.length <= topK) {
+  // Only skip Cohere when there's nothing to rank. (Previously skipped whenever
+  // chunks.length <= topK, which defeated "rerank the whole pool then re-sort by trust":
+  // callers passing topK >= pool size got raw similarity, not Cohere relevance.)
+  if (chunks.length <= 1) {
     return chunks.map(c => ({ ...c, relevanceScore: c.similarity || 0.5 }))
   }
 

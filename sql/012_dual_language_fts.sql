@@ -15,7 +15,7 @@
 
 create extension if not exists unaccent;
 
-create or replace function rag_chunks_fts_update() returns trigger language plpgsql as $$
+create or replace function public.rag_chunks_fts_update() returns trigger language plpgsql as $$
 begin
   new.fts := to_tsvector('spanish', unaccent(coalesce(new.content, '')))
           || to_tsvector('english', unaccent(coalesce(new.content, '')));
@@ -23,7 +23,14 @@ begin
 end;
 $$;
 
-create or replace function keyword_search_chunks(
+-- Self-contained (Codex C-3/C-4): bind the trigger + ensure the GIN index, schema-qualified + idempotent,
+-- so a fresh replay produces the dual-language FTS without relying on earlier migrations.
+drop trigger if exists trig_rag_chunks_fts on public.rag_chunks;
+create trigger trig_rag_chunks_fts
+  before insert or update of content on public.rag_chunks
+  for each row execute function public.rag_chunks_fts_update();
+
+create or replace function public.keyword_search_chunks(
   query_text text, filter_project text default null, match_count integer default 15, filter_doc_type text default null
 ) returns table(id uuid, document_id uuid, content text, metadata jsonb, rank real)
 language sql stable as $$
@@ -55,6 +62,8 @@ language sql stable as $$
   order by rank desc
   limit match_count;
 $$;
+
+create index if not exists idx_rag_chunks_fts on public.rag_chunks using gin(fts);
 
 -- Post-migration backfill — STATUS: DONE 2026-06-05 (all 156,898 fts cells rebuilt; scaffolding dropped).
 -- Recipe (for any future rebuild):

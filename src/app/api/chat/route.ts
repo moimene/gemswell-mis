@@ -449,8 +449,10 @@ async function executeSearchDocuments(
           query_text: input.query,
           filter_project: projectFilter,
           match_count: 15,
+          filter_doc_type: docTypeFilter,
         })
         return ((data || []) as Array<RetrievedChunk & { rank?: number }>)
+          // RPC already applies doc_type; keep this as a defensive belt-and-suspenders
           .filter((r) => !docTypeFilter || r.metadata?.doc_type === docTypeFilter)
           .map((r) => ({
             id: r.id,
@@ -480,10 +482,12 @@ async function executeSearchDocuments(
     }
   }
 
-  // Cohere rerank on combined pool, then order by source trust tier (tier dominates relevance).
-  const reranked = (await rerankChunks(input.query, pool, 10))
+  // Cohere-rerank the FULL pool (not just top-10) so trust-tier ordering can promote a
+  // high-trust chunk Cohere scored modestly — otherwise Cohere's relevance cut would drop it
+  // before trust is ever considered. Then order by trust tier and take the final top 10.
+  const reranked = (await rerankChunks(input.query, pool, pool.length))
     .filter(c => !isRejectedSource(c.metadata))
-  const ranked = rankBySourceTrust(reranked)
+  const ranked = rankBySourceTrust(reranked).slice(0, 10)
 
   const sources: Source[] = ranked.map(c =>
     buildKnowledgeSource({
