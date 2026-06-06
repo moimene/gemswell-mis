@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Briefcase, Building2, GitBranch,
   Banknote, Shield, Utensils, Tag, BarChart3,
   AlertTriangle, FileText, MessageSquare, Upload, ChevronLeft, ChevronRight,
-  FlaskConical, Layers, FolderCheck
+  FlaskConical, Layers, FolderCheck, LogOut
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -83,6 +83,19 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+      <form method="post" action="/auth/signout" className="border-t p-2">
+        <button
+          type="submit"
+          title="Cerrar sesión"
+          className={cn(
+            'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900',
+            collapsed && 'justify-center'
+          )}
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          {!collapsed && <span>Cerrar sesión</span>}
+        </button>
+      </form>
     </aside>
   )
 }

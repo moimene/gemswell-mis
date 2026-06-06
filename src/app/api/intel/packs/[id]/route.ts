@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import {
   attachGroundedDocument,
   validationNotesText,
@@ -50,6 +50,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { id } = await params
     const supabase = createApiClient()
 

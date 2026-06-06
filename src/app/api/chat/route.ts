@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
@@ -989,6 +989,7 @@ async function verifyAnswer(
 // ─── Main Chat Handler ───────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { messages, conversationId } = (await request.json()) as {
       messages: Message[]
       conversationId?: string

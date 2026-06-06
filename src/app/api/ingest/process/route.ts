@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { errorMessage, processIngestQueueBatch } from '@/lib/ingest/queue-processor'
 
 const DMS_ROOT = process.env.DMS_ROOT || '/Users/moisesmenendez/Dropbox/DESARROLLO/GEMSWELL_MIS/DMS_GEMSWELL'
@@ -14,6 +14,7 @@ export const maxDuration = 800
  */
 export async function POST(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const body = await request.json().catch(() => ({})) as { batchSize?: number; itemId?: string }
     const batchSize = Math.max(1, Number(body.batchSize || 1))
     const supabase = createApiClient()

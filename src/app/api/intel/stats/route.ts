@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 
 function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Internal server error'
@@ -7,6 +7,7 @@ function getErrorMessage(err: unknown): string {
 
 export async function GET() {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const supabase = createApiClient()
 
     // 1. Candidate pipeline stats from the view

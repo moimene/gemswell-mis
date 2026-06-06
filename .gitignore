@@ -42,3 +42,6 @@ next-env.d.ts
 
 # supabase local link/cache state
 supabase/.temp/
+
+# serena MCP tool cache (local only)
+.serena/

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type ReviewDecision = 'accept' | 'reject' | 'override' | 'defer'
@@ -38,6 +38,7 @@ function getErrorMessage(err: unknown): string {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const body = await request.json() as ReviewRequestBody
     const {
       candidate_id,

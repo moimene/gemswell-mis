@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { attachGroundedDocument, firstJoined, type MaybeJoined } from '@/lib/intel/grounding'
 
 type MetricDefinition = {
@@ -30,6 +30,7 @@ function getErrorMessage(err: unknown): string {
 
 export async function GET(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status') || 'pending_review'
     const project = searchParams.get('project')

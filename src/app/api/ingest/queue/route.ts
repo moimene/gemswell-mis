@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 
 type QueueItem = {
   relPath: string
@@ -17,6 +17,7 @@ function getErrorMessage(err: unknown): string {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { files } = await request.json() as { files: QueueItem[] }
 
     if (!files?.length) {
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
 // GET: return current queue status
 export async function GET() {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const supabase = createApiClient()
     const { data, error } = await supabase
       .from('ingest_queue')

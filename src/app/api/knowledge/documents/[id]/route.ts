@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createApiClient } from '@/lib/supabase-server'
+import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { reconstructMarkdown } from '@/lib/knowledge/markdown-reconstruct'
 import { computeGovernanceAction, InvalidTransitionError } from '@/lib/knowledge/governance-actions'
 import type { DocGovernanceState, GovernanceAction, ReclassifyFields } from '@/lib/knowledge/contracts'
@@ -18,6 +18,7 @@ const DETAIL_COLUMNS = `
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { id } = await params
     const supabase = createApiClient()
 
@@ -66,6 +67,7 @@ const GOV_COLS = 'review_status, classification_source, status, authority_score,
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const { id } = await params
     // F13: a malformed JSON body is a client error, not a 500.
     let body: PatchBody
