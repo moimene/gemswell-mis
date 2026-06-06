@@ -124,7 +124,7 @@ async function fetchLatestSnapshots(project_id: string): Promise<TaskSnapshot[]>
     .eq('dim_task.active', true)
     .order('as_of_week_ending', { ascending: false })
 
-  if (error) { console.error(error); return [] }
+  if (error) throw error
   if (!data) return []
 
   // Deduplicate: keep only the most recent snapshot per task
@@ -139,16 +139,33 @@ export default function CriticalPathPage() {
   const [tab, setTab] = useState<ProjectTab>('MAD')
   const [snapshots, setSnapshots] = useState<TaskSnapshot[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetchLatestSnapshots(tab).then(data => {
-      if (cancelled) return
-      setSnapshots(data)
-      setLoading(false)
-    })
+    const load = async () => {
+      setLoadError(false)
+      try {
+        const data = await fetchLatestSnapshots(tab)
+        if (cancelled) return
+        setSnapshots(data)
+      } catch (e) {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
     return () => { cancelled = true }
-  }, [tab])
+  }, [tab, reloadKey])
+
+  const retry = () => {
+    setLoading(true)
+    setReloadKey(k => k + 1)
+  }
 
   // ── KPI derivations ──────────────────────────────────────────────────────
   const total = snapshots.length
@@ -216,6 +233,29 @@ export default function CriticalPathPage() {
       {loading ? (
         <div className="flex h-64 items-center justify-center">
           <p className="text-slate-400">Loading...</p>
+        </div>
+      ) : loadError ? (
+        <div className="flex h-64 items-center justify-center">
+          <div className="max-w-sm rounded-lg border border-red-200 bg-red-50/60 p-6 text-center">
+            <AlertTriangle className="mx-auto mb-2 h-8 w-8 text-red-500" />
+            <p className="text-sm font-medium text-slate-800">No se pudo cargar la ruta crítica</p>
+            <p className="mt-1 text-xs text-slate-500">La sesión pudo expirar. Reintenta o inicia sesión de nuevo.</p>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={retry}
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+              >
+                Reintentar
+              </button>
+              <a
+                href="/login"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Iniciar sesión
+              </a>
+            </div>
+          </div>
         </div>
       ) : (
         <>

@@ -17,12 +17,14 @@ type Message = {
 
 const SUGGESTED_QUERIES = [
   '¿Cuál es el estado actual del CapEx de Madrid?',
-  'Compare funding utilization MAD vs BHX',
+  'Compara la utilización de financiación entre MAD y BHX',
   '¿Cuánto queda de CESCE sin disponer?',
-  'What is the EAC variance for Birmingham?',
-  'Cash flow summary for both projects',
-  '¿Cuál es el budget total del portfolio?',
+  '¿Cuál es la desviación del EAC en Birmingham?',
+  'Resumen de flujo de caja de ambos proyectos',
+  '¿Cuál es el presupuesto total del portfolio?',
 ]
+
+const LOADING_STAGES = ['Buscando documentos…', 'Analizando cifras…', 'Verificando fuentes…']
 
 const VERIFICATION_LABELS = {
   source_of_record: 'source of record',
@@ -44,13 +46,30 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
-  const [showSources, setShowSources] = useState<number | null>(null)
+  // collapsed-set: sources show by default (UAT is about citations); clicking COLLAPSES a message's sources
+  const [collapsedSources, setCollapsedSources] = useState<Set<number>>(new Set())
+  const [stage, setStage] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // cycle the loading status text so a long multi-tool query reads as progress, not a hang
+  useEffect(() => {
+    if (!loading) return
+    const id = setInterval(() => setStage(s => (s + 1) % LOADING_STAGES.length), 4000)
+    return () => clearInterval(id)
+  }, [loading])
+
+  function toggleSources(i: number) {
+    setCollapsedSources(prev => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i); else next.add(i)
+      return next
+    })
+  }
 
   async function sendMessage(text?: string) {
     const query = text || input.trim()
@@ -60,7 +79,12 @@ export default function ChatPage() {
     const newMessages = [...messages, userMsg]
     setMessages(newMessages)
     setInput('')
+    setStage(0)
     setLoading(true)
+
+    // client-side timeout so a stalled agent loop never spins forever with no recovery
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120_000)
 
     try {
       const res = await fetch('/api/chat', {
@@ -70,11 +94,18 @@ export default function ChatPage() {
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
           conversationId,
         }),
+        signal: controller.signal,
       })
 
-      const data = await res.json()
+      // session expired mid-conversation -> bounce to login preserving where we were
+      if (res.status === 401) {
+        if (typeof window !== 'undefined') window.location.assign('/login?redirect=/chat')
+        return
+      }
 
-      if (!res.ok) throw new Error(data.error || 'Chat request failed')
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
 
       if (data.conversationId) setConversationId(data.conversationId)
 
@@ -85,12 +116,16 @@ export default function ChatPage() {
         entities: data.entities,
       }])
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Chat request failed'
+      console.error('[chat] request failed', err)
+      const aborted = err instanceof DOMException && err.name === 'AbortError'
       setMessages([...newMessages, {
         role: 'assistant',
-        content: `Error: ${message}. Make sure the API keys (ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY) are configured.`,
+        content: aborted
+          ? 'La consulta tardó demasiado y se canceló. Inténtalo de nuevo o reformúlala.'
+          : 'No se pudo completar la consulta. Inténtalo de nuevo.',
       }])
     } finally {
+      clearTimeout(timeout)
       setLoading(false)
     }
   }
@@ -108,15 +143,15 @@ export default function ChatPage() {
       <div className="flex-none border-b bg-white px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">MIS AI Assistant</h1>
-            <p className="text-sm text-slate-500">Ask about CapEx, cash flows, funding, or any project data</p>
+            <h1 className="text-lg font-semibold text-slate-900">Asistente MIS</h1>
+            <p className="text-sm text-slate-500">Pregunta sobre CapEx, tesorería, financiación o cualquier dato de los proyectos</p>
           </div>
           {conversationId && (
             <button
               onClick={() => { setMessages([]); setConversationId(null) }}
               className="text-xs text-slate-400 hover:text-slate-600 px-3 py-1.5 rounded-md border hover:border-slate-300 transition-colors"
             >
-              New conversation
+              Nueva conversación
             </button>
           )}
         </div>
@@ -131,10 +166,10 @@ export default function ChatPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
             </div>
-            <h2 className="text-lg font-medium text-slate-700 mb-2">Gemswell MIS Assistant</h2>
+            <h2 className="text-lg font-medium text-slate-700 mb-2">Asistente documental Gemswell MIS</h2>
             <p className="text-sm text-slate-500 mb-6 max-w-md">
-              I have access to your portfolio&apos;s financial data — CapEx, cash flows, funding instruments, and more.
-              Ask me anything about MAD or BHX.
+              Tengo acceso a los datos financieros y documentales de tu portfolio — CapEx, tesorería,
+              instrumentos de financiación y más. Pregúntame sobre cualquier proyecto (MAD, BHX, Kelpa, fondo…).
             </p>
             <div className="grid grid-cols-2 gap-2 max-w-lg w-full">
               {SUGGESTED_QUERIES.map((q, i) => (
@@ -177,33 +212,36 @@ export default function ChatPage() {
                 </div>
               </div>
 
-              {/* Sources & Entities */}
+              {/* Entities — shown independently of sources */}
+              {msg.role === 'assistant' && msg.entities && msg.entities.length > 0 && (
+                <div className="mt-2 ml-11 flex flex-wrap gap-1">
+                  {msg.entities.map((e, j) => (
+                    <span key={j} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-500">
+                      {e.value}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Sources — expanded by default (citations are the point of the documental chat) */}
               {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
                 <div className="mt-2 ml-11">
                   <button
-                    onClick={() => setShowSources(showSources === i ? null : i)}
-                    className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
+                    onClick={() => toggleSources(i)}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800 flex items-center gap-1"
                   >
-                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    {msg.sources.length} sources
-                    {msg.entities && msg.entities.length > 0 && (
-                      <span className="ml-2">
-                        {msg.entities.map((e, j) => (
-                          <span key={j} className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-500 mr-1">
-                            {e.value}
-                          </span>
-                        ))}
-                      </span>
-                    )}
+                    {collapsedSources.has(i) ? `Ver ${msg.sources.length} fuentes` : `Ocultar fuentes (${msg.sources.length})`}
                   </button>
-                  {showSources === i && (
+                  {!collapsedSources.has(i) && (
                     <div className="mt-2 space-y-1.5">
                       {msg.sources.map((src, j) => (
                         <div key={j} className="text-xs bg-slate-50 rounded-lg p-2.5 border border-slate-100">
                           <div className="flex items-center gap-2 mb-1">
                             <span className={`h-1.5 w-1.5 rounded-full ${
+                              typeof src.relevance !== 'number' ? 'bg-slate-300' :
                               src.relevance > 0.7 ? 'bg-green-500' :
                               src.relevance > 0.4 ? 'bg-amber-500' : 'bg-slate-300'
                             }`} />
@@ -221,7 +259,9 @@ export default function ChatPage() {
                                 {src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'document'}
                               </span>
                             )}
-                            <span className="text-slate-400">{(src.relevance * 100).toFixed(0)}% relevant</span>
+                            {typeof src.relevance === 'number' && (
+                              <span className="text-slate-400">{(src.relevance * 100).toFixed(0)}% relevante</span>
+                            )}
                           </div>
                           <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
                             <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
@@ -268,7 +308,7 @@ export default function ChatPage() {
                     <span className="h-2 w-2 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '150ms' }} />
                     <span className="h-2 w-2 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
-                  Analyzing financial data...
+                  {LOADING_STAGES[stage]}
                 </div>
               </div>
             </div>
@@ -287,7 +327,7 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about CapEx, cash flow, funding..."
+              placeholder="Pregunta sobre CapEx, tesorería, financiación…"
               rows={1}
               className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-400"
               style={{ minHeight: '44px', maxHeight: '120px' }}
@@ -342,11 +382,14 @@ function FormattedMessage({ content }: { content: string }) {
           <span className="text-sm"><InlineFormat text={num?.[2] || ''} /></span>
         </div>
       )
-    } else if (line.startsWith('|') && line.endsWith('|')) {
-      // Table row
-      const cells = line.split('|').filter(Boolean).map(c => c.trim())
-      if (line.includes('---')) continue // skip separator rows
-      const isHeader = i + 1 < lines.length && lines[i + 1]?.includes('---')
+    } else if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+      // Table row. A separator row is one where every cell matches ---, :--, --: or :--:
+      const isSeparatorRow = (l?: string) =>
+        !!l && l.trim().startsWith('|') &&
+        l.split('|').slice(1, -1).every(c => /^\s*:?-{1,}:?\s*$/.test(c))
+      if (isSeparatorRow(line)) continue // skip alignment/separator rows
+      const cells = line.split('|').slice(1, -1).map(c => c.trim())
+      const isHeader = isSeparatorRow(lines[i + 1])
       elements.push(
         <div key={i} className={`grid gap-2 text-xs font-mono py-1 px-2 ${isHeader ? 'font-semibold bg-slate-50 rounded' : ''}`}
           style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>

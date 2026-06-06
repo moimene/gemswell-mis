@@ -30,17 +30,28 @@ function fmtDate(iso: string | null) {
 export default function PacksListPage() {
   const [packs, setPacks] = useState<Pack[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
-    async function load() {
+  async function load() {
+    setLoading(true)
+    setLoadError(false)
+    try {
       const sb = (await import('@/lib/supabase')).createClient()
-      const { data } = await sb
+      const { data, error } = await sb
         .from('rpt_pack')
         .select('pack_id, project_id, area, status, completeness_score, submitted_at, due_at, is_critical, notes')
         .order('due_at', { ascending: true })
+      if (error) throw error
       setPacks(data || [])
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
+    } finally {
       setLoading(false)
     }
+  }
+
+  useEffect(() => {
     load()
   }, [])
 
@@ -59,6 +70,29 @@ export default function PacksListPage() {
         <p className="text-sm text-slate-500">Ciclos de extracción de métricas con información de fuente y evidencia</p>
       </div>
 
+      {loadError ? (
+        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-red-300 bg-white">
+          <div className="flex items-center gap-2 text-sm text-red-700">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>No se pudieron cargar los packs (la sesión pudo expirar).</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => { load() }}
+              className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+            >
+              Reintentar
+            </button>
+            <a
+              href="/login"
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-slate-700 transition-colors"
+            >
+              Iniciar sesión
+            </a>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-3">
         {packs.map(pack => {
           const isOverdue = pack.due_at && new Date(pack.due_at) < new Date() && pack.status !== 'published'
@@ -123,6 +157,7 @@ export default function PacksListPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

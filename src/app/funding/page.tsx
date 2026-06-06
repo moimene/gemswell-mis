@@ -39,20 +39,35 @@ export default function FundingPage() {
   const [funding, setFunding] = useState<FundingRow[]>([])
   const [cashFlow, setCashFlow] = useState<CashFlowRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
-      const [fundingData, cfData] = await Promise.all([
-        getFundingByProject(activeProject),
-        getCashFlowByProject(activeProject)
-      ])
-      setFunding(fundingData as FundingRow[])
-      setCashFlow(cfData as CashFlowRow[])
-      setLoading(false)
+      setLoadError(false)
+      try {
+        const [fundingData, cfData] = await Promise.all([
+          getFundingByProject(activeProject),
+          getCashFlowByProject(activeProject)
+        ])
+        if (cancelled) return
+        setFunding(fundingData as FundingRow[])
+        setCashFlow(cfData as CashFlowRow[])
+      } catch (e) {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     load()
-  }, [activeProject])
+    return () => {
+      cancelled = true
+    }
+  }, [activeProject, reloadKey])
 
   const ccy = activeProject === 'BHX' ? 'GBP' : 'EUR'
   const totalCommitted = funding.reduce((s, r) => s + (r.committed_amount || 0), 0)
@@ -110,6 +125,31 @@ export default function FundingPage() {
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <p className="text-slate-400">Loading funding data...</p>
+        </div>
+      ) : loadError ? (
+        <div className="rounded-lg border bg-white p-8 text-center">
+          <h3 className="text-sm font-medium text-slate-700">No se pudo cargar</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            La sesión pudo expirar. Reintenta o inicia sesión de nuevo.
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button
+              onClick={() => setReloadKey(k => k + 1)}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+            >
+              Reintentar
+            </button>
+            <a
+              href="/login"
+              className="rounded-md border px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+            >
+              Iniciar sesión
+            </a>
+          </div>
+        </div>
+      ) : funding.length === 0 && cashFlow.length === 0 ? (
+        <div className="rounded-lg border bg-white p-8 text-center">
+          <p className="text-sm text-slate-500">Sin datos de financiación para este proyecto</p>
         </div>
       ) : (
         <>

@@ -81,6 +81,7 @@ export default function RisksPage() {
   const [risks, setRisks] = useState<Risk[]>([])
   const [actions, setActions] = useState<Action[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [riskOpen, setRiskOpen] = useState(false)
   const [actionOpen, setActionOpen] = useState(false)
 
@@ -104,7 +105,10 @@ export default function RisksPage() {
 
   async function fetchRiskState(project: ProjectTab) {
     const supabase = createClient()
-    const [{ data: riskData }, { data: actionData }] = await Promise.all([
+    const [
+      { data: riskData, error: riskError },
+      { data: actionData, error: actionError },
+    ] = await Promise.all([
       supabase
         .from('fct_risk_snapshot')
         .select('*, dim_owner(full_name, department), dim_risk_category(category_name, scope)')
@@ -116,6 +120,9 @@ export default function RisksPage() {
         .eq('project_id', project)
         .order('as_of_date', { ascending: false }),
     ])
+
+    if (riskError) throw riskError
+    if (actionError) throw actionError
 
     // Deduplicate: keep latest snapshot per risk_id / action_id
     const latestRisks = Object.values(
@@ -137,20 +144,34 @@ export default function RisksPage() {
 
   async function load() {
     setLoading(true)
-    const data = await fetchRiskState(activeProject)
-    setRisks(data.risks)
-    setActions(data.actions)
-    setLoading(false)
+    setLoadError(false)
+    try {
+      const data = await fetchRiskState(activeProject)
+      setRisks(data.risks)
+      setActions(data.actions)
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
     let cancelled = false
-    fetchRiskState(activeProject).then(data => {
-      if (cancelled) return
-      setRisks(data.risks)
-      setActions(data.actions)
-      setLoading(false)
-    })
+    fetchRiskState(activeProject)
+      .then(data => {
+        if (cancelled) return
+        setRisks(data.risks)
+        setActions(data.actions)
+        setLoading(false)
+      })
+      .catch(e => {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+        setLoading(false)
+      })
     return () => { cancelled = true }
   }, [activeProject])
 
@@ -212,7 +233,20 @@ export default function RisksPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loadError ? (
+        <div className="rounded-lg border bg-white p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-500" />
+          <p className="text-sm font-medium text-slate-700">Could not load risks — your session may have expired.</p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button type="button" onClick={load} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+              Retry
+            </button>
+            <a href="/login" className="rounded-md border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
+              Sign in
+            </a>
+          </div>
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center h-64">
           <p className="text-slate-400">Loading risks...</p>
         </div>

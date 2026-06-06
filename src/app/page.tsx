@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import { getCapexSummary, getCashFlowSummary } from '@/lib/queries-financial'
@@ -167,17 +167,17 @@ export default function CEODashboard() {
   const [tasks,     setTasks]     = useState<DashboardTask[]>([])
   const [decisions, setDecisions] = useState<DashboardDecision[]>([])
   const [actions,   setActions]   = useState<DashboardAction[]>([])
+  const [freshness, setFreshness] = useState<Record<string, string>>({})
   const [loading,   setLoading]   = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
-    async function load() {
+  const load = useCallback(async () => {
+    setLoadError(false)
+    setLoading(true)
+    try {
       const supabase = createClient()
       const [
-        { data: pData },
-        capexData, cfData,
-        { data: taskData },
-        { data: decData },
-        { data: actData },
+        projRes, capexData, cfData, taskRes, decRes, actRes,
       ] = await Promise.all([
         supabase.from('dim_project')
           .select('project_id, project_name, city, stage, status_rag, opening_target')
@@ -199,12 +199,19 @@ export default function CEODashboard() {
           .order('due_date', { ascending: true })
           .limit(6),
       ])
+      // surface RLS-deny / auth errors instead of silently rendering an empty dashboard
+      for (const r of [projRes, taskRes, decRes, actRes]) { if (r.error) throw r.error }
+      const taskData = taskRes.data
 
-      // Deduplicate tasks → latest snapshot per task_id
+      // Deduplicate tasks → latest snapshot per task_id; track real data freshness per project
       const byTask: Record<string, DashboardTask> = {}
+      const fresh: Record<string, string> = {}
       for (const t of (taskData || []) as unknown as DashboardTask[]) {
         if (!byTask[t.task_id] || t.as_of_week_ending > byTask[t.task_id].as_of_week_ending) {
           byTask[t.task_id] = t
+        }
+        if (!fresh[t.project_id] || t.as_of_week_ending > fresh[t.project_id]) {
+          fresh[t.project_id] = t.as_of_week_ending
         }
       }
       const latest = Object.values(byTask)
@@ -217,16 +224,37 @@ export default function CEODashboard() {
         .sort((a, b) => (b.impact_days_on_opening || 0) - (a.impact_days_on_opening || 0))
         .slice(0, 8)
 
-      setProjects((pData || []) as Project[])
+      setProjects((projRes.data || []) as Project[])
       setCapex(capexData)
       setCashFlow(cfData)
       setTasks(critical)
-      setDecisions((decData || []) as DashboardDecision[])
-      setActions((actData || []) as DashboardAction[])
+      setFreshness(fresh)
+      setDecisions((decRes.data || []) as DashboardDecision[])
+      setActions((actRes.data || []) as DashboardAction[])
+    } catch (e) {
+      console.error('[dashboard] load failed', e)
+      setLoadError(true)
+    } finally {
       setLoading(false)
     }
-    load()
   }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (loadError) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-medium text-slate-800">No se pudo cargar el dashboard</p>
+          <p className="text-xs text-slate-500">La sesión pudo expirar. Reintenta o vuelve a iniciar sesión.</p>
+          <div className="flex justify-center gap-2">
+            <button onClick={() => load()} className="rounded bg-slate-800 px-4 py-2 text-xs font-medium text-white hover:bg-slate-700">Reintentar</button>
+            <a href="/login" className="rounded border px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Iniciar sesión</a>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -283,10 +311,12 @@ export default function CEODashboard() {
             const accent = PROJECT_ACCENT[pid] || '#334155'
             const pCap   = capex[pid]
             const pCF    = cashFlow[pid]
-            const days   = daysTo(project.opening_target)
-            const paidPct = pCap ? (pCap.paid / pCap.budget * 100) : 0
-            const commPct = pCap ? (pCap.committed / pCap.budget * 100) : 0
+            const days   = project.opening_target ? daysTo(project.opening_target) : null
+            const paidPct = pCap && pCap.budget > 0 ? (pCap.paid / pCap.budget * 100) : 0
+            const commPct = pCap && pCap.budget > 0 ? (pCap.committed / pCap.budget * 100) : 0
             const eacVar  = pCap && pCap.budget > 0 ? ((pCap.eac - pCap.budget) / pCap.budget * 100) : 0
+            // totalOutflow is stored NEGATIVE (queries-financial), so net = inflow + outflow
+            const netCash = pCF ? pCF.totalInflow + pCF.totalOutflow : null
             const ptasks  = tasks.filter(t => t.project_id === pid)
             const redTasks = ptasks.filter(t => STATUS_CODE_RAG[t.status_code] === 'Red').length
             const blocked  = ptasks.filter(t => t.blocked_flag).length
@@ -319,8 +349,8 @@ export default function CEODashboard() {
                       <p className="font-mono text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-0.5">
                         {pid === 'MAD' ? 'Días a apertura' : 'Días a NTP'}
                       </p>
-                      <p className={cn('font-mono text-[42px] font-bold leading-none tabular-nums tracking-tight', days < 0 ? 'text-red-600' : days < 90 ? 'text-amber-600' : 'text-slate-900')}>
-                        {Math.abs(days)}
+                      <p className={cn('font-mono text-[42px] font-bold leading-none tabular-nums tracking-tight', days == null ? 'text-slate-400' : days < 0 ? 'text-red-600' : days < 90 ? 'text-amber-600' : 'text-slate-900')}>
+                        {days == null ? '—' : Math.abs(days)}
                         <span className="text-[16px] font-normal text-slate-400 ml-1">d</span>
                       </p>
                     </div>
@@ -353,8 +383,8 @@ export default function CEODashboard() {
                     </div>
                     <div>
                       <p className="font-mono text-[10px] font-bold tracking-widest text-slate-400 uppercase">Cash neto 13W</p>
-                      <p className={cn('font-mono text-[18px] font-bold tabular-nums', (pCF?.totalInflow - pCF?.totalOutflow) < 0 ? 'text-red-600' : 'text-slate-900')}>
-                        {pCF ? formatCompact(pCF.totalInflow - pCF.totalOutflow, ccy) : '—'}
+                      <p className={cn('font-mono text-[18px] font-bold tabular-nums', netCash != null && netCash < 0 ? 'text-red-600' : 'text-slate-900')}>
+                        {netCash != null ? formatCompact(netCash, ccy) : '—'}
                       </p>
                       <p className="font-mono text-[11px] text-slate-400">forecast 13 semanas</p>
                     </div>
@@ -417,12 +447,12 @@ export default function CEODashboard() {
       {/* ── ROW 3: CAPEX BARS ──────────────────────────────────────────── */}
       <div>
         <SectionTitle hint="· Compromiso vs presupuesto portfolio" href="/bp-budget">CAPEX</SectionTitle>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {(['MAD', 'BHX'] as const).map(pid => {
             const pCap = capex[pid]
             const ccy  = pid === 'BHX' ? 'GBP' : 'EUR'
             const accent = PROJECT_ACCENT[pid]
-            const paidPct = pCap ? pCap.paid / pCap.budget * 100 : 0
+            const paidPct = pCap && pCap.budget > 0 ? pCap.paid / pCap.budget * 100 : 0
             return (
               <div key={pid} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="font-mono text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-3">
@@ -436,20 +466,6 @@ export default function CEODashboard() {
               </div>
             )
           })}
-          {/* Cash runway */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="font-mono text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-3">
-              Cash runway · portfolio
-            </p>
-            <p className="font-mono text-[28px] font-bold leading-none text-slate-900">
-              {cashFlow.MAD || cashFlow.BHX ? '—' : '—'}
-              <span className="text-[14px] font-normal text-slate-400 ml-1">meses</span>
-            </p>
-            <p className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
-              <span className="h-2 w-2 rounded-full bg-slate-300" />
-              Target ≥ 12 meses
-            </p>
-          </div>
         </div>
       </div>
 
@@ -563,21 +579,31 @@ export default function CEODashboard() {
       {/* ── FOOTER ──────────────────────────────────────────────────────── */}
       <footer className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-[10px] text-slate-400">
         <div className="flex flex-wrap gap-4">
-          <span>
-            <span className="text-slate-600 font-semibold">CAP_MPS_Schedule.xlsx</span>
-            &nbsp;·&nbsp;{dateLabel}&nbsp;·&nbsp;
-            <span className="text-green-600">● fresh</span>
-          </span>
-          <span>
-            <span className="text-slate-600 font-semibold">CAP_BHX_Schedule.xlsx</span>
-            &nbsp;·&nbsp;{dateLabel}&nbsp;·&nbsp;
-            <span className="text-green-600">● fresh</span>
-          </span>
+          <Freshness label="MPS · Schedule MAD" asOf={freshness.MAD} now={now} />
+          <Freshness label="BHX · Schedule" asOf={freshness.BHX} now={now} />
         </div>
         <span>Gemswell Ventures MIS · v0.2 · W{week} {year}</span>
       </footer>
 
     </div>
+  )
+}
+
+// ─── Data freshness (real snapshot date + age) ─────────────────────────────
+
+function Freshness({ label, asOf, now }: { label: string; asOf?: string; now: Date }) {
+  const date = asOf ? new Date(asOf) : null
+  const ageDays = date ? Math.floor((now.getTime() - date.getTime()) / 86400000) : null
+  return (
+    <span>
+      <span className="text-slate-600 font-semibold">{label}</span>
+      &nbsp;·&nbsp;{date ? date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : 'sin datos'}&nbsp;·&nbsp;
+      {ageDays == null
+        ? <span className="text-slate-400">● n/d</span>
+        : ageDays <= 14
+          ? <span className="text-green-600">● actualizado</span>
+          : <span className="text-amber-600">● hace {ageDays}d</span>}
+    </span>
   )
 }
 

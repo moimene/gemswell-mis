@@ -111,7 +111,7 @@ async function fetchReadiness(project_id: string): Promise<ReadinessRow[]> {
     .in('dim_readiness_item.workstream_id', FNB_WORKSTREAMS)
     .order('as_of_week_ending', { ascending: false })
 
-  if (error) { console.error(error); return [] }
+  if (error) throw error
   if (!data) return []
 
   const seen = new Map<string, ReadinessRow>()
@@ -125,16 +125,26 @@ export default function FnBReadinessPage() {
   const [tab, setTab] = useState<ProjectTab>('MAD')
   const [rows, setRows] = useState<ReadinessRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetchReadiness(tab).then(data => {
-      if (cancelled) return
-      setRows(data)
-      setLoading(false)
-    })
+    fetchReadiness(tab)
+      .then(data => {
+        if (cancelled) return
+        setLoadError(false)
+        setRows(data)
+        setLoading(false)
+      })
+      .catch(e => {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+        setLoading(false)
+      })
     return () => { cancelled = true }
-  }, [tab])
+  }, [tab, reloadKey])
 
   const total = rows.length
   const complete = rows.filter(r => r.status_code === 'CP').length
@@ -186,6 +196,29 @@ export default function FnBReadinessPage() {
       {loading ? (
         <div className="flex h-64 items-center justify-center">
           <p className="text-slate-400">Loading...</p>
+        </div>
+      ) : loadError ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-8">
+          <div className="flex flex-col items-center text-center gap-3">
+            <AlertTriangle className="h-8 w-8 text-amber-500" />
+            <p className="font-medium text-slate-700">Could not load F&B readiness</p>
+            <p className="text-sm text-slate-500">Your session may have expired. Try again or sign in.</p>
+            <div className="mt-1 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => { setLoading(true); setLoadError(false); setReloadKey(k => k + 1) }}
+                className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700 transition-colors"
+              >
+                Retry
+              </button>
+              <a
+                href="/login"
+                className="rounded-md border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Sign in
+              </a>
+            </div>
+          </div>
         </div>
       ) : (
         <>

@@ -97,16 +97,20 @@ export default function ProjectPage() {
   const [risks, setRisks] = useState<RiskRow[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
-    async function load() {
+  async function load() {
+    setLoading(true)
+    setLoadError(false)
+    setNotFound(false)
+    try {
       const supabase = createClient()
       const [
-        { data: projData },
-        { data: taskData },
-        { data: capexData },
-        { data: fundingData },
-        { data: riskData },
+        { data: projData, error: projError },
+        { data: taskData, error: taskError },
+        { data: capexData, error: capexError },
+        { data: fundingData, error: fundingError },
+        { data: riskData, error: riskError },
       ] = await Promise.all([
         supabase.from('dim_project').select('*').eq('project_id', projectId).single(),
         supabase.from('fct_task_snapshot').select('task_id, project_id, forecast_finish, percent_complete, status_code, blocked_flag, impact_days_on_opening, dim_task(task_name, criticality_level, opening_gate_flag)').eq('project_id', projectId),
@@ -115,7 +119,13 @@ export default function ProjectPage() {
         supabase.from('fct_risk_snapshot').select('project_id, risk_title, severity_score, status_code, escalation_flag, dim_risk_category(category_name)').eq('project_id', projectId),
       ])
 
-      if (!projData) { setNotFound(true); setLoading(false); return }
+      // Distinguish an auth/RLS/transient failure (error present) from a genuine 404.
+      // A real "not found" returns no error and null data; an RLS-deny / 401 surfaces an error.
+      if (taskError || capexError || fundingError || riskError || (projError && projError.code !== 'PGRST116')) {
+        throw projError || taskError || capexError || fundingError || riskError
+      }
+
+      if (!projData) { setNotFound(true); return }
       setProject(projData)
       setTasks((taskData || []) as unknown as TaskRow[])
 
@@ -141,14 +151,51 @@ export default function ProjectPage() {
         .sort((a, b) => b.severity_score - a.severity_score)
         .slice(0, 5)
       setRisks(filteredRisks)
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
+    } finally {
       setLoading(false)
     }
+  }
+
+  useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <p className="text-slate-400">Loading project...</p>
+    </div>
+  )
+
+  if (loadError) return (
+    <div className="space-y-4">
+      <Link href="/portfolio" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
+        <ArrowLeft className="h-4 w-4" /> Back to Portfolio
+      </Link>
+      <div className="rounded-lg border bg-white p-8 text-center space-y-4">
+        <div className="flex justify-center">
+          <AlertTriangle className="h-8 w-8 text-amber-500" />
+        </div>
+        <p className="text-slate-700 font-medium">No se pudo cargar el proyecto</p>
+        <p className="text-sm text-slate-500">La sesión pudo expirar. Vuelve a intentarlo o inicia sesión de nuevo.</p>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={() => { load() }}
+            className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            Reintentar
+          </button>
+          <a
+            href="/login"
+            className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Iniciar sesión
+          </a>
+        </div>
+      </div>
     </div>
   )
 

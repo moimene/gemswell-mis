@@ -26,25 +26,42 @@ export default function BPBudgetPage() {
   const [rows, setRows] = useState<CapexRow[]>([])
   const [summary, setSummary] = useState<Record<string, { budget: number; approved: number; committed: number; invoiced: number; paid: number; eac: number }>>({})
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
+  async function load() {
+    setLoading(true)
+    setLoadError(false)
+    try {
       const [capexRows, capexSummary] = await Promise.all([
         getCapexByProject(activeProject),
         getCapexSummary()
       ])
       setRows(capexRows as CapexRow[])
       setSummary(capexSummary)
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
+    } finally {
       setLoading(false)
     }
-    load()
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    load().catch(() => {
+      if (!cancelled) {
+        setLoadError(true)
+        setLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProject])
 
   const proj = summary[activeProject]
-  const variancePct = proj ? (proj.eac - proj.budget) / proj.budget : 0
-  const spentPct = proj ? proj.paid / proj.budget : 0
-  const committedPct = proj ? proj.committed / proj.budget : 0
+  const variancePct = proj && proj.budget > 0 ? (proj.eac - proj.budget) / proj.budget : 0
+  const spentPct = proj && proj.budget > 0 ? proj.paid / proj.budget : 0
+  const committedPct = proj && proj.budget > 0 ? proj.committed / proj.budget : 0
   const ccy = activeProject === 'BHX' ? 'GBP' : 'EUR'
 
   return (
@@ -74,6 +91,22 @@ export default function BPBudgetPage() {
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <p className="text-slate-400">Loading CapEx data...</p>
+        </div>
+      ) : loadError ? (
+        <div className="rounded-lg border bg-white p-6">
+          <h3 className="text-sm font-medium text-slate-900">No se pudo cargar</h3>
+          <p className="mt-1 text-sm text-slate-500">La sesión pudo expirar. Vuelve a intentarlo o inicia sesión de nuevo.</p>
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              onClick={() => { load() }}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+            >
+              Reintentar
+            </button>
+            <a href="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+              Iniciar sesión
+            </a>
+          </div>
         </div>
       ) : (
         <>

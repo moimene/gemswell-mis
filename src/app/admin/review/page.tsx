@@ -77,7 +77,9 @@ type Stats = {
   } | null
 }
 
-type StatusFilter = 'pending_review' | 'auto_accepted' | 'accepted' | 'rejected' | 'all'
+type StatusFilter = 'pending_review' | 'auto_accepted' | 'accepted' | 'rejected' | 'validation_failed' | 'all'
+
+type LoadError = false | 'auth' | 'generic'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -393,6 +395,7 @@ export default function ReviewPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [loadError, setLoadError] = useState<LoadError>(false)
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending_review')
@@ -401,10 +404,11 @@ export default function ReviewPage() {
 
   const loadStats = useCallback(async () => {
     const res = await fetch('/api/intel/stats')
-    if (res.ok) {
-      const data = await res.json()
-      setStats(data)
+    if (!res.ok) {
+      throw { authFailure: res.status === 401 }
     }
+    const data = await res.json()
+    setStats(data)
   }, [])
 
   const loadCandidates = useCallback(async () => {
@@ -415,25 +419,44 @@ export default function ReviewPage() {
       limit: '200',
     })
     const res = await fetch(`/api/intel/candidates?${params}`)
-    if (res.ok) {
-      const data = await res.json()
-      setCandidates(data.candidates || [])
+    if (!res.ok) {
+      throw { authFailure: res.status === 401 }
     }
+    const data = await res.json()
+    setCandidates(data.candidates || [])
   }, [statusFilter, projectFilter, domainFilter])
 
   const refresh = useCallback(async () => {
     setRefreshing(true)
-    await Promise.all([loadStats(), loadCandidates()])
-    setRefreshing(false)
+    setLoadError(false)
+    try {
+      await Promise.all([loadStats(), loadCandidates()])
+    } catch (e) {
+      console.error(e)
+      setLoadError((e as { authFailure?: boolean })?.authFailure ? 'auth' : 'generic')
+    } finally {
+      setRefreshing(false)
+    }
   }, [loadStats, loadCandidates])
 
   useEffect(() => {
+    let cancelled = false
     async function init() {
       setLoading(true)
-      await Promise.all([loadStats(), loadCandidates()])
-      setLoading(false)
+      setLoadError(false)
+      try {
+        await Promise.all([loadStats(), loadCandidates()])
+      } catch (e) {
+        if (!cancelled) {
+          console.error(e)
+          setLoadError((e as { authFailure?: boolean })?.authFailure ? 'auth' : 'generic')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     init()
+    return () => { cancelled = true }
   }, [loadStats, loadCandidates])
 
   async function handleDecision(
@@ -490,6 +513,43 @@ export default function ReviewPage() {
     )
   }
 
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Evidence Review</h1>
+          <p className="text-sm text-slate-500">
+            Layer 3 — Review extracted metric candidates before publishing to fact tables
+          </p>
+        </div>
+        <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-white p-4 shadow-sm">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm font-medium text-slate-900">
+            {loadError === 'auth'
+              ? 'No se pudieron cargar los candidatos — vuelve a iniciar sesión'
+              : 'No se pudieron cargar los candidatos — la sesión pudo expirar'}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+              Reintentar
+            </button>
+            <a
+              href="/login"
+              className="rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              Iniciar sesión
+            </a>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -524,7 +584,7 @@ export default function ReviewPage() {
 
         {/* Status tabs */}
         <div className="flex gap-1 rounded-md bg-slate-100 p-1">
-          {(['pending_review', 'auto_accepted', 'accepted', 'rejected', 'all'] as StatusFilter[]).map(s => (
+          {(['pending_review', 'auto_accepted', 'accepted', 'rejected', 'validation_failed', 'all'] as StatusFilter[]).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}

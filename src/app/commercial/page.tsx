@@ -33,30 +33,46 @@ export default function CommercialPage() {
   const [activeProject, setActiveProject] = useState<ProjectTab>('MAD')
   const [rows, setRows] = useState<CommRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [latestWeek, setLatestWeek] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
-      const sb = createClient()
-      const { data: latest } = await sb
-        .from('fct_commercial').select('as_of_week_ending')
-        .eq('project_id', activeProject).order('as_of_week_ending', { ascending: false }).limit(1).single()
-      if (!latest) { setRows([]); setLoading(false); return }
-      setLatestWeek(latest.as_of_week_ending)
-      const since = new Date(latest.as_of_week_ending)
-      since.setDate(since.getDate() - 55)
-      const { data } = await sb
-        .from('fct_commercial')
-        .select('*, dim_channel(channel_name, channel_type)')
-        .eq('project_id', activeProject)
-        .gte('as_of_week_ending', since.toISOString().split('T')[0])
-        .order('as_of_week_ending', { ascending: false })
-      setRows((data || []) as CommRow[])
-      setLoading(false)
+      setLoadError(false)
+      try {
+        const sb = createClient()
+        const { data: latest, error: latestErr } = await sb
+          .from('fct_commercial').select('as_of_week_ending')
+          .eq('project_id', activeProject).order('as_of_week_ending', { ascending: false }).limit(1).single()
+        if (latestErr && latestErr.code !== 'PGRST116') throw latestErr
+        if (cancelled) return
+        if (!latest) { setRows([]); setLatestWeek(null); return }
+        setLatestWeek(latest.as_of_week_ending)
+        const since = new Date(latest.as_of_week_ending)
+        since.setDate(since.getDate() - 55)
+        const { data, error } = await sb
+          .from('fct_commercial')
+          .select('*, dim_channel(channel_name, channel_type)')
+          .eq('project_id', activeProject)
+          .gte('as_of_week_ending', since.toISOString().split('T')[0])
+          .order('as_of_week_ending', { ascending: false })
+        if (error) throw error
+        if (cancelled) return
+        setRows((data || []) as CommRow[])
+      } catch (e) {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     load()
-  }, [activeProject])
+    return () => { cancelled = true }
+  }, [activeProject, reloadKey])
 
   const ccy = activeProject === 'BHX' ? 'GBP' : 'EUR'
   const latestRows = rows.filter(r => r.as_of_week_ending === latestWeek)
@@ -116,6 +132,26 @@ export default function CommercialPage() {
 
       {loading ? (
         <div className="flex items-center justify-center h-64"><p className="text-slate-400">Loading commercial data...</p></div>
+      ) : loadError ? (
+        <div className="rounded-lg border bg-white p-12 text-center">
+          <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-300" />
+          <h3 className="text-base font-semibold text-slate-700 mb-1">Unable to load commercial data</h3>
+          <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
+            Your session may have expired. Please retry, or sign in again.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => setReloadKey(k => k + 1)}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              Retry
+            </button>
+            <a href="/login" className="rounded-md border px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
+              Sign in
+            </a>
+          </div>
+        </div>
       ) : rows.length === 0 ? (
         <div className="rounded-lg border bg-white p-12 text-center">
           <BarChart3 className="h-10 w-10 mx-auto mb-3 text-slate-300" />

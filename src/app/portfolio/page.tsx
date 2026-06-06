@@ -22,24 +22,59 @@ export default function PortfolioPage() {
   const [capex, setCapex] = useState<Record<string, { budget: number; approved: number; committed: number; invoiced: number; paid: number; eac: number }>>({})
   const [cashFlow, setCashFlow] = useState<Record<string, { totalInflow: number; totalOutflow: number; actualInflow: number; actualOutflow: number }>>({})
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
-  useEffect(() => {
-    async function load() {
+  async function load() {
+    setLoadError(false)
+    setLoading(true)
+    try {
       const supabase = createClient()
-      const [{ data }, capexData, cfData] = await Promise.all([
+      const [{ data, error }, capexData, cfData] = await Promise.all([
         supabase.from('dim_project').select('*').eq('active', true),
         getCapexSummary(),
         getCashFlowSummary()
       ])
+      if (error) throw error
       setProjects(data || [])
       setCapex(capexData)
       setCashFlow(cfData)
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
+    } finally {
       setLoading(false)
     }
+  }
+
+  useEffect(() => {
     load()
   }, [])
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-slate-400">Loading portfolio...</p></div>
+
+  if (loadError) return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Portfolio Overview</h1>
+        <p className="text-sm text-slate-500">Side-by-side comparison of all wave park projects</p>
+      </div>
+      <div className="rounded-lg border bg-white p-6">
+        <p className="text-sm font-medium text-slate-900">No se pudo cargar el portfolio.</p>
+        <p className="mt-1 text-sm text-slate-500">La sesión pudo expirar. Reintenta o inicia sesión de nuevo.</p>
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={() => load()}
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            Reintentar
+          </button>
+          <a href="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+            Iniciar sesión
+          </a>
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <div className="space-y-6">

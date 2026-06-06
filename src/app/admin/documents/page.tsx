@@ -23,11 +23,13 @@ export default function DocumentsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<false | 'auth' | 'error'>(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', authority_min: '', q: '', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false })
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       const sp = new URLSearchParams()
       sp.set('page', String(page)); sp.set('pageSize', '50')
@@ -40,8 +42,11 @@ export default function DocumentsPage() {
       if (filters.onlyNoMarkdown) sp.set('onlyNoMarkdown', 'true')
       if (filters.includeRetired) sp.set('includeRetired', 'true')
       const r = await fetch(`/api/knowledge/documents?${sp.toString()}`)
+      if (!r.ok) { setLoadError(r.status === 401 ? 'auth' : 'error'); return }
       const j: ListResp = await r.json()
       setRows(j.items ?? []); setTotal(j.total ?? 0)
+    } catch (e) {
+      console.error(e); setLoadError('error')
     } finally { setLoading(false) }
   }, [page, filters])
 
@@ -102,7 +107,16 @@ export default function DocumentsPage() {
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && !loading && <p className="mt-6 text-center text-sm text-slate-400">Sin documentos para estos filtros.</p>}
+        {loadError && !loading && (
+          <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <p className="font-medium">No se pudo cargar el listado{loadError === 'auth' ? ' — la sesión pudo expirar.' : '.'}</p>
+            <div className="mt-3 flex items-center gap-3">
+              <button onClick={load} className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-amber-800 hover:bg-amber-100">Reintentar</button>
+              {loadError === 'auth' && <a href="/login" className="text-amber-700 underline hover:text-amber-900">Iniciar sesión</a>}
+            </div>
+          </div>
+        )}
+        {rows.length === 0 && !loading && !loadError && <p className="mt-6 text-center text-sm text-slate-400">Sin documentos para estos filtros.</p>}
 
         {/* Pagination */}
         <div className="mt-4 flex items-center justify-between text-sm text-slate-500">

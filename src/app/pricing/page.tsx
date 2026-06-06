@@ -29,26 +29,34 @@ export default function PricingPage() {
   const [activeProject, setActiveProject] = useState<ProjectTab>('MAD')
   const [slots, setSlots] = useState<Slot[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [snapshotDate, setSnapshotDate] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
     async function load() {
       setLoading(true)
+      setLoadError(false)
       const sb = createClient()
-      const { data: latest } = await sb
+      const { data: latest, error: latestError } = await sb
         .from('fct_pricing_slot').select('snapshot_date')
-        .eq('project_id', activeProject).order('snapshot_date', { ascending: false }).limit(1).single()
-      if (!latest) { setSlots([]); setLoading(false); return }
-      setSnapshotDate(latest.snapshot_date)
-      const { data } = await sb
+        .eq('project_id', activeProject).order('snapshot_date', { ascending: false }).limit(1).maybeSingle()
+      if (latestError) throw latestError
+      if (!latest) { if (!cancelled) setSlots([]); return }
+      if (!cancelled) setSnapshotDate(latest.snapshot_date)
+      const { data, error } = await sb
         .from('fct_pricing_slot')
         .select('*, dim_product(product_name, duration_min), dim_timeband(daypart, is_peak)')
         .eq('project_id', activeProject).eq('snapshot_date', latest.snapshot_date)
-      setSlots((data || []) as Slot[])
-      setLoading(false)
+      if (error) throw error
+      if (!cancelled) setSlots((data || []) as Slot[])
     }
     load()
-  }, [activeProject])
+      .catch((e) => { console.error(e); if (!cancelled) setLoadError(true) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [activeProject, reloadKey])
 
   const ccy = activeProject === 'BHX' ? 'GBP' : 'EUR'
   const totalCapacity = slots.reduce((s, r) => s + (r.capacity_units || 0), 0)
@@ -114,6 +122,29 @@ export default function PricingPage() {
 
       {loading ? (
         <div className="flex items-center justify-center h-64"><p className="text-slate-400">Loading pricing data...</p></div>
+      ) : loadError ? (
+        <div className="rounded-lg border bg-white p-12 text-center">
+          <Tag className="h-10 w-10 mx-auto mb-3 text-slate-300" />
+          <h3 className="text-base font-semibold text-slate-700 mb-1">No se pudo cargar</h3>
+          <p className="text-sm text-slate-500 max-w-md mx-auto mb-4">
+            La sesión pudo expirar. Inténtalo de nuevo o inicia sesión.
+          </p>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-700"
+            >
+              Reintentar
+            </button>
+            <a
+              href="/login"
+              className="rounded-md border px-4 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
+            >
+              Iniciar sesión
+            </a>
+          </div>
+        </div>
       ) : slots.length === 0 ? (
         <div className="rounded-lg border bg-white p-12 text-center">
           <Tag className="h-10 w-10 mx-auto mb-3 text-slate-300" />

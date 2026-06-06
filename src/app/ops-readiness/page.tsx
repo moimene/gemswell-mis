@@ -106,7 +106,7 @@ async function fetchReadiness(project_id: string): Promise<ReadinessRow[]> {
     .in('dim_readiness_item.workstream_id', OPS_WORKSTREAMS)
     .order('as_of_week_ending', { ascending: false })
 
-  if (error) { console.error(error); return [] }
+  if (error) throw error
   if (!data) return []
 
   const seen = new Map<string, ReadinessRow>()
@@ -120,16 +120,29 @@ export default function OpsReadinessPage() {
   const [tab, setTab] = useState<ProjectTab>('MAD')
   const [rows, setRows] = useState<ReadinessRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetchReadiness(tab).then(data => {
-      if (cancelled) return
-      setRows(data)
-      setLoading(false)
-    })
+    const load = async () => {
+      setLoading(true)
+      setLoadError(false)
+      try {
+        const data = await fetchReadiness(tab)
+        if (cancelled) return
+        setRows(data)
+      } catch (e) {
+        if (cancelled) return
+        console.error(e)
+        setLoadError(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
     return () => { cancelled = true }
-  }, [tab])
+  }, [tab, reloadKey])
 
   const total = rows.length
   const complete = rows.filter(r => r.status_code === 'CP').length
@@ -178,6 +191,31 @@ export default function OpsReadinessPage() {
       {loading ? (
         <div className="flex h-64 items-center justify-center">
           <p className="text-slate-400">Loading...</p>
+        </div>
+      ) : loadError ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-8">
+          <div className="flex flex-col items-center text-center gap-3">
+            <AlertTriangle className="h-8 w-8 text-amber-500" />
+            <div>
+              <p className="font-medium text-slate-700">No se pudo cargar — la sesión pudo expirar</p>
+              <p className="text-sm text-slate-500 mt-1">Vuelve a intentarlo o inicia sesión de nuevo.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setReloadKey(k => k + 1)}
+                className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+              >
+                Reintentar
+              </button>
+              <a
+                href="/login"
+                className="rounded-md border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Iniciar sesión
+              </a>
+            </div>
+          </div>
         </div>
       ) : (
         <>
