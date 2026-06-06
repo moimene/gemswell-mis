@@ -43,6 +43,9 @@ export function Sidebar() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
 
+  // Don't mount the authenticated shell (nav + signout form) on unauthenticated routes.
+  if (pathname === '/login' || pathname.startsWith('/auth')) return null
+
   return (
     <aside className={cn(
       'flex flex-col border-r bg-slate-50 transition-all duration-300',

@@ -75,7 +75,9 @@ export default function IngestPage() {
       .then(r => r.json())
       .then((m: Manifest) => {
         setManifest(m)
-        setFiles(m.files.map(f => ({ ...f, selected: f.relevance >= 75 && !f.isOlderVersion })))
+        // Default to NOTHING selected — queueing inserts real ingest jobs; a stray click must not
+        // enqueue hundreds of files. Use "Seleccionar relevantes" to opt into the relevance>=75 set.
+        setFiles(m.files.map(f => ({ ...f, selected: false })))
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -123,6 +125,7 @@ export default function IngestPage() {
   async function queueSelected() {
     const selected = files.filter(f => f.selected)
     if (selected.length === 0) return
+    if (!window.confirm(`¿Encolar ${selected.length} archivo(s) para ingesta? Esto crea trabajos de procesamiento reales.`)) return
 
     setQueueing(true)
     setQueueResult(null)

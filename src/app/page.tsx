@@ -190,7 +190,7 @@ export default function CEODashboard() {
           .limit(500),
         supabase.from('fct_decision_log')
           .select('id, decision_id, project_id, decision_topic, decision_text, meeting_type, implementation_due, status_code, dim_owner:decision_owner_id(full_name)')
-          .in('status_code', ['NS', 'IP'])
+          .in('status_code', ['AS_OPEN', 'AS_PROG'])  // real open codes (were 'NS','IP' → matched nothing)
           .order('implementation_due', { ascending: true })
           .limit(6),
         supabase.from('fct_action_snapshot')

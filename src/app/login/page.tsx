@@ -1,7 +1,8 @@
 'use client'
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { isAdminUser } from '@/lib/is-admin'
 import { safeRedirectPath } from '@/lib/safe-redirect'
 import { toast } from 'sonner'
 
@@ -10,20 +11,37 @@ function LoginForm() {
   const params = useSearchParams()
   // CWE-601/79: never feed an unvalidated redirect to router.replace (javascript: URLs execute in-origin)
   const redirectTo = safeRedirectPath(params.get('redirect'))
+  const errorParam = params.get('error')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const supabase = createClient()
 
+  // surface why a redirect bounced the user back here (expired magic link, or non-admin account)
+  useEffect(() => {
+    if (errorParam === 'link_invalid') toast.error('El enlace de acceso caducó o no es válido. Solicita uno nuevo.')
+    else if (errorParam === 'not_admin') toast.error('Tu cuenta no tiene acceso de administrador.')
+  }, [errorParam])
+
   async function signInPassword(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    setBusy(false)
     if (error) {
+      setBusy(false)
       toast.error(error.message)
       return
     }
+    // A seeded account without the admin claim would authenticate but then be bounced by the
+    // proxy back to /login on every navigation (a silent loop). Verify the claim here and stop.
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!isAdminUser(user)) {
+      await supabase.auth.signOut()
+      setBusy(false)
+      toast.error('Tu cuenta no tiene acceso de administrador.')
+      return
+    }
+    setBusy(false)
     router.replace(redirectTo)
   }
 
