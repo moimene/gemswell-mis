@@ -847,7 +847,8 @@ async function runAgentLoop(
     const response = await anthropic.messages.create({
       model,
       max_tokens: CHAT_MAX_TOKENS,
-      temperature: 0.3,
+      // NOTE: do not set `temperature` — the Opus 4.x models reject it ("temperature is
+      // deprecated for this model"). Omit it and use the model default.
       system: systemPrompt,
       tools: TOOLS,
       messages: loopMessages,
@@ -964,7 +965,7 @@ async function verifyAnswer(
     const response = await anthropic.messages.create({
       model: CHAT_VERIFIER_MODEL,
       max_tokens: CHAT_MAX_TOKENS,
-      temperature: 0,
+      // No `temperature` — Opus 4.x rejects it; use the model default.
       system: verifierPrompt,
       messages: [
         {
