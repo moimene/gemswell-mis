@@ -194,7 +194,7 @@ export default function CEODashboard() {
           .order('implementation_due', { ascending: true })
           .limit(6),
         supabase.from('fct_action_snapshot')
-          .select('id, action_id, project_id, action_title, due_date, action_status_id, dim_owner!owner_id(full_name)')
+          .select('id, action_id, project_id, action_title, due_date, action_status_id, dim_owner!fct_action_snapshot_owner_id_fkey(full_name)')
           .not('action_status_id', 'in', '("AS_DONE","AS_CANC")')
           .order('due_date', { ascending: true })
           .limit(6),

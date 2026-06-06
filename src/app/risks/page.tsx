@@ -116,7 +116,7 @@ export default function RisksPage() {
         .order('as_of_date', { ascending: false }),
       supabase
         .from('fct_action_snapshot')
-        .select('*, dim_owner(full_name), dim_action_status(status_name, is_closed)')
+        .select('*, dim_owner!fct_action_snapshot_owner_id_fkey(full_name), dim_action_status(status_name, is_closed)')
         .eq('project_id', project)
         .order('as_of_date', { ascending: false }),
     ])
