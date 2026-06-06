@@ -13,7 +13,18 @@ const Stat = ({ label, value }: { label: string; value: string | number }) => (
 
 export function CorpusHealth() {
   const [h, setH] = useState<Health | null>(null)
-  useEffect(() => { fetch('/api/knowledge/corpus/health').then(r => r.json()).then(setH).catch(() => {}) }, [])
+  const [err, setErr] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/knowledge/corpus/health')
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      // validate the shape before trusting it — a 401 body ({error:'unauthorized'}) is truthy
+      // but has no .governance/.avg_authority, which would TypeError the render below.
+      .then(j => { if (cancelled) return; if (j && typeof j.total === 'number' && j.governance) setH(j); else setErr(true) })
+      .catch(() => { if (!cancelled) setErr(true) })
+    return () => { cancelled = true }
+  }, [])
+  if (err) return <div className="rounded-md border bg-white px-3 py-2 text-xs text-slate-400">No se pudo cargar el estado del corpus.</div>
   if (!h) return null
   const pct = (n: number) => `${(n * 100).toFixed(1)}%`
   return (

@@ -59,6 +59,7 @@ const TIERS = ['audited', 'executed', 'controller', 'board_pack', 'dd_memo', 'in
 
 export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; onClose: () => void; onChanged: () => void }) {
   const [d, setD] = useState<Detail | null>(null)
+  const [loadErr, setLoadErr] = useState<number | null>(null)
   const [open, setOpen] = useState({ md: false, chunks: false, history: false, reclass: false })
   const [supersedeOpen, setSupersedeOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
@@ -67,20 +68,29 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/knowledge/documents/${docId}`)
+    if (!r.ok) { setLoadErr(r.status); return }
     setD(await r.json())
   }, [docId])
 
   useEffect(() => {
     let cancelled = false
     fetch(`/api/knowledge/documents/${docId}`)
-      .then(r => r.json())
-      .then(j => { if (!cancelled) setD(j) })
-      .catch(() => {})
+      .then(async r => { if (!r.ok) { if (!cancelled) setLoadErr(r.status); return null } return r.json() })
+      .then(j => { if (!cancelled && j) { setD(j); setLoadErr(null) } })
+      .catch(() => { if (!cancelled) setLoadErr(0) })
     return () => { cancelled = true }
   }, [docId])
 
   const act = async (body: PatchBody) => { if (await patch(docId, body)) { await load(); onChanged() } }
 
+  if (loadErr !== null) return (
+    <aside className="w-[460px] border-l bg-white p-6 text-sm text-slate-500">
+      <div className="flex items-center justify-between">
+        <span>{loadErr === 401 ? 'Sesión expirada — vuelve a iniciar sesión.' : loadErr === 404 ? 'Documento no encontrado.' : 'No se pudo cargar el documento.'}</span>
+        <button onClick={onClose}><X className="h-4 w-4 text-slate-400" /></button>
+      </div>
+    </aside>
+  )
   if (!d?.document) return <aside className="w-[460px] border-l bg-white p-6 text-sm text-slate-400">Cargando…</aside>
   const doc = d.document
   const retired = doc.status === 'retired'
