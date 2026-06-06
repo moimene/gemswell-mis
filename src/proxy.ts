@@ -8,6 +8,7 @@
 // which is what @supabase/ssr needs.
 import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { isAdminUser } from '@/lib/is-admin'
 
 const PUBLIC_PATHS = [/^\/login(\/|$)/, /^\/auth\//]
 
@@ -39,7 +40,8 @@ export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname
   const isPublic = PUBLIC_PATHS.some((re) => re.test(path))
 
-  if (!user && !isPublic) {
+  // Must be a seeded ADMIN, not merely authenticated (CX-1: a stray self-signup gets nothing).
+  if (!isAdminUser(user) && !isPublic) {
     // API callers get a proper 401 JSON, not an HTML 302 to /login.
     if (path.startsWith('/api/')) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -54,5 +56,7 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
+  // CX-3: do NOT skip by file extension — a dynamic param like /project/MAD.svg would bypass the guard.
+  // Only exclude Next internals + favicon; everything else (pages + /api) runs the proxy.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }

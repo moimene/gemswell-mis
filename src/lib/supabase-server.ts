@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
+import { isAdminUser } from '@/lib/is-admin'
 
 /** Cookie-aware server client for Server Components / Server Actions */
 export async function createServerSupabase() {
@@ -43,9 +44,9 @@ export function createApiClient() {
   return createSupabaseClient(url, serviceKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 }
 
-/** Returns the authenticated user (validated via getUser) or null. Use to gate API routes. */
+/** Returns the authenticated ADMIN user (validated via getUser + admin claim) or null. Gates API routes. */
 export async function requireUser() {
   const supabase = await createServerSupabase()
   const { data: { user } } = await supabase.auth.getUser()
-  return user
+  return isAdminUser(user) ? user : null
 }

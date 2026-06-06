@@ -19,7 +19,10 @@ function tempPassword(): string {
 async function main() {
   for (const email of emails) {
     const password = tempPassword()
-    const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+    const { data, error } = await admin.auth.admin.createUser({
+      email, password, email_confirm: true,
+      app_metadata: { role: 'admin' }, // CX-1: the claim the proxy/requireUser/RLS gate on
+    })
     if (error) { console.error(`${email}: ${error.message}`); continue }
     console.log(`created ${email}  temp password: ${password}  (id ${data.user?.id}) — change it or use magic-link`)
   }

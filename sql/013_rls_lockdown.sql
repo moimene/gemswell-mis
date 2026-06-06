@@ -18,8 +18,12 @@ begin
       execute format('drop policy %I on public.%I', p.policyname, t.tablename);
     end loop;
     execute format('alter table public.%I enable row level security', t.tablename);
-    execute format('create policy %I on public.%I for all to authenticated using (true) with check (true)',
-      t.tablename || '_authenticated_all', t.tablename);
+    -- CX-1: gate on the admin CLAIM, not bare `authenticated` — a stray self-signup (authenticated but
+    -- no app_metadata.role=admin) gets nothing. service_role bypasses RLS, so API routes still work.
+    execute format($f$create policy %I on public.%I for all to authenticated
+      using ((auth.jwt() #>> '{app_metadata,role}') = 'admin')
+      with check ((auth.jwt() #>> '{app_metadata,role}') = 'admin')$f$,
+      t.tablename || '_admin_all', t.tablename);
     execute format('revoke all on public.%I from anon', t.tablename);
   end loop;
 end $$;
@@ -41,9 +45,11 @@ begin
   end loop;
 end $$;
 
--- 3. Functions: anon executes nothing in public; grant back only the two read RPCs the browser may need.
---    (R2-F2: get_fact_evidence/get_metric_candidates/get_portfolio_kpis + others were anon-executable.)
---    The write RPC apply_document_governance + knowledge_corpus_health stay service_role-only (B's lockdown).
-revoke execute on all functions in schema public from anon;
+-- 3. Functions: revoke EXECUTE from anon AND public (CX-2: functions default EXECUTE to PUBLIC, so a
+--    revoke-from-anon-only is a no-op). Future functions too. Grant back only the two read RPCs to
+--    authenticated. SECURITY DEFINER write RPCs (apply_document_governance, knowledge_corpus_health) stay
+--    service_role-only (B). The read RPCs are SECURITY INVOKER, so they already respect the new table RLS.
+revoke execute on all functions in schema public from anon, public;
+alter default privileges in schema public revoke execute on functions from public;
 grant execute on function public.match_chunks(vector, integer, text, text, double precision) to authenticated;
 grant execute on function public.keyword_search_chunks(text, text, integer, text) to authenticated;
