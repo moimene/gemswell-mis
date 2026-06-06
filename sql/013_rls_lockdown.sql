@@ -9,6 +9,11 @@
 -- DO NOT run during dev — it instantly breaks the currently-anon app. Run at CUTOVER, right after
 -- deploying the auth-enabled app. Verified via a `begin … rollback` probe (anon→0 rows on tables AND views).
 
+-- Run as ONE transaction (paste the whole file into the Supabase SQL Editor). If anything fails,
+-- nothing applies — you never end up with a half-locked DB. (If applying via MCP apply_migration,
+-- which already wraps in a transaction, drop the outer begin/commit.)
+begin;
+
 -- 1. Tables: RLS + authenticated-only policy + revoke anon table grants (defense-in-depth).
 do $$
 declare t record; p record;
@@ -46,10 +51,17 @@ begin
 end $$;
 
 -- 3. Functions: revoke EXECUTE from anon AND public (CX-2: functions default EXECUTE to PUBLIC, so a
---    revoke-from-anon-only is a no-op). Future functions too. Grant back only the two read RPCs to
---    authenticated. SECURITY DEFINER write RPCs (apply_document_governance, knowledge_corpus_health) stay
---    service_role-only (B). The read RPCs are SECURITY INVOKER, so they already respect the new table RLS.
+--    revoke-from-anon-only is a no-op). Future functions too. Grant back only the two read RPCs.
+--    SECURITY DEFINER write RPCs (apply_document_governance, knowledge_corpus_health) stay
+--    service_role-only (granted explicitly in 011). The read RPCs are SECURITY INVOKER, so they already
+--    respect the new table RLS.
 revoke execute on all functions in schema public from anon, public;
 alter default privileges in schema public revoke execute on functions from public;
-grant execute on function public.match_chunks(vector, integer, text, text, double precision) to authenticated;
-grant execute on function public.keyword_search_chunks(text, text, integer, text) to authenticated;
+-- PRE-FLIGHT BLOCKER FIX: the server calls these RPCs as `service_role` (createApiClient in
+-- /api/chat), and service_role inherits function EXECUTE only via PUBLIC — which the revoke above
+-- just stripped. Without the service_role grant, every /api/chat returns 42501 permission denied.
+-- Grant to authenticated (direct browser calls, if any) AND service_role (the API path).
+grant execute on function public.match_chunks(vector, integer, text, text, double precision) to authenticated, service_role;
+grant execute on function public.keyword_search_chunks(text, text, integer, text) to authenticated, service_role;
+
+commit;
