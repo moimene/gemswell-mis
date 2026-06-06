@@ -40,6 +40,10 @@ export async function proxy(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((re) => re.test(path))
 
   if (!user && !isPublic) {
+    // API callers get a proper 401 JSON, not an HTML 302 to /login.
+    if (path.startsWith('/api/')) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('redirect', path)

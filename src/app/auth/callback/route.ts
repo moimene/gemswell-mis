@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
+import { safeRedirectPath } from '@/lib/safe-redirect'
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
-  const redirect = request.nextUrl.searchParams.get('redirect') || '/'
+  const redirect = safeRedirectPath(request.nextUrl.searchParams.get('redirect')) // CWE-601: same-origin path only
   if (code) {
     const supabase = await createServerSupabase()
     const { error } = await supabase.auth.exchangeCodeForSession(code)

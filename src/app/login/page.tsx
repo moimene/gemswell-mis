@@ -2,12 +2,14 @@
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { safeRedirectPath } from '@/lib/safe-redirect'
 import { toast } from 'sonner'
 
 function LoginForm() {
   const router = useRouter()
   const params = useSearchParams()
-  const redirectTo = params.get('redirect') || '/'
+  // CWE-601/79: never feed an unvalidated redirect to router.replace (javascript: URLs execute in-origin)
+  const redirectTo = safeRedirectPath(params.get('redirect'))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)

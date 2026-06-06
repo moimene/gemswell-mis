@@ -1,5 +1,6 @@
 import { config } from 'dotenv'
 config({ path: '.env.local' })
+import { randomBytes } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 
 // Run at cutover with SUPABASE_SERVICE_ROLE_KEY set. Emails via argv or the default list.
@@ -11,7 +12,8 @@ const admin = createClient(url, key, { auth: { autoRefreshToken: false, persistS
 const emails = process.argv.slice(2).length ? process.argv.slice(2) : ['moises.menendez@gmail.com']
 
 function tempPassword(): string {
-  return 'Gw-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!'
+  // crypto-strong temp secret for full-access admin accounts (not Math.random)
+  return 'Gw-' + randomBytes(18).toString('base64url') + '!'
 }
 
 async function main() {
