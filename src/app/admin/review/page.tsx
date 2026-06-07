@@ -3,10 +3,13 @@ import { useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { cn, formatCompact } from '@/lib/utils'
 import { PageHeader, RagChip } from '@/components/shared/terminal'
+import { DocumentReviewQueue } from './_components/DocumentReviewQueue'
 import {
   CheckCircle, XCircle, AlertTriangle, Clock, RefreshCw,
-  ChevronDown, ChevronUp, FileText, Zap, Filter
+  ChevronDown, ChevronUp, FileText, Zap, Filter, History,
 } from 'lucide-react'
+
+type ReviewTab = 'documentos' | 'metricas' | 'contradicciones' | 'historial'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -395,6 +398,9 @@ export default function ReviewPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [loadError, setLoadError] = useState<LoadError>(false)
 
+  // Tabs (UX refactor §9.2): Documentos · Métricas · Contradicciones · Historial
+  const [tab, setTab] = useState<ReviewTab>('documentos')
+
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending_review')
   const [projectFilter, setProjectFilter] = useState('all')
@@ -567,16 +573,53 @@ export default function ReviewPage() {
         }
       />
 
-      {/* Stats bar */}
-      {stats && <StatsBar stats={stats} />}
+      {/* Tab bar (§9.2) */}
+      <nav className="flex gap-1 border-b border-slate-200">
+        {([
+          ['documentos', 'Documentos'],
+          ['metricas', 'Métricas'],
+          ['contradicciones', `Contradicciones${stats?.contradictions?.length ? ` (${stats.contradictions.length})` : ''}`],
+          ['historial', 'Historial'],
+        ] as [ReviewTab, string][]).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={cn(
+              '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+              tab === key ? 'border-slate-800 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-700'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      {/* Contradictions */}
-      {stats?.contradictions?.length ? (
-        <ContradictionsPanel contradictions={stats.contradictions} />
-      ) : null}
+      {tab === 'documentos' && <DocumentReviewQueue />}
 
+      {tab === 'historial' && (
+        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white">
+          <History className="h-8 w-8 text-slate-300" />
+          <p className="text-sm text-slate-500">El historial de revisión aún no está disponible.</p>
+          <p className="font-mono text-[10px] text-slate-400">fecha · usuario · acción · documento/métrica · impacto en Tower/Chat</p>
+        </div>
+      )}
+
+      {tab === 'contradicciones' && (
+        stats?.contradictions?.length ? (
+          <ContradictionsPanel contradictions={stats.contradictions} />
+        ) : (
+          <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white">
+            <AlertTriangle className="h-8 w-8 text-slate-300" />
+            <p className="text-sm text-slate-500">No hay contradicciones abiertas.</p>
+          </div>
+        )
+      )}
+
+      {tab === 'metricas' && stats && <StatsBar stats={stats} />}
+
+      {tab === 'metricas' && (<>
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <Filter className="h-4 w-4 shrink-0 text-slate-400" />
 
         {/* Status tabs */}
@@ -672,6 +715,7 @@ export default function ReviewPage() {
           ))}
         </div>
       )}
+      </>)}
     </div>
   )
 }
