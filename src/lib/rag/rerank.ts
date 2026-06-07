@@ -15,6 +15,9 @@ type ChunkForRerank = {
   content: string
   metadata?: Record<string, unknown>
   similarity?: number
+  /** Scale-free Reciprocal Rank Fusion score (Fase 2). Used to order the DEGRADED fallback when Cohere
+   *  is down — cosine and raw ts_rank are NOT comparable, so similarity-only ordering mis-ranks (audit A3). */
+  fusedScore?: number
 }
 
 type RankedChunk = ChunkForRerank & {
@@ -71,12 +74,19 @@ export async function rerankChunks(
       return { text: (prefix ? `[${prefix}] ` : '') + c.content.slice(0, 1500) }
     })
 
-    const result = await cohere.rerank({
-      model: 'rerank-v3.5',
-      query,
-      documents,
-      topN: topK,
-    })
+    // One retry before degrading — a transient Cohere blip shouldn't silently drop the pool to the
+    // (approximate) fallback ordering. (Fase 2 / WS1-T2)
+    let result: { results: Array<{ index: number; relevanceScore: number }> } | undefined
+    let lastErr: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        result = await cohere.rerank({ model: 'rerank-v3.5', query, documents, topN: topK })
+        break
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    if (!result) throw lastErr
 
     return {
       chunks: result.results.map(r => ({
@@ -87,12 +97,13 @@ export async function rerankChunks(
     }
 
   } catch (err) {
-    console.warn('Cohere reranking failed, falling back to similarity:', err)
-    const sorted = chunks
-      .slice()
-      .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
-      .slice(0, topK)
-    const normalised = normaliseScores(sorted.map(c => c.similarity || 0))
+    console.warn('Cohere reranking failed, falling back to fused/similarity ordering:', err)
+    // Order by the scale-free RRF fusedScore when present (audit A3: cosine vs raw ts_rank are NOT
+    // comparable, so a similarity-only sort mis-ranks a big keyword ts_rank above a strong vector hit);
+    // fall back to similarity only when no fusedScore was supplied.
+    const sortKey = (c: ChunkForRerank) => c.fusedScore ?? c.similarity ?? 0
+    const sorted = chunks.slice().sort((a, b) => sortKey(b) - sortKey(a)).slice(0, topK)
+    const normalised = normaliseScores(sorted.map(sortKey))
     return {
       chunks: sorted.map((c, i) => ({ ...c, relevanceScore: normalised[i] })),
       degraded: true,
