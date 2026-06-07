@@ -45,3 +45,6 @@ supabase/.temp/
 
 # serena MCP tool cache (local only)
 .serena/
+
+# chat-quality eval run artifacts (regenerable: scripts/eval/run-*.ts)
+scripts/eval/results/
