@@ -17,6 +17,10 @@ export function getSupabase(): SupabaseClient {
 
 export type GroundTruth = {
   titles?: string[]
+  /** Canonical rag_documents.id UUIDs, HUMAN-pinned via resolve-ids.ts (never auto-pinned — avoids
+   *  enshrining a superseded/duplicate doc as ground truth). When present, retrieval is scored by id
+   *  (honest precision AND recall) instead of the optimistic title-substring match. */
+  expected_doc_ids?: string[]
   project_id?: string | null
   doc_type?: string | null
   must_contain?: string[]
@@ -72,6 +76,33 @@ export function firstMatchRank(rankedTitles: (string | null | undefined)[], expe
     if (titleMatches(rankedTitles[i], expected)) return i + 1
   }
   return 0
+}
+
+/** 1-based rank of the first retrieved doc whose id is in the pinned expected set; 0 if none/unpinned. */
+export function firstMatchRankById(rankedDocIds: (string | null | undefined)[], expectedIds: string[] | undefined): number {
+  if (!expectedIds?.length) return 0
+  const want = new Set(expectedIds)
+  for (let i = 0; i < rankedDocIds.length; i++) {
+    const id = rankedDocIds[i]
+    if (id && want.has(id)) return i + 1
+  }
+  return 0
+}
+
+/** precision@k = fraction of the top-k retrieved docs that are in the pinned expected set. Null if unpinned. */
+export function precisionAtK(rankedDocIds: (string | null | undefined)[], expectedIds: string[] | undefined, k: number): number | null {
+  if (!expectedIds?.length) return null
+  const want = new Set(expectedIds)
+  const topk = rankedDocIds.slice(0, k)
+  if (topk.length === 0) return 0
+  return topk.filter((id) => id && want.has(id)).length / topk.length
+}
+
+/** How a documentary question's ground truth is scored — id (pinned, honest) > title (substring, optimistic). */
+export function matchedBy(g: { ground_truth?: GroundTruth }): 'id' | 'title' | 'none' {
+  if (g.ground_truth?.expected_doc_ids?.length) return 'id'
+  if (g.ground_truth?.titles?.length) return 'title'
+  return 'none'
 }
 
 export const hitAtK = (rank: number, k: number): boolean => rank > 0 && rank <= k
