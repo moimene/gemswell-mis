@@ -233,8 +233,8 @@ export default function ChatPage() {
             <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
               Gemswell MIS
             </p>
-            <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900">Asistente documental</h1>
-            <p className="text-sm text-slate-500">Pregunta sobre CapEx, tesorería, financiación o cualquier dato de los proyectos</p>
+            <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900">Chat con documentos</h1>
+            <p className="text-sm text-slate-500">Pregunta al corpus del proyecto y recibe respuestas con fuentes citadas.</p>
           </div>
           {conversationId && (
             <button
@@ -244,6 +244,18 @@ export default function ChatPage() {
               Nueva conversación
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Contexto activo (UX refactor §11.1-2) — qué corpus está viendo el Chat y su frescura */}
+      <div className="flex-none border-b border-slate-100 bg-slate-50 px-6 py-2">
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+          <span className="font-mono font-bold uppercase tracking-widest text-slate-400">Contexto activo</span>
+          <span>Documentos aprobados · últimos packs de reporting · métricas publicadas</span>
+          <span className="ml-auto inline-flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            Actualizado con <strong className="font-medium text-slate-600">MAD · Semana 23/2026</strong> (Finanzas, Construcción, Marketing) · pendiente: Operaciones
+          </span>
         </div>
       </div>
 

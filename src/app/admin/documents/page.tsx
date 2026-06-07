@@ -103,9 +103,9 @@ export default function DocumentsPage() {
     <div className="flex h-full">
       <div className="flex-1 space-y-4 overflow-auto p-6">
         <PageHeader
-          eyebrow="Gemswell Ventures · MIS · Corpus"
-          title="Gestor Documental"
-          subtitle="Gobierno del corpus: verificación, autoridad y trazabilidad"
+          eyebrow="Gemswell Ventures · MIS · Documentos & Reporting"
+          title="Biblioteca documental"
+          subtitle="Busca, consulta y gobierna los documentos del corpus."
           right={
             <>
               <button onClick={() => setShowUpload(s => !s)} className="flex items-center gap-2 rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/20">
