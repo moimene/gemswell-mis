@@ -56,6 +56,14 @@ export default function DocumentsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // Deep-link from a chat citation: /admin/documents?doc=<id> opens that document's detail directly
+  // (the panel fetches by id, so it works even when the doc isn't on the current list page). F1.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const doc = new URLSearchParams(window.location.search).get('doc')
+    if (doc) setSelected(doc)
+  }, [])
+
   return (
     <div className="flex h-full">
       <div className="flex-1 space-y-4 overflow-auto p-6">

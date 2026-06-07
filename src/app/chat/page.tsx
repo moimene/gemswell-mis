@@ -1,19 +1,28 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
 
+type Source = {
+  id: string
+  documentId?: string
+  relevance: number
+  metadata: Record<string, unknown>
+  preview: string
+  label?: string
+  verification?: 'source_of_record' | 'supporting' | 'context' | 'unverified'
+}
+
 type Message = {
   role: 'user' | 'assistant'
   content: string
-  sources?: {
-    id: string
-    relevance: number
-    metadata: Record<string, unknown>
-    preview: string
-    label?: string
-    verification?: 'source_of_record' | 'supporting' | 'context' | 'unverified'
-  }[]
+  sources?: Source[]
   entities?: { type: string; value: string }[]
+  degraded?: boolean
+  injectionFlagged?: boolean
+  truncated?: boolean
+  persisted?: boolean
 }
+
+type Progress = { stage: string; detail?: string; elapsedMs: number }
 
 const SUGGESTED_QUERIES = [
   '¿Cuál es el estado actual del CapEx de Madrid?',
@@ -24,7 +33,14 @@ const SUGGESTED_QUERIES = [
   '¿Cuál es el presupuesto total del portfolio?',
 ]
 
-const LOADING_STAGES = ['Buscando documentos…', 'Analizando cifras…', 'Verificando fuentes…']
+// Human-readable label per server SSE stage (see /api/chat progress events).
+const STAGE_LABELS: Record<string, string> = {
+  searching: 'Buscando documentos…',
+  analyzing: 'Consultando datos estructurados…',
+  drafting: 'Redactando respuesta…',
+  verifying: 'Verificando evidencia…',
+  persisting: 'Guardando conversación…',
+}
 
 const VERIFICATION_LABELS = {
   source_of_record: 'fuente oficial',
@@ -33,12 +49,27 @@ const VERIFICATION_LABELS = {
   unverified: 'sin verificar',
 } as const
 
+// Client abort if no SSE event arrives for this long (heartbeat is every 5s server-side, so a 90s
+// silence means the stream is genuinely dead). Reset on every chunk — the old fixed 270s wall is gone.
+const STREAM_IDLE_TIMEOUT_MS = 90_000
+
 function sourceText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function sourceHref(src: NonNullable<Message['sources']>[number]): string | undefined {
-  return sourceText(src.metadata?.public_url)
+// Citation link (F1/F23): prefer a validated external artifact URL; otherwise deep-link to the
+// document's gestor detail so EVERY source is inspectable even with no stored artifact.
+function sourceHref(src: Source): string | undefined {
+  const publicUrl = sourceText(src.metadata?.public_url)
+  if (publicUrl && /^https?:\/\//i.test(publicUrl)) return publicUrl
+  if (src.documentId) return `/admin/documents?doc=${encodeURIComponent(src.documentId)}`
+  return undefined
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
 }
 
 export default function ChatPage() {
@@ -48,20 +79,16 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   // collapsed-set: sources show by default (UAT is about citations); clicking COLLAPSES a message's sources
   const [collapsedSources, setCollapsedSources] = useState<Set<number>>(new Set())
-  const [stage, setStage] = useState(0)
+  const [progress, setProgress] = useState<Progress | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, progress])
 
-  // cycle the loading status text so a long multi-tool query reads as progress, not a hang
-  useEffect(() => {
-    if (!loading) return
-    const id = setInterval(() => setStage(s => (s + 1) % LOADING_STAGES.length), 4000)
-    return () => clearInterval(id)
-  }, [loading])
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   function toggleSources(i: number) {
     setCollapsedSources(prev => {
@@ -69,6 +96,10 @@ export default function ChatPage() {
       if (next.has(i)) next.delete(i); else next.add(i)
       return next
     })
+  }
+
+  function cancelRequest() {
+    abortRef.current?.abort()
   }
 
   async function sendMessage(text?: string) {
@@ -79,16 +110,21 @@ export default function ChatPage() {
     const newMessages = [...messages, userMsg]
     setMessages(newMessages)
     setInput('')
-    setStage(0)
+    setProgress({ stage: 'searching', elapsedMs: 0 })
     setLoading(true)
 
-    // client-side timeout so a stalled agent loop never spins forever with no recovery.
-    // Generous (4.5 min) because the reasoning path uses Opus + a verifier pass and can produce
-    // long analytical answers; the server route allows up to 800s.
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 270_000)
+    abortRef.current = controller
+    // Idle watchdog: reset on every SSE chunk. A live stream (heartbeat ≤5s) never trips it; only a
+    // genuinely stalled connection does.
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+    }
 
     try {
+      armIdle()
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -104,30 +140,77 @@ export default function ChatPage() {
         if (typeof window !== 'undefined') window.location.assign('/login?redirect=/chat')
         return
       }
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
 
-      const data = await res.json().catch(() => ({}))
+      // ── Consume the SSE stream ──────────────────────────────────────
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let finalReceived = false
 
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        armIdle()
+        buffer += decoder.decode(value, { stream: true })
 
-      if (data.conversationId) setConversationId(data.conversationId)
+        // SSE frames are separated by a blank line
+        let sep: number
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, sep)
+          buffer = buffer.slice(sep + 2)
+          let event = 'message'
+          const dataLines: string[] = []
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+          }
+          if (dataLines.length === 0) continue
+          let payload: Record<string, unknown> = {}
+          try { payload = JSON.parse(dataLines.join('\n')) } catch { continue }
 
-      setMessages([...newMessages, {
-        role: 'assistant',
-        content: data.message,
-        sources: data.sources,
-        entities: data.entities,
-      }])
+          if (event === 'progress') {
+            setProgress({
+              stage: String(payload.stage ?? 'drafting'),
+              detail: payload.detail ? String(payload.detail) : undefined,
+              elapsedMs: Number(payload.elapsedMs) || 0,
+            })
+          } else if (event === 'error') {
+            throw new Error(String(payload.error || 'stream error'))
+          } else if (event === 'final') {
+            finalReceived = true
+            if (payload.conversationId) setConversationId(String(payload.conversationId))
+            setMessages([...newMessages, {
+              role: 'assistant',
+              content: String(payload.message ?? ''),
+              sources: (payload.sources as Source[]) ?? undefined,
+              entities: (payload.entities as { type: string; value: string }[]) ?? undefined,
+              degraded: Boolean(payload.degraded),
+              injectionFlagged: Boolean(payload.injectionFlagged),
+              truncated: Boolean(payload.truncated),
+              persisted: payload.persisted !== false,
+            }])
+          }
+        }
+      }
+
+      if (!finalReceived) throw new Error('La respuesta se interrumpió antes de completarse.')
     } catch (err: unknown) {
       console.error('[chat] request failed', err)
       const aborted = err instanceof DOMException && err.name === 'AbortError'
       setMessages([...newMessages, {
         role: 'assistant',
         content: aborted
-          ? 'La consulta tardó demasiado y se canceló. Inténtalo de nuevo o reformúlala.'
+          ? 'Consulta cancelada. Puedes reformularla o intentarlo de nuevo.'
           : 'No se pudo completar la consulta. Inténtalo de nuevo.',
       }])
     } finally {
-      clearTimeout(timeout)
+      if (idleTimer) clearTimeout(idleTimer)
+      abortRef.current = null
+      setProgress(null)
       setLoading(false)
     }
   }
@@ -220,6 +303,32 @@ export default function ChatPage() {
                 </div>
               </div>
 
+              {/* Answer-level advisories (degraded / injection / truncated / not-persisted) */}
+              {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false) && (
+                <div className="mt-2 ml-11 flex flex-wrap gap-1.5">
+                  {msg.injectionFlagged && (
+                    <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 border border-red-100">
+                      ⚠ Posible contenido manipulado en una fuente
+                    </span>
+                  )}
+                  {msg.degraded && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
+                      Relevancia aproximada (reordenador no disponible)
+                    </span>
+                  )}
+                  {msg.truncated && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
+                      Respuesta truncada por longitud
+                    </span>
+                  )}
+                  {msg.persisted === false && (
+                    <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200">
+                      No se guardó en el historial
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Entities — shown independently of sources */}
               {msg.role === 'assistant' && msg.entities && msg.entities.length > 0 && (
                 <div className="mt-2 ml-11 flex flex-wrap gap-1">
@@ -245,56 +354,70 @@ export default function ChatPage() {
                   </button>
                   {!collapsedSources.has(i) && (
                     <div className="mt-2 space-y-1.5">
-                      {msg.sources.map((src, j) => (
-                        <div key={j} className="text-xs bg-slate-50 rounded-md p-2.5 border border-slate-100">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`h-1.5 w-1.5 rounded-full ${
-                              typeof src.relevance !== 'number' ? 'bg-slate-300' :
-                              src.relevance > 0.7 ? 'bg-green-500' :
-                              src.relevance > 0.4 ? 'bg-amber-500' : 'bg-slate-300'
-                            }`} />
-                            {sourceHref(src) ? (
-                              <a
-                                href={sourceHref(src)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="font-medium text-slate-700 hover:underline"
-                              >
-                                {src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'documento'}
-                              </a>
-                            ) : (
-                              <span className="font-medium text-slate-600">
-                                {src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'documento'}
-                              </span>
-                            )}
-                            {typeof src.relevance === 'number' && (
-                              <span className="text-slate-500">{(src.relevance * 100).toFixed(0)}% relevante</span>
-                            )}
-                          </div>
-                          <div className="mb-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest">
-                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
-                              {sourceText(src.metadata?.project_id) || 'Proyecto —'}
-                            </span>
-                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
-                              {sourceText(src.metadata?.doc_type) || 'Tipo —'}
-                            </span>
-                            <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
-                              {VERIFICATION_LABELS[src.verification || 'unverified']}
-                            </span>
-                            {src.metadata?.authority != null && (
+                      {msg.sources.map((src, j) => {
+                        const href = sourceHref(src)
+                        const flagged = src.metadata?.injection_flagged === true
+                        const unreviewed = src.metadata?.review_status === 'needs_review' || src.metadata?.review_status === 'pending'
+                        const label = src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'documento'
+                        return (
+                          <div key={j} className={`text-xs rounded-md p-2.5 border ${flagged ? 'bg-red-50/40 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`h-1.5 w-1.5 rounded-full ${
+                                typeof src.relevance !== 'number' ? 'bg-slate-300' :
+                                src.relevance > 0.7 ? 'bg-green-500' :
+                                src.relevance > 0.4 ? 'bg-amber-500' : 'bg-slate-300'
+                              }`} />
+                              {href ? (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-medium text-slate-700 hover:underline"
+                                >
+                                  {label}
+                                </a>
+                              ) : (
+                                <span className="font-medium text-slate-600">{label}</span>
+                              )}
+                              {typeof src.relevance === 'number' && (
+                                <span className="text-slate-500">{(src.relevance * 100).toFixed(0)}% relevante</span>
+                              )}
+                            </div>
+                            <div className="mb-1 flex flex-wrap items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest">
                               <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
-                                autoridad {String(src.metadata.authority)}
+                                {sourceText(src.metadata?.project_id) || 'Proyecto —'}
                               </span>
+                              <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                                {sourceText(src.metadata?.doc_type) || 'Tipo —'}
+                              </span>
+                              <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                                {VERIFICATION_LABELS[src.verification || 'unverified']}
+                              </span>
+                              {unreviewed && (
+                                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 border border-amber-100">
+                                  sin revisar
+                                </span>
+                              )}
+                              {flagged && (
+                                <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-700 border border-red-100">
+                                  anomalía
+                                </span>
+                              )}
+                              {src.metadata?.authority != null && (
+                                <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                                  autoridad {String(src.metadata.authority)}
+                                </span>
+                              )}
+                            </div>
+                            {sourceText(src.metadata?.dms_path) && (
+                              <p className="mb-1 font-mono text-[10px] text-slate-500 truncate">
+                                {sourceText(src.metadata.dms_path)}
+                              </p>
                             )}
+                            <p className="text-slate-600 line-clamp-2">{src.preview}</p>
                           </div>
-                          {sourceText(src.metadata?.dms_path) && (
-                            <p className="mb-1 font-mono text-[10px] text-slate-500 truncate">
-                              {sourceText(src.metadata.dms_path)}
-                            </p>
-                          )}
-                          <p className="text-slate-600 line-clamp-2">{src.preview}</p>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -310,13 +433,22 @@ export default function ChatPage() {
                 IA
               </div>
               <div className="rounded-lg px-4 py-3 bg-white border border-slate-200">
-                <div className="flex items-center gap-2 font-mono text-xs text-slate-600">
+                <div className="flex items-center gap-3 font-mono text-xs text-slate-600">
                   <div className="flex gap-1">
                     <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                     <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '150ms' }} />
                     <span className="h-2 w-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
-                  {LOADING_STAGES[stage]}
+                  <span>{STAGE_LABELS[progress?.stage ?? 'searching'] ?? 'Procesando…'}</span>
+                  {progress && progress.elapsedMs > 0 && (
+                    <span className="text-slate-400">· {formatElapsed(progress.elapsedMs)}</span>
+                  )}
+                  <button
+                    onClick={cancelRequest}
+                    className="ml-1 rounded border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
+                  >
+                    Cancelar
+                  </button>
                 </div>
               </div>
             </div>
@@ -361,13 +493,63 @@ export default function ChatPage() {
   )
 }
 
-/** Simple markdown-ish formatter for assistant responses */
+/** Simple markdown-ish formatter for assistant responses. Consecutive pipe rows are grouped into a
+ *  single aligned <table> (financial answers are table-heavy — F21). */
 function FormattedMessage({ content }: { content: string }) {
   const lines = content.split('\n')
   const elements: React.ReactNode[] = []
 
+  const isTableRow = (l?: string) => !!l && l.trim().startsWith('|') && l.trim().endsWith('|')
+  const isSeparatorRow = (l?: string) =>
+    !!l && l.trim().startsWith('|') &&
+    l.split('|').slice(1, -1).every(c => /^\s*:?-{1,}:?\s*$/.test(c))
+  const parseCells = (l: string) => l.split('|').slice(1, -1).map(c => c.trim())
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
+
+    if (isTableRow(line) && !isSeparatorRow(line)) {
+      // Collect the contiguous block of table rows starting here.
+      const block: string[] = []
+      let j = i
+      while (j < lines.length && isTableRow(lines[j])) { block.push(lines[j]); j++ }
+      const dataRows = block.filter(r => !isSeparatorRow(r))
+      const hasHeader = block.length >= 2 && isSeparatorRow(block[1])
+      const header = hasHeader ? parseCells(dataRows[0]) : null
+      const bodyRows = (hasHeader ? dataRows.slice(1) : dataRows).map(parseCells)
+      const colCount = Math.max(header?.length ?? 0, ...bodyRows.map(r => r.length), 1)
+
+      elements.push(
+        <div key={i} className="my-2 overflow-x-auto">
+          <table className="w-full border-collapse text-xs font-mono">
+            {header && (
+              <thead>
+                <tr className="bg-slate-50">
+                  {Array.from({ length: colCount }).map((_, c) => (
+                    <th key={c} className={`border border-slate-200 px-2 py-1 font-semibold text-slate-700 ${c === 0 ? 'text-left' : 'text-right'}`}>
+                      {header[c] ?? ''}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody>
+              {bodyRows.map((cells, r) => (
+                <tr key={r} className="even:bg-slate-50/40">
+                  {Array.from({ length: colCount }).map((_, c) => (
+                    <td key={c} className={`border border-slate-200 px-2 py-1 text-slate-600 ${c === 0 ? 'text-left' : 'text-right'}`}>
+                      <InlineFormat text={cells[c] ?? ''} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      i = j - 1
+      continue
+    }
 
     if (line.startsWith('### ')) {
       elements.push(<h4 key={i} className="font-semibold text-slate-800 mt-3 mb-1">{line.slice(4)}</h4>)
@@ -388,22 +570,6 @@ function FormattedMessage({ content }: { content: string }) {
         <div key={i} className="flex gap-2 ml-2">
           <span className="text-slate-400 font-mono text-xs mt-0.5 w-4 text-right">{num?.[1]}.</span>
           <span className="text-sm"><InlineFormat text={num?.[2] || ''} /></span>
-        </div>
-      )
-    } else if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
-      // Table row. A separator row is one where every cell matches ---, :--, --: or :--:
-      const isSeparatorRow = (l?: string) =>
-        !!l && l.trim().startsWith('|') &&
-        l.split('|').slice(1, -1).every(c => /^\s*:?-{1,}:?\s*$/.test(c))
-      if (isSeparatorRow(line)) continue // skip alignment/separator rows
-      const cells = line.split('|').slice(1, -1).map(c => c.trim())
-      const isHeader = isSeparatorRow(lines[i + 1])
-      elements.push(
-        <div key={i} className={`grid gap-2 text-xs font-mono py-1 px-2 ${isHeader ? 'font-semibold bg-slate-50 rounded' : ''}`}
-          style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
-          {cells.map((cell, j) => (
-            <span key={j} className={j === 0 ? 'text-slate-700' : 'text-right text-slate-600'}>{cell}</span>
-          ))}
         </div>
       )
     } else if (line.trim() === '') {

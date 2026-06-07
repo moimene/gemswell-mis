@@ -6,6 +6,9 @@ export type SourceVerification = 'source_of_record' | 'supporting' | 'context' |
 
 export type KnowledgeSource = {
   id: string
+  /** Parent rag_documents.id — used to deep-link the citation to the document's gestor detail
+   *  (every source is then inspectable even when no storage artifact exists). */
+  documentId?: string
   relevance: number
   metadata: Record<string, unknown>
   preview: string
@@ -15,6 +18,7 @@ export type KnowledgeSource = {
 
 type BuildSourceInput = {
   id: string
+  documentId?: string
   relevance: number
   metadata?: Record<string, unknown>
   preview: string
@@ -93,6 +97,7 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
 
   return {
     id: input.id,
+    documentId: input.documentId,
     relevance: input.relevance,
     preview: input.preview,
     label,
