@@ -28,6 +28,15 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+// CX-4: filenames/labels flow into the model prompt OUTSIDE the untrusted-content boundary (source
+// headers). Collapse to a single inert line and cap length so a crafted filename with newlines or
+// instruction-like text cannot steer the model/verifier.
+function inertLabel(value: string | undefined): string | undefined {
+  if (value == null) return undefined
+  const cleaned = value.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)
+  return cleaned || undefined
+}
+
 function numberValue(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim()) {
@@ -93,7 +102,8 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
   const reviewSuffix = reviewStatus === 'pending' || reviewStatus === 'needs_review'
     ? ' [SIN REVISAR]'
     : ''
-  const label = [projectId, docType, sourceFile].filter(Boolean).join(' | ') + reviewSuffix
+  // CX-4: the label flows into the model/verifier prompt; keep the filename inert (single line).
+  const label = [projectId, docType, inertLabel(sourceFile)].filter(Boolean).join(' | ') + reviewSuffix
 
   return {
     id: input.id,
@@ -120,10 +130,10 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
 }
 
 export function sourceHeader(metadata: Record<string, unknown>, relevance: number, index: number): string {
-  const project = stringValue(metadata.project_id) ?? '?'
-  const docType = stringValue(metadata.doc_type) ?? '?'
-  const source = stringValue(metadata.source_file) ?? stringValue(metadata.file_name) ?? 'unknown'
-  const period = stringValue(metadata.period)
+  const project = inertLabel(stringValue(metadata.project_id)) ?? '?'
+  const docType = inertLabel(stringValue(metadata.doc_type)) ?? '?'
+  const source = inertLabel(stringValue(metadata.source_file) ?? stringValue(metadata.file_name)) ?? 'unknown'
+  const period = inertLabel(stringValue(metadata.period))
   const authority = numberValue(metadata.authority_score) ?? numberValue(metadata.authority)
   const reviewStatus = reviewStatusValue(metadata.review_status)
   const classificationSource = classificationSourceValue(metadata.classification_source)

@@ -55,8 +55,9 @@ const CLOSE = '</document_content>'
  * neutralised so a crafted chunk cannot "escape" the boundary and append fake trusted content.
  */
 export function wrapUntrustedContent(body: string): string {
-  // Defang any literal closing tag in the body so a crafted chunk cannot terminate the boundary
-  // early and append fake "trusted" instructions after it.
-  const neutralised = body.replaceAll('</document_content>', '[/document_content]')
+  // Defang any closing-tag-like sequence in the body (case-insensitive, whitespace-tolerant) so a
+  // crafted chunk cannot terminate the boundary early and append fake "trusted" instructions —
+  // `</DOCUMENT_CONTENT >`, `</document_content>` etc. all get neutralised (CX-5).
+  const neutralised = body.replace(/<\/\s*document_content\s*>/gi, '[/document_content]')
   return `${OPEN}\n${neutralised}\n${CLOSE}`
 }

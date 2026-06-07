@@ -1016,8 +1016,11 @@ async function verifyAnswer(
   },
   onProgress?: (stage: string, detail?: string) => void,
   signal?: AbortSignal
-): Promise<string> {
-  if (!CHAT_VERIFIER_ENABLED) return input.draft
+): Promise<{ text: string; verified: boolean }> {
+  // CX-1: signal whether the answer was actually verified. The draft is grounded in tool results but
+  // has NOT passed the evidence verifier, so the client must show it as unverified rather than
+  // presenting it as verified text (D2-A guarantee).
+  if (!CHAT_VERIFIER_ENABLED) return { text: input.draft, verified: false }
   // NOTE: we verify even when toolCalls is empty (F21) — a no-tool answer to a factual question
   // must be checked for fabrication / forced to abstain, which is exactly the case the old early
   // return skipped.
@@ -1073,10 +1076,13 @@ async function verifyAnswer(
       ],
     }, { signal })
 
-    return response.content.find(block => block.type === 'text')?.text?.trim() || input.draft
+    const verifiedText = response.content.find(block => block.type === 'text')?.text?.trim()
+    if (verifiedText) return { text: verifiedText, verified: true }
+    // Empty verifier output — fall back to the draft but mark it unverified.
+    return { text: input.draft, verified: false }
   } catch (err) {
-    console.warn('Chat verifier failed, returning draft answer:', err)
-    return input.draft
+    console.warn('Chat verifier failed, returning draft answer (unverified):', err)
+    return { text: input.draft, verified: false }
   }
 }
 
@@ -1208,7 +1214,7 @@ export async function POST(request: NextRequest) {
       try {
         send('progress', { stage: 'searching', elapsedMs: 0 })
         const loop = await runAgentLoop(historyMessages, SYSTEM_PROMPT, anthropic, chatModel, setStage, abort.signal)
-        const verified = await verifyAnswer(
+        const { text: answer, verified } = await verifyAnswer(
           anthropic,
           { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls },
           setStage,
@@ -1217,17 +1223,18 @@ export async function POST(request: NextRequest) {
 
         setStage('persisting')
         const { convId, persisted } = await persistConversation(
-          user, conversationId, query, verified, loop.sources, loop.toolCalls
+          user, conversationId, query, answer, loop.sources, loop.toolCalls
         )
 
         send('final', {
-          message: verified,
+          message: answer,
           conversationId: convId ?? null,
           sources: loop.sources,
           toolCalls: loop.toolCalls,
           entities,
           model: chatModel,
           verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
+          verified,
           degraded: loop.degraded,
           injectionFlagged: loop.injectionFlagged,
           truncated: loop.truncated,

@@ -47,6 +47,11 @@ export async function POST(request: NextRequest) {
       if (!body?.storagePath || !body.fileName) {
         return NextResponse.json({ error: 'Faltan storagePath/fileName' }, { status: 400 })
       }
+      // CX-2: only ingest objects from the signed-upload namespace (uploads/<uuid>/…), never an
+      // arbitrary object in the shared bucket (artifacts/, other docs, …).
+      if (!/^uploads\/[0-9a-fA-F-]{36}\/[^/]+$/.test(body.storagePath)) {
+        return NextResponse.json({ error: 'storagePath inválido' }, { status: 400 })
+      }
       fileName = body.fileName
       fileExt = extOf(fileName)
       if (!ALLOWED_EXT.has(fileExt)) {
@@ -87,7 +92,15 @@ export async function POST(request: NextRequest) {
     const result = await ingestBuffer(supabase, { fileName, fileExt, buffer, projectId, docTypeHint, rawStoragePath })
 
     if (result.status === 'error') {
-      return NextResponse.json({ error: result.error || 'Fallo al procesar el documento', file: fileName }, { status: 422 })
+      // CX-6: only surface curated, user-safe messages; log the rest and return a generic reason so DB/
+      // parser/bucket internals never reach the client.
+      console.error('[knowledge/upload] ingest failed:', result.error)
+      const raw = result.error ?? ''
+      const userSafe = /^(El documento parece escaneado|El archivo|Tipo no soportado|No se generaron)/.test(raw)
+      return NextResponse.json(
+        { error: userSafe ? raw : 'No se pudo procesar el documento (formato no soportado o contenido ilegible).', file: fileName },
+        { status: 422 }
+      )
     }
     return NextResponse.json({
       ok: true,
@@ -99,7 +112,8 @@ export async function POST(request: NextRequest) {
       duplicateTitleCount: result.duplicateTitleCount ?? 0,
     })
   } catch (err: unknown) {
-    console.error('Upload API error:', err)
-    return NextResponse.json({ error: errorMessage(err) }, { status: 500 })
+    // CX-6: log the real error, return a generic message (never leak internals).
+    console.error('Upload API error:', errorMessage(err))
+    return NextResponse.json({ error: 'Error interno al subir el documento.' }, { status: 500 })
   }
 }
