@@ -93,9 +93,10 @@ export function firstMatchRankById(rankedDocIds: (string | null | undefined)[], 
 export function precisionAtK(rankedDocIds: (string | null | undefined)[], expectedIds: string[] | undefined, k: number): number | null {
   if (!expectedIds?.length) return null
   const want = new Set(expectedIds)
-  const topk = rankedDocIds.slice(0, k)
-  if (topk.length === 0) return 0
-  return topk.filter((id) => id && want.has(id)).length / topk.length
+  // Standard precision@k: relevant-in-top-k / k. Dividing by |retrieved| would inflate precision on a
+  // sparse pool and read a pool-shrinking tuning change as a precision GAIN. (adversarial review)
+  const hits = rankedDocIds.slice(0, k).filter((id) => id && want.has(id)).length
+  return hits / k
 }
 
 /** How a documentary question's ground truth is scored — id (pinned, honest) > title (substring, optimistic). */
@@ -103,6 +104,23 @@ export function matchedBy(g: { ground_truth?: GroundTruth }): 'id' | 'title' | '
   if (g.ground_truth?.expected_doc_ids?.length) return 'id'
   if (g.ground_truth?.titles?.length) return 'title'
   return 'none'
+}
+
+/**
+ * Score a documentary question's first-hit rank. A PINNED case (expected_doc_ids) is scored by id ONLY —
+ * it MUST NOT fall back to title, because a same-title sibling would report a false hit and silently
+ * inflate recall on exactly the cases pinning exists to make honest (e.g. 10 docs share "sh01"). Only an
+ * UNPINNED case uses the optimistic title substring. Keeps `rank` and `scoredBy` consistent. (adversarial review)
+ */
+export function scoreDocumentaryRank(
+  g: { ground_truth?: GroundTruth },
+  rankedDocIds: (string | null | undefined)[],
+  rankedTitles: (string | null | undefined)[],
+): { rank: number; scoredBy: 'id' | 'title' | 'none' } {
+  const ids = g.ground_truth?.expected_doc_ids
+  if (ids?.length) return { rank: firstMatchRankById(rankedDocIds, ids), scoredBy: 'id' }
+  if (g.ground_truth?.titles?.length) return { rank: firstMatchRank(rankedTitles, g.ground_truth.titles), scoredBy: 'title' }
+  return { rank: 0, scoredBy: 'none' }
 }
 
 export const hitAtK = (rank: number, k: number): boolean => rank > 0 && rank <= k

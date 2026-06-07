@@ -126,13 +126,17 @@ export async function retrieveDocuments(
     (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
         const embedding = await embedText(query, { lane: 'interactive' })
-        const { data } = await supabase.rpc('match_chunks', {
+        const { data, error } = await supabase.rpc('match_chunks', {
           query_embedding: embedding,
           match_count: RAG_VECTOR_MATCH_COUNT,
           filter_project: projectFilter,
           filter_doc_type: docTypeFilter,
           match_threshold: RAG_MATCH_THRESHOLD,
         })
+        // supabase-js does NOT throw on a PostgREST error (e.g. statement timeout — the silent-death mode
+        // that killed retrieval twice); it returns it in `error`. Treat that as a lane FAILURE (outage),
+        // not a clean empty result, so the chat surfaces degradation instead of "no documents". (adversarial review)
+        if (error) return { rows: [], failed: true }
         return {
           rows: ((data || []) as RetrievedChunk[]).map((r) => ({
             id: r.id,
@@ -149,12 +153,14 @@ export async function retrieveDocuments(
     })(),
     (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
-        const { data } = await supabase.rpc('keyword_search_chunks', {
+        const { data, error } = await supabase.rpc('keyword_search_chunks', {
           query_text: query,
           filter_project: projectFilter,
           match_count: RAG_KEYWORD_MATCH_COUNT,
           filter_doc_type: docTypeFilter,
         })
+        // PostgREST errors come back in `error` (no throw) — treat as a lane failure, not a clean miss.
+        if (error) return { rows: [], failed: true }
         return {
           rows: ((data || []) as Array<RetrievedChunk & { rank?: number }>)
             // RPC already applies doc_type; keep this as a defensive belt-and-suspenders

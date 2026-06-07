@@ -8,7 +8,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  getSupabase, loadGolden, resolveDocMeta, firstMatchRank, firstMatchRankById, precisionAtK,
+  getSupabase, loadGolden, resolveDocMeta, scoreDocumentaryRank, precisionAtK,
   hitAtK, mean, pct, pad, padL, type Golden, type DocMeta,
 } from './_harness'
 import { retrieveDocuments } from '../../src/lib/rag/retrieve'
@@ -47,13 +47,9 @@ async function runOne(
   await resolveDocMeta(sb, ranked.map((r) => r.document_id), cache)
   const rankedTitles = ranked.map((r) => cache.get(r.document_id)?.title)
   const rankedDocIds = ranked.map((r) => r.document_id)
-  // Prefer honest id-match (pinned expected_doc_ids); fall back to optimistic title substring only when unpinned.
-  const expectedIds = g.ground_truth?.expected_doc_ids
-  const rankById = firstMatchRankById(rankedDocIds, expectedIds)
-  const rankByTitle = firstMatchRank(rankedTitles, g.ground_truth?.titles)
-  const rank = rankById || rankByTitle
-  const scoredBy: 'id' | 'title' | 'none' = expectedIds?.length ? 'id' : g.ground_truth?.titles?.length ? 'title' : 'none'
-  const precisionAt5 = precisionAtK(rankedDocIds, expectedIds, 5)
+  // Pinned ⇒ id-only (NO title fallback — see scoreDocumentaryRank); unpinned ⇒ optimistic title substring.
+  const { rank, scoredBy } = scoreDocumentaryRank(g, rankedDocIds, rankedTitles)
+  const precisionAt5 = precisionAtK(rankedDocIds, g.ground_truth?.expected_doc_ids, 5)
   const topTitles = ranked.slice(0, 5).map((r) => {
     const m = cache.get(r.document_id)
     return { title: m?.title ?? null, project_id: m?.project_id ?? null, doc_type: m?.doc_type ?? null, authority: m?.authority_score ?? null, review: m?.review_status ?? null }
@@ -94,7 +90,7 @@ async function main() {
   }
 
   // ── Aggregate ──
-  const docQs = results.filter((r) => r.g.expected_kind === 'documentary' && r.g.ground_truth?.titles?.length)
+  const docQs = results.filter((r) => r.g.expected_kind === 'documentary' && (r.g.ground_truth?.titles?.length || r.g.ground_truth?.expected_doc_ids?.length))
   const recall = (mode: 'cross' | 'scoped', k: number) => {
     const rows = docQs.map((r) => (mode === 'cross' ? r.cross : r.scoped)).filter(Boolean) as RunOut[]
     const hits = rows.filter((r) => hitAtK(r.rank, k)).length
