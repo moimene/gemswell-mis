@@ -64,7 +64,8 @@ async function judge(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>):
     verification: s.verification,
     preview: String(s.preview ?? '').slice(0, 220),
   }))
-  const tools = r.toolCalls.map((t) => ({ name: t.name, input: t.input, source_count: t.source_count }))
+  // Include the tool RESULT preview so the judge can actually verify structured figures (not just trust them).
+  const tools = r.toolCalls.map((t) => ({ name: t.name, input: t.input, source_count: t.source_count, result_preview: t.result_preview }))
 
   const system = [
     'You are a strict evaluator of a financial/documentary RAG assistant for a CFO audience.',
@@ -73,7 +74,7 @@ async function judge(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>):
     '- faithfulness: every material claim is supported by a cited source card or tool result; no invented numbers/names/dates. A confident answer with NO supporting evidence scores 1.',
     '- citation_precision: the cited sources actually support the claims and are the RIGHT documents; citing irrelevant/!=ground-truth docs lowers this.',
     '- completeness: covers what the question asks (without padding).',
-    'STRUCTURED questions: the evidence is the TOOL RESULT, not source cards — source_count=0 is NORMAL for get_capex_summary/get_funding_status/get_covenant_status/get_risk_register/get_cash_runway/compare_projects/get_contradictions and must NOT by itself lower faithfulness or citation_precision. Judge whether the reported figures are consistent with what that structured tool returns; only penalise numbers that look invented relative to the tool call.',
+    'STRUCTURED questions: the evidence is the TOOL RESULT (each tool entry includes a result_preview), not source cards — source_count=0 is NORMAL for get_capex_summary/get_funding_status/get_covenant_status/get_risk_register/get_cash_runway/compare_projects/get_contradictions and must NOT by itself lower faithfulness or citation_precision. Verify the reported figures AGAINST the tool result_preview: numbers consistent with the preview are supported; numbers NOT present in (and not derivable from) the preview are fabrications and must lower faithfulness. Do not assume a figure is invented just because the question NOTE highlights a different one — credit any value that matches the tool result.',
     'Booleans:',
     '- found_ground_truth: did the answer actually use/cite the expected document (titles) OR state the expected fact (must_contain) OR call the expected structured tool? For abstain/ambiguous questions set true if the EXPECTED behaviour happened.',
     '- behavior_correct: documentary→cited the right doc & answered; structured→used the structured tool (not doc search) & gave the figure; abstain→explicitly abstained / said no evidence (did NOT fabricate); ambiguous→asked for clarification instead of guessing.',

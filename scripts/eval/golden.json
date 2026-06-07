@@ -45,7 +45,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["cap call"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
+    "ground_truth": { "titles": ["sh01"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Borrower entity: Wave Park Holdings (Warwickshire) Ltd, company number 15326333."
   },
@@ -74,7 +74,7 @@
     "lang": "es",
     "category": "financial_statements",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["mpscierredef-2025"], "project_id": "MAD", "doc_type": "financial_statements", "must_contain": ["27,031,176", "27"] },
+    "ground_truth": { "titles": ["mpscierredef-2025"], "project_id": "MAD", "doc_type": "financial_statements", "must_contain": ["27,031,176"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "Citation-precision: exact figure 27,031,176.36 (2025) vs 14,001,142.67 (2024). Must not confuse the year."
   },
