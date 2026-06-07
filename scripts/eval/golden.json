@@ -191,5 +191,14 @@
     "expected_kind": "ambiguous",
     "ground_truth": {},
     "notes": "Underspecified. Should request clarification."
+  },
+  {
+    "id": "common-terms-latency",
+    "question": "Dame un resumen general del estado del proyecto de Madrid y Birmingham",
+    "lang": "es",
+    "category": "robustness",
+    "expected_kind": "documentary",
+    "ground_truth": {},
+    "notes": "All-common-term query — regression guard for the keyword df-fallback: it must NOT time out the keyword lane (sql/018 AND-fallback). Watch the pool/latency, not recall."
   }
 ]

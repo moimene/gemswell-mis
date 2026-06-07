@@ -713,8 +713,7 @@ async function executeGetContradictions(input: { project_id?: string; metric?: s
   let i = 1
   for (const r of rows) {
     const sev = (r.severity ?? 'unknown').toUpperCase()
-    const deltaPct = Number(r.delta_pct)
-    const deltaPctStr = Number.isFinite(deltaPct) ? `${(deltaPct * 100).toFixed(1)}%` : '?'
+    const deltaPctStr = r.delta_pct == null || !Number.isFinite(Number(r.delta_pct)) ? '?' : `${(Number(r.delta_pct) * 100).toFixed(1)}%`
     const authA = r.authority_a != null ? ` (authority ${r.authority_a})` : ''
     const authB = r.authority_b != null ? ` (authority ${r.authority_b})` : ''
     result += `${i}. [${sev}] ${r.metric_id}${r.period_label ? ` (${r.period_label})` : ''} — ${fmtVal(r.project_id, r.value_a)}${authA} vs ${fmtVal(r.project_id, r.value_b)}${authB}; Δ ${fmtVal(r.project_id, r.delta_abs)} (${deltaPctStr}). Status: ${r.status}.\n`
