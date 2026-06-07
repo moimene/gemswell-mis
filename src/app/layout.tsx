@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TowerControlBanner } from '@/components/layout/TowerControlBanner'
+import { TowerDataFooter } from '@/components/layout/TowerDataFooter'
 import { Providers } from '@/components/providers'
 import { Toaster } from 'sonner'
 
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <main className="flex-1 overflow-auto bg-slate-100 p-6">
               <TowerControlBanner />
               {children}
+              <TowerDataFooter />
             </main>
           </div>
           <Toaster />
