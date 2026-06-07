@@ -21,6 +21,8 @@ type Message = {
   truncated?: boolean
   persisted?: boolean
   verified?: boolean
+  retrievalIncomplete?: boolean
+  unreviewedUsed?: number
 }
 
 type Progress = { stage: string; detail?: string; elapsedMs: number }
@@ -194,6 +196,8 @@ export default function ChatPage() {
               truncated: Boolean(payload.truncated),
               persisted: payload.persisted !== false,
               verified: payload.verified !== false,
+              retrievalIncomplete: Boolean(payload.retrievalIncomplete),
+              unreviewedUsed: Number(payload.unreviewedUsed) || 0,
             }])
           }
         }
@@ -317,8 +321,8 @@ export default function ChatPage() {
                 </div>
               </div>
 
-              {/* Answer-level advisories (degraded / injection / truncated / not-persisted) */}
-              {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false || msg.verified === false) && (
+              {/* Answer-level advisories (degraded / injection / truncated / not-persisted / retrieval-incomplete / unreviewed) */}
+              {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false || msg.verified === false || msg.retrievalIncomplete || (msg.unreviewedUsed ?? 0) > 0) && (
                 <div className="mt-2 ml-11 flex flex-wrap gap-1.5">
                   {msg.verified === false && (
                     <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
@@ -343,6 +347,16 @@ export default function ChatPage() {
                   {msg.persisted === false && (
                     <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200">
                       No se guardó en el historial
+                    </span>
+                  )}
+                  {msg.retrievalIncomplete && (
+                    <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700 border border-red-100">
+                      ⚠ Búsqueda documental degradada (no es ausencia de fuentes)
+                    </span>
+                  )}
+                  {(msg.unreviewedUsed ?? 0) > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
+                      Se apoya en {msg.unreviewedUsed} fuente{(msg.unreviewedUsed ?? 0) === 1 ? '' : 's'} sin revisar
                     </span>
                   )}
                 </div>

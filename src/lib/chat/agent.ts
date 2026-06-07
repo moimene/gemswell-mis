@@ -7,7 +7,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient } from '@/lib/supabase-server'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
-import { retrieveDocuments } from '@/lib/rag/retrieve'
+import { retrieveDocuments, emptyResultMessage } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -20,6 +20,8 @@ export type ToolResult = {
   degraded?: boolean
   /** search_documents only: at least one retrieved chunk tripped the injection heuristic (F5). */
   injectionFlagged?: boolean
+  /** search_documents only: a retrieval lane threw (Gemini 429 / RPC timeout) — partial/degraded search, NOT a clean no-match. */
+  retrievalIncomplete?: boolean
 }
 
 export type ToolCallAudit = {
@@ -382,12 +384,12 @@ async function executeSearchDocuments(
     docTypeFilter: normalizeDocTypeFilter(input.doc_type),
   })
   const degraded = diagnostics.degraded
+  const retrievalIncomplete = diagnostics.vectorFailed || diagnostics.keywordFailed
 
   if (ranked.length === 0) {
-    return {
-      result: 'No relevant documents found. Some documents may have been excluded because their review status is rejected.',
-      sources: [],
-    }
+    // C4 (audit 2026-06-07): distinguish a retrieval OUTAGE from a clean no-match — never blame
+    // governance ("excluded because rejected") for an infrastructure failure.
+    return { result: emptyResultMessage(diagnostics), sources: [], degraded, retrievalIncomplete }
   }
 
   // Injection heuristic: flag any chunk whose body looks like an instruction aimed at the model (F5).
@@ -419,7 +421,7 @@ async function executeSearchDocuments(
     })
     .join('\n\n---\n\n')
 
-  return { result: formatted, sources, degraded, injectionFlagged }
+  return { result: formatted, sources, degraded, injectionFlagged, retrievalIncomplete }
 }
 
 // ─── Tool Executor: get_capex_summary ───────────────────────────────
@@ -770,6 +772,10 @@ export type AgentLoopResult = {
   degraded: boolean
   injectionFlagged: boolean
   truncated: boolean
+  /** A documentary retrieval lane threw during the turn (Gemini 429 / RPC timeout) — search was degraded. */
+  retrievalIncomplete: boolean
+  /** Count of distinct cited sources whose parent is needs_review/pending — the answer leaned on ungoverned evidence. */
+  unreviewedUsed: number
 }
 
 export async function runAgentLoop(
@@ -785,6 +791,23 @@ export async function runAgentLoop(
   const toolCalls: ToolCallAudit[] = []
   let degraded = false
   let injectionFlagged = false
+  let retrievalIncomplete = false
+
+  // Single exit builder so every return path carries the full audit signal set, incl. the
+  // deduped count of unreviewed sources the answer actually leaned on (audit 2026-06-07 C1 disclosure).
+  const finish = (message: string, truncated: boolean): AgentLoopResult => ({
+    message,
+    sources: Array.from(allSources.values()),
+    toolCalls,
+    degraded,
+    injectionFlagged,
+    truncated,
+    retrievalIncomplete,
+    unreviewedUsed: Array.from(allSources.values()).filter((s) => {
+      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
+      return rs === 'needs_review' || rs === 'pending'
+    }).length,
+  })
 
   for (let iteration = 0; iteration < 5; iteration++) {
     onProgress?.('drafting')
@@ -800,7 +823,7 @@ export async function runAgentLoop(
 
     if (response.stop_reason === 'end_turn' || response.stop_reason === 'max_tokens') {
       const text = response.content.find(b => b.type === 'text')?.text ?? 'No response generated.'
-      return { message: text, sources: Array.from(allSources.values()), toolCalls, degraded, injectionFlagged, truncated: response.stop_reason === 'max_tokens' }
+      return finish(text, response.stop_reason === 'max_tokens')
     }
 
     if (response.stop_reason === 'tool_use') {
@@ -809,7 +832,7 @@ export async function runAgentLoop(
 
       if (toolBlocks.length === 0) {
         const text = response.content.find(b => b.type === 'text')?.text ?? ''
-        return { message: text || 'No response generated.', sources: Array.from(allSources.values()), toolCalls, degraded, injectionFlagged, truncated: false }
+        return finish(text || 'No response generated.', false)
       }
       onProgress?.(
         toolBlocks.some(b => b.name === 'search_documents') ? 'searching' : 'analyzing',
@@ -818,9 +841,10 @@ export async function runAgentLoop(
       const toolResults = await Promise.all(
         toolBlocks.map(async block => {
           try {
-            const { result, sources, degraded: d, injectionFlagged: inj } = await executeTool(block.name, block.input as Record<string, unknown>)
+            const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool(block.name, block.input as Record<string, unknown>)
             if (d) degraded = true
             if (inj) injectionFlagged = true
+            if (ri) retrievalIncomplete = true
             if (sources) for (const s of sources) if (!allSources.has(s.id)) allSources.set(s.id, s)
             toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, 500) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
@@ -835,11 +859,11 @@ export async function runAgentLoop(
       loopMessages.push({ role: 'user', content: toolResults })
     } else {
       const text = response.content.find(b => b.type === 'text')?.text ?? ''
-      return { message: text || 'Unexpected stop.', sources: Array.from(allSources.values()), toolCalls, degraded, injectionFlagged, truncated: false }
+      return finish(text || 'Unexpected stop.', false)
     }
   }
 
-  return { message: 'Maximum tool iterations reached. Please rephrase your question or ask about a specific aspect.', sources: Array.from(allSources.values()), toolCalls, degraded, injectionFlagged, truncated: false }
+  return finish('Maximum tool iterations reached. Please rephrase your question or ask about a specific aspect.', false)
 }
 
 export async function verifyAnswer(
@@ -917,6 +941,8 @@ export type ChatTurnResult = {
   degraded: boolean
   injectionFlagged: boolean
   truncated: boolean
+  retrievalIncomplete: boolean
+  unreviewedUsed: number
   model: string
   entities: DetectedEntity[]
 }
@@ -944,6 +970,8 @@ export async function runChatTurn(
     degraded: loop.degraded,
     injectionFlagged: loop.injectionFlagged,
     truncated: loop.truncated,
+    retrievalIncomplete: loop.retrievalIncomplete,
+    unreviewedUsed: loop.unreviewedUsed,
     model,
     entities: detectEntities(query),
   }

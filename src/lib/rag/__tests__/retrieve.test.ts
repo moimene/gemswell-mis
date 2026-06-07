@@ -14,12 +14,13 @@ vi.mock('@/lib/rag/rerank', () => ({
   })),
 }))
 
-import { retrieveDocuments, isRejectedSource } from '@/lib/rag/retrieve'
+import { retrieveDocuments, isRejectedSource, isExcludedFromRetrieval, emptyResultMessage } from '@/lib/rag/retrieve'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
 
 function fakeSupabase(vectorRows: Row[], keywordRows: Row[]) {
-  const rpc = vi.fn(async (name: string) => {
+  // 2nd param typed so `.mock.calls[i][1]` (the RPC args object) is type-safe in assertions below.
+  const rpc = vi.fn(async (name: string, _params?: Record<string, unknown>) => {
     if (name === 'match_chunks') return { data: vectorRows, error: null }
     if (name === 'keyword_search_chunks') return { data: keywordRows, error: null }
     return { data: [], error: null }
@@ -97,5 +98,83 @@ describe('isRejectedSource', () => {
     expect(isRejectedSource({ review_status: 'approved' })).toBe(false)
     expect(isRejectedSource({})).toBe(false)
     expect(isRejectedSource(undefined)).toBe(false)
+  })
+})
+
+// ─── Fase 0 (audit 2026-06-07) — governance gate + degradation visibility ────
+describe('isExcludedFromRetrieval', () => {
+  it('excludes rejected, agent_rejected and superseded — but NOT needs_review (fallback policy)', () => {
+    expect(isExcludedFromRetrieval({ review_status: 'rejected' })).toBe(true)
+    expect(isExcludedFromRetrieval({ classification_source: 'agent_rejected' })).toBe(true)
+    expect(isExcludedFromRetrieval({ lifecycle: 'superseded' })).toBe(true)
+    // needs_review stays retrievable (the chat keeps it as a fallback, ranked below approved)
+    expect(isExcludedFromRetrieval({ review_status: 'needs_review' })).toBe(false)
+    expect(isExcludedFromRetrieval({ review_status: 'approved' })).toBe(false)
+    expect(isExcludedFromRetrieval({})).toBe(false)
+    expect(isExcludedFromRetrieval(undefined)).toBe(false)
+  })
+})
+
+describe('retrieveDocuments — superseded exclusion + degradation diagnostics', () => {
+  it('drops superseded chunks from the pool (defense-in-depth over the RPC filter)', async () => {
+    const vector: Row[] = [
+      { id: 'a', document_id: 'da', content: 'current', metadata: { review_status: 'approved' }, similarity: 0.9 },
+      { id: 's', document_id: 'ds', content: 'old revision', metadata: { lifecycle: 'superseded' }, similarity: 0.95 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
+    expect(ranked.map((c) => c.id)).toEqual(['a'])
+    expect(diagnostics.poolCount).toBe(1)
+  })
+
+  it('flags vectorFailed when the vector RPC throws, keeping the keyword lane alive', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'match_chunks') throw new Error('429 rate limit')
+      if (name === 'keyword_search_chunks') {
+        return { data: [{ id: 'k', document_id: 'dk', content: 'kw', metadata: { review_status: 'approved' }, rank: 0.5 }], error: null }
+      }
+      return { data: [], error: null }
+    })
+    const { ranked, diagnostics } = await retrieveDocuments({ rpc } as never, 'q')
+    expect(diagnostics.vectorFailed).toBe(true)
+    expect(diagnostics.keywordFailed).toBe(false)
+    expect(ranked.map((c) => c.id)).toEqual(['k'])
+  })
+
+  it('flags keywordFailed when the keyword RPC throws', async () => {
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'keyword_search_chunks') throw new Error('statement timeout')
+      if (name === 'match_chunks') {
+        return { data: [{ id: 'v', document_id: 'dv', content: 'vec', metadata: { review_status: 'approved' }, similarity: 0.9 }], error: null }
+      }
+      return { data: [], error: null }
+    })
+    const { diagnostics } = await retrieveDocuments({ rpc } as never, 'q')
+    expect(diagnostics.keywordFailed).toBe(true)
+    expect(diagnostics.vectorFailed).toBe(false)
+  })
+
+  it('counts unreviewedUsed = needs_review/pending chunks in the FINAL ranked set', async () => {
+    const vector: Row[] = [
+      { id: 'ap', document_id: 'd1', content: 'approved', metadata: { review_status: 'approved', authority_score: 80 }, similarity: 0.9 },
+      { id: 'nr', document_id: 'd2', content: 'unreviewed', metadata: { review_status: 'needs_review' }, similarity: 0.8 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
+    expect(ranked.map((c) => c.id)).toEqual(['ap', 'nr']) // approved leads, unreviewed is fallback
+    expect(diagnostics.unreviewedUsed).toBe(1)
+  })
+})
+
+describe('emptyResultMessage', () => {
+  it('signals an outage (NOT governance) when a retrieval lane failed', () => {
+    const msg = emptyResultMessage({ vectorFailed: true, keywordFailed: false } as never)
+    expect(msg).toMatch(/unavailable|degraded|partial|temporar/i)
+    expect(msg).not.toMatch(/rejected/i)
+  })
+  it('says no relevant documents (neutral) when both lanes ran and found nothing', () => {
+    const msg = emptyResultMessage({ vectorFailed: false, keywordFailed: false } as never)
+    expect(msg).toMatch(/no relevant documents/i)
+    expect(msg).not.toMatch(/rejected/i)
   })
 })

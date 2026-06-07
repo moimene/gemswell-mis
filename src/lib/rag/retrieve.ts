@@ -27,12 +27,18 @@ export type RetrievalDiagnostics = {
   vectorCount: number
   /** Rows returned by the keyword RPC (keyword_search_chunks). */
   keywordCount: number
-  /** Distinct chunks in the merged pool after dedup + rejected-source removal (what gets reranked). */
+  /** Distinct chunks in the merged pool after dedup + excluded-source removal (what gets reranked). */
   poolCount: number
   /** Chunks present in BOTH vector and keyword result sets (retrieval agreement signal). */
   overlapCount: number
   /** Cohere rerank fell back to raw-similarity ordering (relevanceScore is approximate). */
   degraded: boolean
+  /** Vector lane (match_chunks) threw — e.g. Gemini 429 / RPC timeout. Distinguishes outage from "no matches". */
+  vectorFailed: boolean
+  /** Keyword lane (keyword_search_chunks) threw — e.g. statement timeout. Distinguishes outage from "no matches". */
+  keywordFailed: boolean
+  /** Count of FINAL ranked chunks whose parent is needs_review/pending (the chat leaned on ungoverned evidence). */
+  unreviewedUsed: number
 }
 
 export type RetrievalResult = {
@@ -66,6 +72,41 @@ export function isRejectedSource(metadata: Record<string, unknown> | undefined):
 }
 
 /**
+ * The full set of governance/lifecycle states that must NEVER reach chat context (audit 2026-06-07):
+ * rejected/agent_rejected (rejected sources) PLUS lifecycle='superseded' (a replaced revision that
+ * must not be cited next to its replacement). `needs_review`/`pending` are deliberately NOT excluded —
+ * the chat keeps them as a fallback (ranked strictly below approved by rankBySourceTrust) and discloses
+ * the reliance, rather than blinding the bot to 41% of the corpus. This is the app-layer defense-in-depth
+ * mirror of the SQL filter in match_chunks / keyword_search_chunks (sql/019).
+ */
+export function isExcludedFromRetrieval(metadata: Record<string, unknown> | undefined): boolean {
+  return isRejectedSource(metadata) || metadataString(metadata, 'lifecycle') === 'superseded'
+}
+
+/** True when a chunk's parent document is ungoverned (not yet human-reviewed). */
+function isUnreviewedSource(metadata: Record<string, unknown> | undefined): boolean {
+  const rs = metadataString(metadata, 'review_status')
+  return rs === 'needs_review' || rs === 'pending'
+}
+
+/**
+ * Tool-result text when retrieval yields nothing. Critically distinguishes a retrieval OUTAGE
+ * (a lane threw — Gemini 429 / RPC timeout) from a genuine no-match, and never blames governance
+ * for an infrastructure failure (the old message wrongly claimed "excluded because rejected").
+ */
+export function emptyResultMessage(diagnostics: Pick<RetrievalDiagnostics, 'vectorFailed' | 'keywordFailed'>): string {
+  if (diagnostics.vectorFailed || diagnostics.keywordFailed) {
+    const which = diagnostics.vectorFailed && diagnostics.keywordFailed
+      ? 'Both the semantic and keyword retrieval lanes'
+      : diagnostics.vectorFailed
+        ? 'The semantic (vector) retrieval lane'
+        : 'The keyword retrieval lane'
+    return `Document retrieval is temporarily degraded: ${which} did not respond, so no documentary evidence could be retrieved for this query. This is a transient retrieval failure, NOT an absence of relevant documents — do not conclude the corpus lacks an answer. Say the documentary search was unavailable and suggest retrying.`
+  }
+  return 'No relevant documents were found in the indexed corpus for this query.'
+}
+
+/**
  * Hybrid documentary retrieval: vector + keyword in parallel, merged, reranked over the FULL pool
  * (so trust-tier ordering can promote a high-trust chunk Cohere scored modestly), then ordered by
  * trust tier and truncated to the final top-K.
@@ -78,9 +119,11 @@ export async function retrieveDocuments(
   const projectFilter = opts.projectFilter ?? null
   const docTypeFilter = opts.docTypeFilter ?? null
 
-  // Parallel: vector search + keyword search
-  const [vectorResults, keywordResults] = await Promise.all([
-    (async () => {
+  // Parallel: vector search + keyword search. Each lane reports whether it THREW (outage) vs returned
+  // empty (no matches) — a distinction the old `catch { return [] }` erased, hiding the exact silent
+  // single-lane degradation that has already bitten this corpus twice (HNSW + stopword timeouts).
+  const [vector, keyword] = await Promise.all([
+    (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
         const embedding = await embedText(query, { lane: 'interactive' })
         const { data } = await supabase.rpc('match_chunks', {
@@ -90,18 +133,21 @@ export async function retrieveDocuments(
           filter_doc_type: docTypeFilter,
           match_threshold: RAG_MATCH_THRESHOLD,
         })
-        return ((data || []) as RetrievedChunk[]).map((r) => ({
-          id: r.id,
-          document_id: r.document_id,
-          content: r.content,
-          metadata: r.metadata || {},
-          similarity: r.similarity,
-        }))
+        return {
+          rows: ((data || []) as RetrievedChunk[]).map((r) => ({
+            id: r.id,
+            document_id: r.document_id,
+            content: r.content,
+            metadata: r.metadata || {},
+            similarity: r.similarity,
+          })),
+          failed: false,
+        }
       } catch {
-        return []
+        return { rows: [], failed: true }
       }
     })(),
-    (async () => {
+    (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
         const { data } = await supabase.rpc('keyword_search_chunks', {
           query_text: query,
@@ -109,21 +155,27 @@ export async function retrieveDocuments(
           match_count: RAG_KEYWORD_MATCH_COUNT,
           filter_doc_type: docTypeFilter,
         })
-        return ((data || []) as Array<RetrievedChunk & { rank?: number }>)
-          // RPC already applies doc_type; keep this as a defensive belt-and-suspenders
-          .filter((r) => !docTypeFilter || r.metadata?.doc_type === docTypeFilter)
-          .map((r) => ({
-            id: r.id,
-            document_id: r.document_id,
-            content: r.content,
-            metadata: r.metadata || {},
-            similarity: r.rank,
-          }))
+        return {
+          rows: ((data || []) as Array<RetrievedChunk & { rank?: number }>)
+            // RPC already applies doc_type; keep this as a defensive belt-and-suspenders
+            .filter((r) => !docTypeFilter || r.metadata?.doc_type === docTypeFilter)
+            .map((r) => ({
+              id: r.id,
+              document_id: r.document_id,
+              content: r.content,
+              metadata: r.metadata || {},
+              similarity: r.rank,
+            })),
+          failed: false,
+        }
       } catch {
-        return []
+        return { rows: [], failed: true }
       }
     })(),
   ])
+
+  const vectorResults = vector.rows
+  const keywordResults = keyword.rows
 
   // Merge + dedup by id (vector results take precedence for similarity score)
   const vectorIds = new Set(vectorResults.map((r) => r.id))
@@ -133,7 +185,7 @@ export async function retrieveDocuments(
 
   const merged = new Map<string, RetrievedChunk>()
   for (const r of [...vectorResults, ...keywordResults]) {
-    if (isRejectedSource(r.metadata)) continue
+    if (isExcludedFromRetrieval(r.metadata)) continue
     if (!merged.has(r.id)) merged.set(r.id, r)
   }
 
@@ -147,6 +199,9 @@ export async function retrieveDocuments(
         poolCount: 0,
         overlapCount,
         degraded: false,
+        vectorFailed: vector.failed,
+        keywordFailed: keyword.failed,
+        unreviewedUsed: 0,
       },
     }
   }
@@ -154,8 +209,9 @@ export async function retrieveDocuments(
   // Cohere-rerank the FULL pool (not just top-K) so trust-tier ordering can promote a high-trust chunk
   // Cohere scored modestly — otherwise Cohere's relevance cut would drop it before trust is considered.
   const { chunks: rerankedRaw, degraded } = await rerankChunks(query, pool, pool.length)
-  const reranked = rerankedRaw.filter((c) => !isRejectedSource(c.metadata))
+  const reranked = rerankedRaw.filter((c) => !isExcludedFromRetrieval(c.metadata))
   const ranked = rankBySourceTrust(reranked).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
+  const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 
   return {
     ranked,
@@ -165,6 +221,9 @@ export async function retrieveDocuments(
       poolCount: pool.length,
       overlapCount,
       degraded,
+      vectorFailed: vector.failed,
+      keywordFailed: keyword.failed,
+      unreviewedUsed,
     },
   }
 }
