@@ -1,0 +1,195 @@
+[
+  {
+    "id": "klp-pacto-socios-es",
+    "question": "¿En qué fecha se elevó a público el pacto de socios de Madrid Playa Surf y qué tipo de escritura es?",
+    "lang": "es",
+    "category": "legal",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["29 de junio de 2023", "Madrid Playa Surf"] },
+    "scoped_filter": { "project_id": "MAD" },
+    "notes": "SCOPING DEFECT: the most authoritative legal doc lives under project_id=KLP (Kelpa HoldCo), but the query names Madrid so the model scopes to MAD and hard-filters it out."
+  },
+  {
+    "id": "klp-pacto-socios-en",
+    "question": "What is the shareholders' agreement (pacto de socios) of Madrid Playa Surf and when was it notarized?",
+    "lang": "en",
+    "category": "legal",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["2023", "Madrid Playa Surf"] },
+    "scoped_filter": { "project_id": "MAD" },
+    "notes": "Multilingual: English query must retrieve a Spanish document (dual-language FTS). Also scoping defect (KLP vs MAD)."
+  },
+  {
+    "id": "klp-apoderados",
+    "question": "¿Quiénes son las personas apoderadas del Grupo 1 de la sociedad?",
+    "lang": "es",
+    "category": "legal",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["personas apoderadas"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["Grupo 1", "Sergio García"] },
+    "scoped_filter": { "project_id": null },
+    "notes": "No project named; model likely omits project filter. Tests cross-project ranking of a high-authority legal doc."
+  },
+  {
+    "id": "bhx-loan-lender",
+    "question": "Who is the lender and who is the borrower in the signed Birmingham (Wave Park) loan agreement?",
+    "lang": "en",
+    "category": "funding",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
+    "scoped_filter": { "project_id": "BHX" },
+    "notes": "Lender = Varia Structured Opportunities Real Estate III; borrower = Wave Park Holdings. GT is correctly under BHX."
+  },
+  {
+    "id": "bhx-capcall-entity",
+    "question": "Which legal entity issues the Birmingham cap calls and what is its company number?",
+    "lang": "en",
+    "category": "funding",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["cap call"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
+    "scoped_filter": { "project_id": "BHX" },
+    "notes": "Borrower entity: Wave Park Holdings (Warwickshire) Ltd, company number 15326333."
+  },
+  {
+    "id": "mad-junta-financing",
+    "question": "¿Qué acordó la junta de socios de Madrid Playa Surf del 24 de febrero de 2026 sobre la operación de financiación?",
+    "lang": "es",
+    "category": "board",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["junta 24.2.26"], "project_id": "MAD", "doc_type": "board", "must_contain": ["financiación"] },
+    "scoped_filter": { "project_id": "MAD" },
+    "notes": "Board resolution (ACTA) authorizing the financing operation + interest-rate derivatives."
+  },
+  {
+    "id": "mad-dec-capitalcall",
+    "question": "¿Qué se trató sobre el capital call de diciembre de 2024 en la reunión quincenal?",
+    "lang": "es",
+    "category": "board",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["quincenal 13-12-2024"], "project_id": "MAD", "doc_type": "board", "must_contain": ["capital call", "diciembre"] },
+    "scoped_filter": { "project_id": "MAD" }
+  },
+  {
+    "id": "mad-balance-2025",
+    "question": "¿Cuál es el total activo del balance de Madrid Playa Surf a cierre de 2025?",
+    "lang": "es",
+    "category": "financial_statements",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["mpscierredef-2025"], "project_id": "MAD", "doc_type": "financial_statements", "must_contain": ["27,031,176", "27"] },
+    "scoped_filter": { "project_id": "MAD" },
+    "notes": "Citation-precision: exact figure 27,031,176.36 (2025) vs 14,001,142.67 (2024). Must not confuse the year."
+  },
+  {
+    "id": "philae-portfolio",
+    "question": "At the fund / portfolio level, which projects currently make up the Gemswell portfolio?",
+    "lang": "en",
+    "category": "cross_project",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["gemswell financials cast", "deck_membership"], "project_id": "PHILAE", "doc_type": "funding", "must_contain": ["Madrid", "Birmingham"] },
+    "scoped_filter": { "project_id": null },
+    "notes": "SCOPING DEFECT: fund-level docs live under PHILAE, which is not even in the chat's project enum (MAD|BHX)."
+  },
+  {
+    "id": "cross-project-legal",
+    "question": "¿Dónde están documentados los pactos de socios y las personas apoderadas del grupo Gemswell?",
+    "lang": "es",
+    "category": "cross_project",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["pacto de socios", "personas apoderadas"], "project_id": "KLP", "doc_type": "legal" },
+    "scoped_filter": { "project_id": null }
+  },
+  {
+    "id": "mad-capex-total",
+    "question": "¿Cuál es el presupuesto total de capex aprobado para Madrid y cuál es la desviación frente al baseline?",
+    "lang": "es",
+    "category": "capex",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "get_capex_summary", "project_id": "MAD" },
+    "notes": "Structured: must call get_capex_summary, not search_documents over engineering drawings."
+  },
+  {
+    "id": "bhx-capex-vs-docs",
+    "question": "What is the construction capex budget for Birmingham?",
+    "lang": "en",
+    "category": "capex",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "get_capex_summary", "project_id": "BHX" },
+    "notes": "Tool-selection / noise test: BHX capex docs are mostly CAD drawings; the answer must come from structured data."
+  },
+  {
+    "id": "bhx-covenant",
+    "question": "What is the current covenant status for Birmingham? Are there any breaches or warnings?",
+    "lang": "en",
+    "category": "covenant",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "get_covenant_status", "project_id": "BHX" }
+  },
+  {
+    "id": "compare-funding",
+    "question": "Compara el estado de financiación (importe comprometido frente a dispuesto) entre Madrid y Birmingham.",
+    "lang": "es",
+    "category": "funding",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "compare_projects", "project_id": null }
+  },
+  {
+    "id": "mad-risks",
+    "question": "What are the top risks for Madrid by severity, and which are escalated?",
+    "lang": "en",
+    "category": "risk",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "get_risk_register", "project_id": "MAD" }
+  },
+  {
+    "id": "mad-runway",
+    "question": "¿Cuál es la posición de tesorería de Madrid en las últimas semanas (inflows vs outflows)?",
+    "lang": "es",
+    "category": "cash_flow",
+    "expected_kind": "structured",
+    "ground_truth": { "tool": "get_cash_runway", "project_id": "MAD" }
+  },
+  {
+    "id": "mad-capex-contradiction",
+    "question": "Is there any discrepancy or contradiction in the reported Madrid capex figures I should be aware of?",
+    "lang": "en",
+    "category": "contradiction",
+    "expected_kind": "structured",
+    "ground_truth": { "must_contain": ["contradic"], "project_id": "MAD" },
+    "notes": "A registered MAD capex contradiction exists (~€57M vs ~€65M). A trustworthy answer surfaces the conflict rather than asserting one figure."
+  },
+  {
+    "id": "zero-portugal",
+    "question": "¿Cuáles son los detalles del proyecto de Gemswell en Lisboa, Portugal?",
+    "lang": "es",
+    "category": "zero_result",
+    "expected_kind": "abstain",
+    "ground_truth": {},
+    "notes": "No such project. Trustworthy behavior: abstain / say no evidence, do NOT hallucinate."
+  },
+  {
+    "id": "zero-crypto",
+    "question": "What is Gemswell's cryptocurrency treasury and hedging policy?",
+    "lang": "en",
+    "category": "zero_result",
+    "expected_kind": "abstain",
+    "ground_truth": {},
+    "notes": "Out of corpus. Must abstain."
+  },
+  {
+    "id": "ambiguous-cost",
+    "question": "¿Cuánto cuesta?",
+    "lang": "es",
+    "category": "ambiguous",
+    "expected_kind": "ambiguous",
+    "ground_truth": {},
+    "notes": "Underspecified (which project? which metric?). Trustworthy behavior: ask to clarify rather than guess."
+  },
+  {
+    "id": "ambiguous-status",
+    "question": "What's the latest status?",
+    "lang": "en",
+    "category": "ambiguous",
+    "expected_kind": "ambiguous",
+    "ground_truth": {},
+    "notes": "Underspecified. Should request clarification."
+  }
+]
