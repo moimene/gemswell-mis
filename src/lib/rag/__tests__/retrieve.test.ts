@@ -48,6 +48,8 @@ describe('retrieveDocuments', () => {
     expect(diagnostics.keywordCount).toBe(2)
     expect(diagnostics.poolCount).toBe(3) // a, b, c (b deduped)
     expect(diagnostics.overlapCount).toBe(1) // b in both
+    expect(diagnostics.vectorFailed).toBe(false) // a successful lane is NEVER failed
+    expect(diagnostics.keywordFailed).toBe(false)
     expect(ranked.map((c) => c.id).sort()).toEqual(['a', 'b', 'c'])
   })
 
@@ -67,6 +69,9 @@ describe('retrieveDocuments', () => {
     const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
     expect(ranked).toEqual([])
     expect(diagnostics.poolCount).toBe(0)
+    // A clean no-match is NOT an outage: both lanes ran and returned empty.
+    expect(diagnostics.vectorFailed).toBe(false)
+    expect(diagnostics.keywordFailed).toBe(false)
   })
 
   it('lets trust tier override raw Cohere relevance', async () => {
@@ -152,6 +157,22 @@ describe('retrieveDocuments — superseded exclusion + degradation diagnostics',
     const { diagnostics } = await retrieveDocuments({ rpc } as never, 'q')
     expect(diagnostics.keywordFailed).toBe(true)
     expect(diagnostics.vectorFailed).toBe(false)
+  })
+
+  it('flags vectorFailed when the vector RPC RETURNS a PostgREST error (does NOT throw)', async () => {
+    // supabase-js .rpc() resolves to { data, error } on a server error (e.g. statement timeout) WITHOUT
+    // throwing — the exact silent-degradation mode that killed retrieval in prod twice. Must set failed.
+    const rpc = vi.fn(async (name: string) => {
+      if (name === 'match_chunks') return { data: null, error: { message: 'canceling statement due to statement timeout' } }
+      if (name === 'keyword_search_chunks') {
+        return { data: [{ id: 'k', document_id: 'dk', content: 'kw', metadata: { review_status: 'approved' }, rank: 0.5 }], error: null }
+      }
+      return { data: [], error: null }
+    })
+    const { ranked, diagnostics } = await retrieveDocuments({ rpc } as never, 'q')
+    expect(diagnostics.vectorFailed).toBe(true)
+    expect(diagnostics.keywordFailed).toBe(false)
+    expect(ranked.map((c) => c.id)).toEqual(['k'])
   })
 
   it('counts unreviewedUsed = needs_review/pending chunks in the FINAL ranked set', async () => {

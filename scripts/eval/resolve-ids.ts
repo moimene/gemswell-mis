@@ -28,7 +28,7 @@ async function main() {
     for (const term of g.ground_truth!.titles!) {
       const { data, error } = await sb
         .from('rag_documents')
-        .select('id, title, project_id, doc_type, authority_score, review_status, lifecycle')
+        .select('id, title, project_id, doc_type, authority_score, review_status, lifecycle, classification_source')
         .ilike('title', `%${term}%`)
         .eq('status', 'indexed')
         .limit(12)
@@ -36,7 +36,11 @@ async function main() {
       for (const d of data || []) {
         if (seen.has(d.id as string)) continue
         seen.add(d.id as string)
-        const flag = d.lifecycle === 'superseded' ? ' ⛔SUPERSEDED' : d.review_status === 'rejected' ? ' ⛔REJECTED' : ''
+        // ⛔ = excluded from retrieval by sql/019 + isExcludedFromRetrieval — must NOT be pinned as ground truth.
+        const flag = d.lifecycle === 'superseded' ? ' ⛔SUPERSEDED'
+          : d.review_status === 'rejected' ? ' ⛔REJECTED'
+          : d.classification_source === 'agent_rejected' ? ' ⛔AGENT-REJECTED'
+          : ''
         console.log(`   ${d.id}  [${d.project_id}/${d.doc_type}/a${d.authority_score}/${d.review_status}]${flag}  ${String(d.title ?? '').slice(0, 68)}`)
       }
     }

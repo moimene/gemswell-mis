@@ -31,7 +31,7 @@ export const TARGETS: MetricTarget[] = [
   { metric: 'documentary.recall_at_5', bucket: 'documentary', current: 0.60, target: 0.80, unit: 'rate', gate: 'soft', higherIsBetter: true, howMeasured: 'run-retrieval.ts recall@5 (cross), by expected_doc_ids when pinned else title' },
   { metric: 'documentary.recall_at_10', bucket: 'documentary', current: 0.60, target: 0.90, unit: 'rate', gate: 'soft', higherIsBetter: true, howMeasured: 'run-retrieval.ts recall@10 = right doc reached the capped pool the model sees' },
   { metric: 'documentary.mrr', bucket: 'documentary', current: 0.475, target: 0.60, unit: 'ratio', gate: 'soft', higherIsBetter: true, howMeasured: 'run-retrieval.ts mean(1/rank) over documentary GT questions' },
-  { metric: 'documentary.precision_at_5', bucket: 'documentary', current: null, target: 0.55, unit: 'rate', gate: 'soft', higherIsBetter: true, howMeasured: 'run-retrieval.ts precision@5 — requires expected_doc_ids (resolve-ids.ts + human pin)' },
+  { metric: 'documentary.precision_at_5', bucket: 'documentary', current: null, target: 0.55, unit: 'rate', gate: 'soft', higherIsBetter: true, howMeasured: 'run-retrieval.ts precision@5 = relevant-in-top-5 / 5 (standard P@k). Requires expected_doc_ids (resolve-ids.ts + human pin). NOTE: recalibrate the 0.55 target after pinning — few-relevant-doc queries cap P@5 below 0.55 by construction.' },
   { metric: 'documentary.grounding', bucket: 'documentary', current: null, target: 0.95, unit: 'rate', gate: 'hard', higherIsBetter: true, howMeasured: 'run-answers.ts deterministic: numeric/date tokens in the answer present verbatim in a source/tool preview (anti-fabrication)' },
 
   // ── Regression guards — the audit §5 strengths must NOT degrade ──
