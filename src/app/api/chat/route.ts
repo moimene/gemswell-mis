@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient, requireUser } from '@/lib/supabase-server'
-import { embedText } from '@/lib/rag/embeddings'
-import { rerankChunks } from '@/lib/rag/rerank'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
-import { rankBySourceTrust } from '@/lib/rag/rank'
+import { retrieveDocuments } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
 
 export const maxDuration = 800
@@ -21,14 +19,6 @@ type ToolResult = {
   degraded?: boolean
   /** search_documents only: at least one retrieved chunk tripped the injection heuristic (F5). */
   injectionFlagged?: boolean
-}
-
-type RetrievedChunk = {
-  id: string
-  document_id: string
-  content: string
-  metadata: Record<string, unknown>
-  similarity?: number
 }
 
 type ToolCallAudit = {
@@ -133,11 +123,6 @@ const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASONING_MO
 // Generous output budget so long analytical answers aren't truncated (user-requested ~15k tokens).
 const CHAT_MAX_TOKENS = Number(process.env.CHAT_MAX_TOKENS || '16000')
 const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
-// Deliberately permissive (recall-first): the vector floor only drops obvious noise; precision is
-// handled downstream by the Cohere reranker + trust-tier ordering (rankBySourceTrust). 0.18 is below
-// the typical gemini-embedding-001 relevant-chunk cosine, so it rarely bites — intentional, not inert.
-// Tighten only with a live service-role probe (anon can't run match_chunks within its 3s timeout).
-const RAG_MATCH_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD || '0.18')
 
 const DOC_TYPE_ALIASES: Record<string, string> = {
   contract: 'legal',
@@ -166,11 +151,6 @@ function firstJoined<T>(value: MaybeJoined<T>): T | null {
 function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = metadata?.[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function isRejectedSource(metadata: Record<string, unknown> | undefined): boolean {
-  return metadataString(metadata, 'review_status') === 'rejected' ||
-    metadataString(metadata, 'classification_source') === 'agent_rejected'
 }
 
 function needsReviewWarning(metadata: Record<string, unknown> | undefined): string {
@@ -445,77 +425,18 @@ async function executeSearchDocuments(
   input: { query: string; project_id?: string; doc_type?: string }
 ): Promise<ToolResult> {
   const supabase = createApiClient()
-  const projectFilter = input.project_id || null
-  const docTypeFilter = normalizeDocTypeFilter(input.doc_type)
+  const { ranked, diagnostics } = await retrieveDocuments(supabase, input.query, {
+    projectFilter: input.project_id || null,
+    docTypeFilter: normalizeDocTypeFilter(input.doc_type),
+  })
+  const degraded = diagnostics.degraded
 
-  // Parallel: vector search + keyword search
-  const [vectorResults, keywordResults] = await Promise.all([
-    (async () => {
-      try {
-        const embedding = await embedText(input.query, { lane: 'interactive' })
-        const { data } = await supabase.rpc('match_chunks', {
-          query_embedding: embedding,
-          match_count: 25,
-          filter_project: projectFilter,
-          filter_doc_type: docTypeFilter,
-          match_threshold: RAG_MATCH_THRESHOLD,
-        })
-        return ((data || []) as RetrievedChunk[]).map((r) => ({
-          id: r.id,
-          document_id: r.document_id,
-          content: r.content,
-          metadata: r.metadata || {},
-          similarity: r.similarity,
-        }))
-      } catch {
-        return []
-      }
-    })(),
-    (async () => {
-      try {
-        const { data } = await supabase.rpc('keyword_search_chunks', {
-          query_text: input.query,
-          filter_project: projectFilter,
-          match_count: 15,
-          filter_doc_type: docTypeFilter,
-        })
-        return ((data || []) as Array<RetrievedChunk & { rank?: number }>)
-          // RPC already applies doc_type; keep this as a defensive belt-and-suspenders
-          .filter((r) => !docTypeFilter || r.metadata?.doc_type === docTypeFilter)
-          .map((r) => ({
-            id: r.id,
-            document_id: r.document_id,
-            content: r.content,
-            metadata: r.metadata || {},
-            similarity: r.rank,
-          }))
-      } catch {
-        return []
-      }
-    })(),
-  ])
-
-  // Merge + dedup by id (vector results take precedence for similarity score)
-  const merged = new Map<string, typeof vectorResults[0]>()
-  for (const r of [...vectorResults, ...keywordResults]) {
-    if (isRejectedSource(r.metadata)) continue
-    if (!merged.has(r.id)) merged.set(r.id, r)
-  }
-
-  const pool = Array.from(merged.values())
-  if (pool.length === 0) {
+  if (ranked.length === 0) {
     return {
       result: 'No relevant documents found. Some documents may have been excluded because their review status is rejected.',
       sources: [],
     }
   }
-
-  // Cohere-rerank the FULL pool (not just top-10) so trust-tier ordering can promote a
-  // high-trust chunk Cohere scored modestly — otherwise Cohere's relevance cut would drop it
-  // before trust is ever considered. Then order by trust tier and take the final top 10.
-  const { chunks: rerankedRaw, degraded } = await rerankChunks(input.query, pool, pool.length)
-  const reranked = rerankedRaw.filter(c => !isRejectedSource(c.metadata))
-  const ranked = rankBySourceTrust(reranked).slice(0, 10)
 
   // Injection heuristic: flag any chunk whose body looks like an instruction aimed at the model (F5).
   const injectionById = new Map<string, boolean>()
@@ -527,7 +448,7 @@ async function executeSearchDocuments(
   const sources: Source[] = ranked.map(c => {
     const src = buildKnowledgeSource({
       id: c.id,
-      documentId: (c as { document_id?: string }).document_id,
+      documentId: c.document_id,
       relevance: c.relevanceScore,
       metadata: c.metadata,
       preview: c.content.slice(0, 200),
