@@ -96,7 +96,12 @@ async function judge(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>):
     const text = resp.content.find((b) => b.type === 'text')?.text ?? ''
     const m = text.match(/\{[\s\S]*\}/)
     if (!m) return null
-    return JSON.parse(m[0]) as Verdict
+    const v = JSON.parse(m[0]) as Verdict
+    // Harden: normalise verdict; if the model omitted/garbled it, infer from the numeric scores.
+    const norm = String((v as { verdict?: unknown }).verdict ?? '').toLowerCase().trim()
+    const avg = (Number(v.faithfulness) + Number(v.citation_precision) + Number(v.completeness)) / 3
+    v.verdict = (['pass', 'weak', 'fail'].includes(norm) ? norm : avg >= 4 ? 'pass' : avg >= 3 ? 'weak' : 'fail') as Verdict['verdict']
+    return v
   } catch (e) {
     console.error('judge failed:', (e as Error).message)
     return null

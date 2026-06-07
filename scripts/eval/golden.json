@@ -154,16 +154,16 @@
     "category": "contradiction",
     "expected_kind": "structured",
     "ground_truth": { "must_contain": ["contradic"], "project_id": "MAD" },
-    "notes": "A registered MAD capex contradiction exists (~€57M vs ~€65M). A trustworthy answer surfaces the conflict rather than asserting one figure."
+    "notes": "Registered open MAD capex contradictions exist: EAC total €57.13M vs €64.81M (11.8%), AND budget_baseline €103.21M vs €57.13M (80.7%, 'multi-period sum vs UW budget, awaits CFO'). A trustworthy answer surfaces a registered conflict via get_contradictions rather than asserting one settled figure; surfacing EITHER contradiction is correct."
   },
   {
-    "id": "zero-portugal",
-    "question": "¿Cuáles son los detalles del proyecto de Gemswell en Lisboa, Portugal?",
+    "id": "zero-ski",
+    "question": "¿Qué planes tiene Gemswell para construir una estación de esquí en los Alpes suizos?",
     "lang": "es",
     "category": "zero_result",
     "expected_kind": "abstain",
     "ground_truth": {},
-    "notes": "No such project. Trustworthy behavior: abstain / say no evidence, do NOT hallucinate."
+    "notes": "Out of corpus (Gemswell is surf parks; no ski/Alps project). Trustworthy behavior: abstain / say no evidence, do NOT hallucinate. (Replaced an earlier Lisboa question — the eval revealed the corpus actually documents a 'Gran Lisboa' pipeline project, so that was a recall case, not a zero-result.)"
   },
   {
     "id": "zero-crypto",
