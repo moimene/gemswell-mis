@@ -210,6 +210,14 @@ describe('fusePool (Reciprocal Rank Fusion)', () => {
     const { pool } = fusePool(vector, keyword, { ...cfg, mode: 'vector_first' })
     expect(pool.map((p) => p.id)).toEqual(['a', 'c']) // superseded x dropped; vector-first order
   })
+
+  it('computes RRF ranks over ALLOWED rows only — an excluded row does not consume a rank slot', () => {
+    const vector = [row('x', { lifecycle: 'superseded' }), row('a')] // x excluded; a is rank 1 among allowed
+    const keyword = [row('a')]
+    const { pool } = fusePool(vector, keyword, { ...cfg, mode: 'rrf' })
+    expect(pool.map((p) => p.id)).toEqual(['a'])
+    expect(pool[0].fusedScore).toBeCloseTo(2 / 61, 6) // a is vrank1 + krank1 → 1/61 + 1/61
+  })
 })
 
 describe('applyRelevanceFloor', () => {
@@ -223,6 +231,11 @@ describe('applyRelevanceFloor', () => {
   })
   it('never empties a non-empty set — keeps the single best chunk', () => {
     expect(applyRelevanceFloor([c('a', 0.3), c('b', 0.1)], 0.9).map((x) => x.id)).toEqual(['a'])
+  })
+  it('protects flagged chunks even when below the floor (trust beats relevance, F1)', () => {
+    // 'hi' is below the 0.5 floor but protected (e.g. high trust tier) → survives; 'lo' is dropped.
+    const out = applyRelevanceFloor([c('hi', 0.2), c('lo', 0.1)], 0.5, (x) => x.id === 'hi')
+    expect(out.map((x) => x.id)).toEqual(['hi'])
   })
 })
 

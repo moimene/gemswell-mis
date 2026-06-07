@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
-import { rankBySourceTrust } from '@/lib/rag/rank'
+import { rankBySourceTrust, trustTier } from '@/lib/rag/rank'
 
 // ─── Shared retrieval core ───────────────────────────────────────────
 // Single source of truth for the documentary retrieval pipeline used by /api/chat's
@@ -113,16 +113,20 @@ export function fusePool(
   keywordResults: RetrievedChunk[],
   config: FusionConfig,
 ): { pool: FusedChunk[]; overlapCount: number } {
+  // Exclude rejected/superseded BEFORE computing ranks, so an excluded row cannot consume a rank slot
+  // and distort an allowed chunk's RRF score (adversarial review). The SQL already excludes these; this
+  // is the defense-in-depth mirror, and overlapCount/ranks are now over genuinely-usable evidence only.
+  const vAllowed = vectorResults.filter((r) => !isExcludedFromRetrieval(r.metadata))
+  const kAllowed = keywordResults.filter((r) => !isExcludedFromRetrieval(r.metadata))
   const vRank = new Map<string, number>()
-  vectorResults.forEach((r, i) => { if (!vRank.has(r.id)) vRank.set(r.id, i + 1) })
+  vAllowed.forEach((r, i) => { if (!vRank.has(r.id)) vRank.set(r.id, i + 1) })
   const kRank = new Map<string, number>()
-  keywordResults.forEach((r, i) => { if (!kRank.has(r.id)) kRank.set(r.id, i + 1) })
+  kAllowed.forEach((r, i) => { if (!kRank.has(r.id)) kRank.set(r.id, i + 1) })
   let overlapCount = 0
   for (const id of vRank.keys()) if (kRank.has(id)) overlapCount++
 
   const merged = new Map<string, FusedChunk>()
-  for (const r of [...vectorResults, ...keywordResults]) {
-    if (isExcludedFromRetrieval(r.metadata)) continue
+  for (const r of [...vAllowed, ...kAllowed]) {
     if (merged.has(r.id)) continue
     const vr = vRank.get(r.id)
     const kr = kRank.get(r.id)
@@ -139,10 +143,16 @@ export function fusePool(
  * set — if everything is below the floor it keeps the single most-relevant chunk so the chat still has its
  * best evidence. `floor <= 0` is a no-op (recall-first default).
  */
-export function applyRelevanceFloor<T extends { relevanceScore?: number }>(chunks: T[], floor: number): T[] {
+export function applyRelevanceFloor<T extends { relevanceScore?: number }>(
+  chunks: T[],
+  floor: number,
+  isProtected?: (c: T) => boolean,
+): T[] {
   if (!(floor > 0)) return chunks
-  const above = chunks.filter((c) => (c.relevanceScore ?? 0) >= floor)
-  if (above.length > 0) return above
+  // A protected chunk (e.g. high trust tier) is NEVER dropped by the floor — relevance must not override
+  // governance (adversarial review F1: trust dominates relevance).
+  const keep = chunks.filter((c) => (isProtected?.(c) ?? false) || (c.relevanceScore ?? 0) >= floor)
+  if (keep.length > 0) return keep
   const best = chunks.slice().sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))[0]
   return best ? [best] : []
 }
@@ -269,8 +279,11 @@ export async function retrieveDocuments(
   const { chunks: rerankedRaw, degraded } = await rerankChunks(query, pool, pool.length)
   const reranked = rerankedRaw.filter((c) => !isExcludedFromRetrieval(c.metadata))
   // Precision floor on the Cohere relevance (WS1-T3) — only on the trustworthy (non-degraded) path,
-  // since degraded scores are normalised approximations, not Cohere relevance.
-  const floored = degraded ? reranked : applyRelevanceFloor(reranked, RAG_RELEVANCE_FLOOR)
+  // since degraded scores are normalised approximations, not Cohere relevance. Trust-aware: never floor
+  // out high-trust (source_of_record / supporting, tier >= 2) evidence (adversarial review F1).
+  const floored = degraded
+    ? reranked
+    : applyRelevanceFloor(reranked, RAG_RELEVANCE_FLOOR, (c) => trustTier(c.metadata) >= 2)
   const ranked = rankBySourceTrust(floored).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
   const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 
