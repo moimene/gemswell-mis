@@ -73,6 +73,7 @@ async function judge(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>):
     '- faithfulness: every material claim is supported by a cited source card or tool result; no invented numbers/names/dates. A confident answer with NO supporting evidence scores 1.',
     '- citation_precision: the cited sources actually support the claims and are the RIGHT documents; citing irrelevant/!=ground-truth docs lowers this.',
     '- completeness: covers what the question asks (without padding).',
+    'STRUCTURED questions: the evidence is the TOOL RESULT, not source cards — source_count=0 is NORMAL for get_capex_summary/get_funding_status/get_covenant_status/get_risk_register/get_cash_runway/compare_projects/get_contradictions and must NOT by itself lower faithfulness or citation_precision. Judge whether the reported figures are consistent with what that structured tool returns; only penalise numbers that look invented relative to the tool call.',
     'Booleans:',
     '- found_ground_truth: did the answer actually use/cite the expected document (titles) OR state the expected fact (must_contain) OR call the expected structured tool? For abstain/ambiguous questions set true if the EXPECTED behaviour happened.',
     '- behavior_correct: documentary→cited the right doc & answered; structured→used the structured tool (not doc search) & gave the figure; abstain→explicitly abstained / said no evidence (did NOT fabricate); ambiguous→asked for clarification instead of guessing.',
@@ -147,7 +148,13 @@ async function main() {
       `tools=[${det.toolNames.join(',')}] proj=[${det.citedProjects.join(',')}]${r.verified ? '' : ' UNVERIFIED'}`
     console.log(line)
     if (v && v.verdict !== 'pass') console.log(`      ↳ ${v.notes}`)
-    return { g, r: { answer: r.answer, sources: r.sources.length, verified: r.verified, model: r.model }, ms, det, verdict: v }
+    const sourceDetail = r.sources.map((s) => ({
+      label: s.label,
+      project: s.documentId ? cache.get(s.documentId)?.project_id ?? null : null,
+      title: s.documentId ? cache.get(s.documentId)?.title ?? null : null,
+      verification: s.verification,
+    }))
+    return { g, r: { answer: r.answer, sourceCount: r.sources.length, sources: sourceDetail, verified: r.verified, model: r.model }, ms, det, verdict: v }
   })
 
   // ── Aggregate ──
