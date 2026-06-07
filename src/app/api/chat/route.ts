@@ -168,6 +168,8 @@ export async function POST(request: NextRequest) {
           degraded: loop.degraded,
           injectionFlagged: loop.injectionFlagged,
           truncated: loop.truncated,
+          retrievalIncomplete: loop.retrievalIncomplete,
+          unreviewedUsed: loop.unreviewedUsed,
           persisted,
         })
       } catch (err: unknown) {
