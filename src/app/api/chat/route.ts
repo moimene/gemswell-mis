@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
         const loop = await runAgentLoop(historyMessages, SYSTEM_PROMPT, anthropic, chatModel, setStage, abort.signal)
         const { text: answer, verified } = await verifyAnswer(
           anthropic,
-          { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls },
+          { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence },
           setStage,
           abort.signal
         )
