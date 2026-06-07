@@ -102,8 +102,9 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
   const reviewSuffix = reviewStatus === 'pending' || reviewStatus === 'needs_review'
     ? ' [SIN REVISAR]'
     : ''
-  // CX-4: the label flows into the model/verifier prompt; keep the filename inert (single line).
-  const label = [projectId, docType, inertLabel(sourceFile)].filter(Boolean).join(' | ') + reviewSuffix
+  // CX-4/CX-7: the label flows into the model/verifier prompt (SOURCE CARDS); keep EVERY component
+  // inert (single line, no control chars) — project_id/doc_type can fall back to untrusted chunk metadata.
+  const label = [inertLabel(projectId), inertLabel(docType), inertLabel(sourceFile)].filter(Boolean).join(' | ') + reviewSuffix
 
   return {
     id: input.id,
