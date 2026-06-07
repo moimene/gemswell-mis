@@ -233,8 +233,8 @@ export default function ChatPage() {
             <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
               Gemswell MIS
             </p>
-            <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900">Asistente documental</h1>
-            <p className="text-sm text-slate-500">Pregunta sobre CapEx, tesorería, financiación o cualquier dato de los proyectos</p>
+            <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900">Chat con documentos</h1>
+            <p className="text-sm text-slate-500">Pregunta al corpus del proyecto y recibe respuestas con fuentes citadas.</p>
           </div>
           {conversationId && (
             <button

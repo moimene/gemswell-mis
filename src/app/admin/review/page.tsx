@@ -121,7 +121,7 @@ function authorityBadge(score: number | null) {
   const color = score >= 80 ? 'text-green-700 bg-green-50' : score >= 60 ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'
   return (
     <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px] font-medium', color)}>
-      Auth {score} · {label}
+      Autoridad {score} · {label}
     </span>
   )
 }
@@ -257,7 +257,7 @@ function CandidateCard({
       {/* Override input */}
       {overrideMode && (
         <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3">
-          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Sobrescribir valor ({candidate.currency})</p>
+          <p className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Corregir valor ({candidate.currency})</p>
           <input
             type="number"
             value={overrideInput}
@@ -269,7 +269,7 @@ function CandidateCard({
             type="text"
             value={overrideReason}
             onChange={e => setOverrideReason(e.target.value)}
-            placeholder="Motivo de la sobrescritura (opcional)"
+            placeholder="Motivo de la corrección (recomendado)"
             className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
           <div className="flex gap-2">
@@ -278,7 +278,7 @@ function CandidateCard({
               disabled={!overrideInput || loading}
               className="flex-1 rounded bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              Confirmar sobrescritura
+              Confirmar corrección
             </button>
             <button
               onClick={() => setOverrideMode(false)}
@@ -299,7 +299,7 @@ function CandidateCard({
             className="flex items-center gap-1.5 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
           >
             <CheckCircle className="h-3.5 w-3.5" />
-            Aceptar
+            Publicar métrica
           </button>
           <button
             onClick={() => handle('reject')}
@@ -307,14 +307,14 @@ function CandidateCard({
             className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             <XCircle className="h-3.5 w-3.5" />
-            Rechazar
+            Rechazar candidata
           </button>
           <button
             onClick={() => setOverrideMode(true)}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            Sobrescribir
+            Corregir valor
           </button>
         </div>
       )}
@@ -518,8 +518,8 @@ export default function ReviewPage() {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Revisión de Evidencia"
-          subtitle="Capa 3 — Revisa candidatos de métricas antes de publicarlos en las fact tables"
+          title="Centro de revisión"
+          subtitle="Aprueba documentos y valida métricas antes de que alimenten el Chat y Tower Control."
         />
         <div className="flex h-48 flex-col items-center justify-center gap-3 rounded-xl border border-red-200 bg-white p-4 shadow-sm">
           <AlertTriangle className="h-8 w-8 text-red-400" />
@@ -553,8 +553,8 @@ export default function ReviewPage() {
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
-        title="Revisión de Evidencia"
-        subtitle="Capa 3 — Revisa candidatos de métricas antes de publicarlos en las fact tables"
+        title="Centro de revisión"
+        subtitle="Aprueba documentos y valida métricas antes de que alimenten el Chat y Tower Control."
         right={
           <button
             onClick={refresh}

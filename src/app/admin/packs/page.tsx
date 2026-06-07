@@ -74,8 +74,9 @@ export default function PacksListPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Packs de Reporting"
-        subtitle="Ciclos de extracción de métricas con información de fuente y evidencia"
+        eyebrow="Gemswell Ventures · MIS · Documentos & Reporting"
+        title="Packs de reporting"
+        subtitle="Entregas periódicas por área. Cada XLS actualiza el corpus documental y genera métricas para Tower Control."
       />
 
       {loadError ? (
