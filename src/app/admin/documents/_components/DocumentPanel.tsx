@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ChevronDown, ChevronRight } from 'lucide-react'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
-import { AUTHORITY_TIER_SCORE } from '@/lib/knowledge/contracts'
+import { AUTHORITY_TIER_SCORE, DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
 import type { AuthorityTier } from '@/lib/knowledge/contracts'
 
 type DocDetail = {
@@ -54,7 +54,7 @@ async function patch(id: string, body: PatchBody): Promise<boolean> {
   toast.success(`Acción «${body.action}» aplicada`); return true
 }
 
-const DOCTYPES = ['legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other', 'unknown']
+const DOCTYPES = DOC_TYPE_OPTIONS
 const TIERS = ['audited', 'executed', 'controller', 'board_pack', 'dd_memo', 'internal', 'narrative', 'unverified']
 
 export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; onClose: () => void; onChanged: () => void }) {

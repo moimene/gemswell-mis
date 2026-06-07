@@ -25,13 +25,19 @@ describe('liftUpFromChunks', () => {
 })
 
 describe('decideReviewStatus', () => {
-  it('approves confident, fully-classified docs (threshold 0.5)', () => {
-    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'audited', confidence: 0.6 })).toBe('approved')
+  it('approves confident, fully-classified docs of a non-high-authority tier (threshold 0.5)', () => {
+    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'board_pack', confidence: 0.6 })).toBe('approved')
+    expect(decideReviewStatus({ doc_type: 'funding', authority_tier: 'internal', confidence: 0.7 })).toBe('approved')
+  })
+  it('F16: high-authority tiers always require human confirmation, even at high confidence', () => {
+    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'audited', confidence: 0.95 })).toBe('needs_review')
+    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'executed', confidence: 0.9 })).toBe('needs_review')
+    expect(decideReviewStatus({ doc_type: 'financial_statements', authority_tier: 'controller', confidence: 0.9 })).toBe('needs_review')
   })
   it('sends ambiguous docs to needs_review', () => {
-    expect(decideReviewStatus({ doc_type: 'other', authority_tier: 'controller', confidence: 0.9 })).toBe('needs_review')
+    expect(decideReviewStatus({ doc_type: 'other', authority_tier: 'board_pack', confidence: 0.9 })).toBe('needs_review')
     expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.9 })).toBe('needs_review')
-    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'audited', confidence: 0.4 })).toBe('needs_review')
+    expect(decideReviewStatus({ doc_type: 'legal', authority_tier: 'board_pack', confidence: 0.4 })).toBe('needs_review')
   })
 })
 

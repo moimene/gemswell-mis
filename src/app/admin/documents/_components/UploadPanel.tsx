@@ -3,9 +3,10 @@ import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Upload, X, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
+import { DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
 
 const PROJECTS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
-const DOCTYPES = ['', 'legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other']
+const DOCTYPES = ['', ...DOC_TYPE_OPTIONS]
 const ACCEPT = '.pdf,.docx,.xlsx,.xls,.csv,.txt,.pptx'
 const MAX_MB = 50
 

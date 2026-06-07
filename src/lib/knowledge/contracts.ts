@@ -33,6 +33,8 @@ export const DOC_TYPES = [
   'cash_flow',
   'bp_model',
   'financial_statements',
+  'annual_accounts',
+  'bank_statement',
   'tax',
   'kyc',
   'dd',
@@ -45,6 +47,10 @@ export const DOC_TYPES = [
 ] as const
 
 export type DocType = typeof DOC_TYPES[number]
+
+/** Doc-type options for filter/classify dropdowns (single source of truth, mirrors live DB values).
+ *  'unknown' is excluded from pickers (no corpus docs carry it; it's a classifier escape hatch). */
+export const DOC_TYPE_OPTIONS: readonly DocType[] = DOC_TYPES.filter(t => t !== 'unknown')
 
 /** Allow-listed project ids (mirrors the project taxonomy; reclassify validates against this). */
 export const PROJECT_IDS = ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'] as const

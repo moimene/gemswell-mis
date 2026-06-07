@@ -23,6 +23,12 @@ export type ListParams = {
   onlyNeedsReview: boolean
   onlyNoMarkdown: boolean
   includeRetired: boolean
+  // F17: a doc_type that isn't in the allowlist must return ZERO results, not silently drop the
+  // filter and return the full list (a wrong-result-not-error compliance hazard).
+  docTypeInvalid: boolean
+  // F18: 'authority' (default) = authority desc; 'review' = review-priority (lowest classifier
+  // confidence first, then oldest) so the deepest-uncertainty docs surface first in the queue.
+  sort: 'authority' | 'review'
 }
 
 function clampInt(v: string | null, min: number, max: number, dflt: number): number {
@@ -40,15 +46,18 @@ export function parseListParams(sp: URLSearchParams): ListParams {
   const channel = sp.get('channel')?.trim() || undefined
   const q = sp.get('q')?.trim() || undefined
   const authorityMinRaw = sp.get('authority_min')
+  const docTypeValid = !!docTypeRaw && (DOC_TYPES as readonly string[]).includes(docTypeRaw)
   return {
     page, pageSize, offset: (page - 1) * pageSize,
     status: statusRaw && REVIEW_STATUSES.includes(statusRaw as ReviewStatus) ? (statusRaw as ReviewStatus) : undefined,
-    doc_type: docTypeRaw && (DOC_TYPES as readonly string[]).includes(docTypeRaw) ? (docTypeRaw as DocType) : undefined,
+    doc_type: docTypeValid ? (docTypeRaw as DocType) : undefined,
+    docTypeInvalid: !!docTypeRaw && !docTypeValid,
     project,
     authorityMin: authorityMinRaw != null ? clampInt(authorityMinRaw, 0, 100, 0) : undefined,
     channel, q,
     onlyNeedsReview: sp.get('onlyNeedsReview') === 'true',
     onlyNoMarkdown: sp.get('onlyNoMarkdown') === 'true',
     includeRetired: sp.get('includeRetired') === 'true',
+    sort: sp.get('sort') === 'review' ? 'review' : 'authority',
   }
 }
