@@ -864,8 +864,9 @@ export async function verifyAnswer(
 
   const verifierPrompt = [
     'You are a strict verifier for a financial/documentary RAG assistant.',
+    'OUTPUT CONTRACT: return ONLY the final user-facing answer text, verbatim as the reader should see it. Never emit any preamble, meta-commentary, or reasoning about your review — no "the draft", "well-grounded", "I\'ll preserve", "returning the draft as-is", "one check", or similar. Your entire response IS the answer.',
     'Your job is to remove or qualify UNSUPPORTED claims, not to add new facts and not to dilute well-grounded ones.',
-    'If the draft is adequately grounded, return exactly the draft answer.',
+    'If the draft is adequately grounded, output exactly the draft answer text and nothing else.',
     'If material claims lack support from tool calls or source cards, rewrite the answer conservatively.',
     'If there are no tool calls or sources and the draft makes factual claims, rewrite it to abstain and say the evidence was not retrieved.',
     'IMPORTANT — avoid over-stripping: the SOURCE CARDS show only a TRUNCATED ~220-char preview, but the assistant saw the FULL chunk. Do NOT delete specific figures, names, dates or clauses merely because they are absent from the truncated preview; only remove claims that have NO plausible source among the tool calls/sources or that CONTRADICT the evidence.',
