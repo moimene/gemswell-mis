@@ -35,7 +35,15 @@ export async function GET() {
     const { data, error } = await sb.rpc('knowledge_corpus_health')
     if (error) throw new Error(error.message)
 
-    const { docs, queue } = data as HealthRpc
+    // F22: the RPC shape is duplicated across migrations 010/011; guard against drift (a renamed/missing
+    // key) instead of silently rendering `undefined` tiles.
+    const d = data as Partial<HealthRpc> | null
+    if (!d?.docs || typeof d.docs.total !== 'number' || !d.queue) {
+      console.error('[corpus/health] unexpected RPC shape:', JSON.stringify(data)?.slice(0, 300))
+      return NextResponse.json({ error: 'Estado del corpus no disponible.' }, { status: 500 })
+    }
+
+    const { docs, queue } = d as HealthRpc
     const health = buildCorpusHealth({
       total: docs.total,
       approved: docs.approved,

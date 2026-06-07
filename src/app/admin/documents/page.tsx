@@ -1,8 +1,10 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, Search, Upload } from 'lucide-react'
+import { toast } from 'sonner'
+import { RefreshCw, Search, Upload, Check, Ban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PageHeader } from '@/components/shared/terminal'
+import { DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './_components/badges'
 import { DocumentPanel } from './_components/DocumentPanel'
 import { CorpusHealth } from './_components/CorpusHealth'
@@ -18,7 +20,7 @@ type ListResp = { items: DocRow[]; page: number; pageSize: number; total: number
 
 const REVIEW_OPTIONS = ['', 'needs_review', 'approved', 'rejected', 'pending']
 const REVIEW_LABELS: Record<string, string> = { needs_review: 'Sin revisar', approved: 'Aprobado', rejected: 'Rechazado', pending: 'Pendiente' }
-const DOCTYPE_OPTIONS = ['', 'legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other', 'unknown']
+const DOCTYPE_OPTIONS = ['', ...DOC_TYPE_OPTIONS]
 const PROJECT_OPTIONS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
 
 export default function DocumentsPage() {
@@ -29,11 +31,14 @@ export default function DocumentsPage() {
   const [loadError, setLoadError] = useState<false | 'auth' | 'error'>(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [showUpload, setShowUpload] = useState(false)
-  const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', authority_min: '', q: '', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false })
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', authority_min: '', q: '', sort: 'authority', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false })
 
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError(false)
+    setChecked(new Set())
     try {
       const sp = new URLSearchParams()
       sp.set('page', String(page)); sp.set('pageSize', '50')
@@ -42,6 +47,7 @@ export default function DocumentsPage() {
       if (filters.project) sp.set('project', filters.project)
       if (filters.authority_min) sp.set('authority_min', filters.authority_min)
       if (filters.q) sp.set('q', filters.q)
+      if (filters.sort === 'review') sp.set('sort', 'review')
       if (filters.onlyNeedsReview) sp.set('onlyNeedsReview', 'true')
       if (filters.onlyNoMarkdown) sp.set('onlyNoMarkdown', 'true')
       if (filters.includeRetired) sp.set('includeRetired', 'true')
@@ -54,7 +60,44 @@ export default function DocumentsPage() {
     } finally { setLoading(false) }
   }, [page, filters])
 
+  function toggleRow(id: string) {
+    setChecked(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  function toggleAll() {
+    setChecked(prev => prev.size === rows.length ? new Set() : new Set(rows.map(r => r.id)))
+  }
+
+  // F18: bulk governance — approve/reject every selected doc via the same atomic per-doc RPC.
+  async function bulkApply(action: 'approve' | 'reject') {
+    if (bulkBusy || checked.size === 0) return
+    if (action === 'reject' && !confirm(`¿Rechazar ${checked.size} documento(s)? Quedarán excluidos del chat.`)) return
+    setBulkBusy(true)
+    const ids = [...checked]
+    let ok = 0, fail = 0
+    for (const id of ids) {
+      try {
+        const r = await fetch(`/api/knowledge/documents/${id}`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action, reason: action === 'reject' ? 'bulk reject' : undefined }),
+        })
+        if (r.ok) ok++; else fail++
+      } catch { fail++ }
+    }
+    setBulkBusy(false)
+    if (ok) toast.success(`${ok} documento(s) ${action === 'approve' ? 'aprobados' : 'rechazados'}.`)
+    if (fail) toast.error(`${fail} fallaron (recarga e inténtalo de nuevo).`)
+    load()
+  }
+
   useEffect(() => { load() }, [load])
+
+  // Deep-link from a chat citation: /admin/documents?doc=<id> opens that document's detail directly
+  // (the panel fetches by id, so it works even when the doc isn't on the current list page). F1.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const doc = new URLSearchParams(window.location.search).get('doc')
+    if (doc) setSelected(doc)
+  }, [])
 
   return (
     <div className="flex h-full">
@@ -98,15 +141,36 @@ export default function DocumentsPage() {
           </select>
           <input value={filters.authority_min} onChange={e => { setPage(1); setFilters(f => ({ ...f, authority_min: e.target.value })) }}
             placeholder="Auth ≥" className="w-20 rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700 placeholder:text-slate-400" />
+          <select value={filters.sort} onChange={e => { setPage(1); setFilters(f => ({ ...f, sort: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700" title="Orden">
+            <option value="authority">Orden: autoridad</option>
+            <option value="review">Orden: prioridad de revisión</option>
+          </select>
+          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNeedsReview} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNeedsReview: e.target.checked })) }} /> Solo sin revisar</label>
           <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNoMarkdown} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNoMarkdown: e.target.checked })) }} /> Sin markdown</label>
           <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.includeRetired} onChange={e => { setPage(1); setFilters(f => ({ ...f, includeRetired: e.target.checked })) }} /> Incluir retirados</label>
         </div>
+
+        {/* F18: bulk governance action bar (appears when rows are selected) */}
+        {checked.size > 0 && (
+          <div className="flex items-center gap-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm">
+            <span className="font-medium text-sky-800">{checked.size} seleccionado(s)</span>
+            <button disabled={bulkBusy} onClick={() => bulkApply('approve')} className="flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+              <Check className="h-3.5 w-3.5" /> Aprobar
+            </button>
+            <button disabled={bulkBusy} onClick={() => bulkApply('reject')} className="flex items-center gap-1 rounded-md bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50">
+              <Ban className="h-3.5 w-3.5" /> Rechazar
+            </button>
+            <button disabled={bulkBusy} onClick={() => setChecked(new Set())} className="text-xs text-slate-500 hover:text-slate-700">Limpiar</button>
+            {bulkBusy && <span className="font-mono text-xs text-slate-400">aplicando…</span>}
+          </div>
+        )}
 
         {/* Tabla */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <th className="px-3 py-2.5"><input type="checkbox" aria-label="Seleccionar todo" checked={rows.length > 0 && checked.size === rows.length} onChange={toggleAll} /></th>
                 <th className="px-3 py-2.5">Título</th>
                 <th className="px-3 py-2.5">Proyecto</th>
                 <th className="px-3 py-2.5">Tipo</th>
@@ -119,7 +183,10 @@ export default function DocumentsPage() {
             <tbody>
               {rows.map(d => (
                 <tr key={d.id} onClick={() => setSelected(d.id)}
-                  className={cn('cursor-pointer border-b border-slate-50 odd:bg-slate-50/30 hover:bg-slate-50', selected === d.id && 'bg-sky-50')}>
+                  className={cn('cursor-pointer border-b border-slate-50 odd:bg-slate-50/30 hover:bg-slate-50', (selected === d.id || checked.has(d.id)) && 'bg-sky-50')}>
+                  <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" aria-label="Seleccionar" checked={checked.has(d.id)} onChange={() => toggleRow(d.id)} />
+                  </td>
                   <td className="max-w-md truncate px-3 py-2.5 font-medium text-slate-800">{d.title ?? '(sin título)'}</td>
                   <td className="px-3 py-2.5 text-slate-600">{d.project_id ?? '—'}</td>
                   <td className="px-3 py-2.5 text-slate-600">{d.doc_type ?? '—'}</td>

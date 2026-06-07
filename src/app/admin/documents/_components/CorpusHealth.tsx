@@ -7,9 +7,11 @@ type Health = {
   retired: number; source_of_record: number; avg_authority: number; pct_markdown: number; pct_source_hash: number
   queue: { total: number; queued: number; processing: number; done: number; error: number }
 }
-const Stat = ({ label, value }: { label: string; value: string | number }) => (
-  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-    <div className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</div>
+const Stat = ({ label, value, hint }: { label: string; value: string | number; hint?: string }) => (
+  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm" title={hint}>
+    <div className="flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">
+      {label}{hint && <span className="cursor-help text-slate-300">ⓘ</span>}
+    </div>
     <div className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-900">{value}</div>
   </div>
 )
@@ -37,7 +39,8 @@ export function CorpusHealth() {
       <Stat label="Sin revisar" value={h.governance.needs_review} />
       <Stat label="Rechazados" value={h.governance.rejected} />
       <Stat label="Retirados" value={h.retired} />
-      <Stat label="Fuente de registro" value={h.source_of_record} />
+      <Stat label="Fuente de registro" value={h.source_of_record}
+        hint="Documentos con autoridad ≥90 Y clasificación humana (human/agent_reviewed/agent_corrected). Es 0 hasta que un revisor humano valide fuentes: el clasificador automático nunca llega aquí por diseño." />
       <Stat label="Autoridad media" value={h.avg_authority.toFixed(1)} />
       <Stat label="% Markdown" value={pct(h.pct_markdown)} />
       <Stat label="% source_hash" value={pct(h.pct_source_hash)} />

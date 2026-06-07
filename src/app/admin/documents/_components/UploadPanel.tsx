@@ -2,39 +2,67 @@
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Upload, X, Loader2 } from 'lucide-react'
+import { createClient } from '@/lib/supabase'
+import { DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
 
 const PROJECTS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
-const DOCTYPES = ['', 'legal', 'board', 'funding', 'capex', 'cash_flow', 'bp_model', 'financial_statements', 'tax', 'kyc', 'dd', 'asset_management', 'monitoring', 'correspondence', 'general', 'other']
+const DOCTYPES = ['', ...DOC_TYPE_OPTIONS]
 const ACCEPT = '.pdf,.docx,.xlsx,.xls,.csv,.txt,.pptx'
+const MAX_MB = 50
 
-/** Browser upload → governed ingest (POST /api/knowledge/upload). The doc is parsed, classified,
- *  chunked, embedded and indexed, then appears in the list (typically as "needs_review"). */
+/** Browser upload → governed ingest. The raw file is PUT directly to Storage via a signed URL
+ *  (bypassing the serverless body cap, F3), then ingested server-side: parsed, classified, chunked,
+ *  embedded and indexed; it then appears in the list (typically as "needs_review"). */
 export function UploadPanel({ onClose, onUploaded }: { onClose: () => void; onUploaded: () => void }) {
   const [file, setFile] = useState<File | null>(null)
   const [project, setProject] = useState('')
   const [docType, setDocType] = useState('')
   const [busy, setBusy] = useState(false)
+  const [stage, setStage] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function submit() {
     if (!file || busy) return
+    if (file.size > MAX_MB * 1024 * 1024) { toast.error(`El archivo supera ${MAX_MB} MB`); return }
+    if (file.size === 0) { toast.error('El archivo está vacío'); return }
     setBusy(true)
-    const fd = new FormData()
-    fd.append('file', file)
-    if (project) fd.append('project_id', project)
-    if (docType) fd.append('doc_type', docType)
     try {
-      const r = await fetch('/api/knowledge/upload', { method: 'POST', body: fd })
+      // 1) signed upload URL
+      setStage('Preparando subida…')
+      const signRes = await fetch('/api/knowledge/upload/sign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName: file.name }),
+      })
+      const sign = await signRes.json().catch(() => ({}))
+      if (signRes.status === 401) { toast.error('Sesión expirada — vuelve a iniciar sesión'); return }
+      if (!signRes.ok) { toast.error(sign.error || 'No se pudo preparar la subida'); return }
+
+      // 2) PUT the raw file straight to Storage (no serverless body limit)
+      setStage('Subiendo archivo…')
+      const supabase = createClient()
+      const up = await supabase.storage.from(sign.bucket).uploadToSignedUrl(sign.path, sign.token, file)
+      if (up.error) { toast.error(`Fallo al subir a Storage: ${up.error.message}`); return }
+
+      // 3) server-side ingest from the stored object
+      setStage('Procesando (parse · clasificación · embeddings)…')
+      const r = await fetch('/api/knowledge/upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storagePath: sign.path, fileName: file.name, project_id: project || undefined, doc_type: docType || undefined }),
+      })
       const j = await r.json().catch(() => ({}))
       if (r.status === 401) { toast.error('Sesión expirada — vuelve a iniciar sesión'); return }
       if (!r.ok) { toast.error(j.error || 'No se pudo procesar el documento'); return }
       toast.success(`«${j.file}» ingestado: ${j.chunks} fragmentos${j.reused ? ' (re-ingesta)' : ''}. Queda en revisión.`)
+      if (!j.reused && j.duplicateTitleCount > 0) {
+        toast.warning(`Aviso: ya existían ${j.duplicateTitleCount} documento(s) con este nombre en el corpus.`)
+      }
       onUploaded()
       onClose()
     } catch {
       toast.error('Fallo de red al subir el documento')
     } finally {
       setBusy(false)
+      setStage('')
     }
   }
 
@@ -46,7 +74,7 @@ export function UploadPanel({ onClose, onUploaded }: { onClose: () => void; onUp
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Archivo (PDF, DOCX, XLSX, CSV, TXT · ≤25 MB)</label>
+          <label className="font-mono text-[10px] font-bold uppercase tracking-widest text-slate-400">Archivo (PDF, DOCX, XLSX, CSV, TXT · ≤50 MB)</label>
           <input
             ref={inputRef}
             type="file"
@@ -79,7 +107,7 @@ export function UploadPanel({ onClose, onUploaded }: { onClose: () => void; onUp
       </div>
       {busy && (
         <p className="mt-2 font-mono text-[11px] text-slate-500">
-          Parseando, clasificando y generando embeddings… Un documento grande puede tardar 1–2 min. No cierres la página.
+          {stage || 'Procesando…'} Un documento grande puede tardar 1–2 min. No cierres la página.
         </p>
       )}
     </div>

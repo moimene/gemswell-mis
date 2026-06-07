@@ -4,8 +4,11 @@ import { reconstructMarkdown } from '@/lib/knowledge/markdown-reconstruct'
 import { computeGovernanceAction, InvalidTransitionError } from '@/lib/knowledge/governance-actions'
 import type { DocGovernanceState, GovernanceAction, ReclassifyFields } from '@/lib/knowledge/contracts'
 
-function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : 'Internal server error'
+// F11: log the real DB error server-side, return a generic message (never leak column/enum/constraint
+// names to the client).
+function internalError(context: string, err: unknown): NextResponse {
+  console.error(`[knowledge/documents/:id] ${context}:`, err instanceof Error ? err.message : err)
+  return NextResponse.json({ error: 'Error interno al procesar la solicitud.' }, { status: 500 })
 }
 
 const DETAIL_COLUMNS = `
@@ -24,7 +27,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const { data: doc, error: docErr } = await supabase
       .from('rag_documents').select(DETAIL_COLUMNS).eq('id', id).maybeSingle()
-    if (docErr) return NextResponse.json({ error: docErr.message }, { status: 500 })
+    if (docErr) return internalError('detail fetch', docErr)
     if (!doc) return NextResponse.json({ error: 'document not found' }, { status: 404 })
 
     // F8: cap the chunk fetch so a pathological doc (some have thousands of chunks) cannot
@@ -51,7 +54,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       markdown: { source: doc.md_path ? 'artifact_path' : 'reconstructed', content: markdown },
     })
   } catch (err: unknown) {
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
+    return internalError('handler', err)
   }
 }
 
@@ -82,7 +85,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const supabase = createApiClient()
     const { data: current, error: curErr } = await supabase
       .from('rag_documents').select(GOV_COLS).eq('id', id).maybeSingle()
-    if (curErr) return NextResponse.json({ error: curErr.message }, { status: 500 })
+    if (curErr) return internalError('governance fetch', curErr)
     if (!current) return NextResponse.json({ error: 'document not found' }, { status: 404 })
 
     // supersede needs the old doc's state
@@ -91,7 +94,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (!body.supersedesId) return NextResponse.json({ error: 'supersedesId required' }, { status: 400 })
       const { data: oldDoc, error: oldErr } = await supabase
         .from('rag_documents').select(GOV_COLS).eq('id', body.supersedesId).maybeSingle()
-      if (oldErr) return NextResponse.json({ error: oldErr.message }, { status: 500 })
+      if (oldErr) return internalError('supersede fetch', oldErr)
       if (!oldDoc) return NextResponse.json({ error: 'superseded document not found' }, { status: 404 })
       supersede = { oldId: body.supersedesId, oldDoc: oldDoc as unknown as DocGovernanceState }
     }
@@ -121,15 +124,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (rpcErr) {
       const code = (rpcErr as { code?: string }).code
       if (code === 'P0002') return NextResponse.json({ error: 'document not found' }, { status: 404 })
-      // 40001 version conflict, 23505 double-supersede, 22023 self-supersede, 40P01 deadlock — all retryable
-      if (code === '40001' || code === '23505' || code === '22023' || code === '40P01')
-        return NextResponse.json({ error: rpcErr.message }, { status: 409 })
+      // Conflicts (retryable) get a clean, user-facing message instead of the raw RAISE text (F11).
+      if (code === '40001') return NextResponse.json({ error: 'El documento cambió mientras lo editabas. Recarga e inténtalo de nuevo.' }, { status: 409 })
+      if (code === '23505') return NextResponse.json({ error: 'Ese documento ya ha sido sustituido.' }, { status: 409 })
+      if (code === '22023') return NextResponse.json({ error: 'Un documento no puede sustituirse a sí mismo.' }, { status: 409 })
+      if (code === '40P01') return NextResponse.json({ error: 'Conflicto temporal de concurrencia. Inténtalo de nuevo.' }, { status: 409 })
       if (code === '22P02' || code === '23514') return NextResponse.json({ error: 'invalid field value' }, { status: 400 })
-      return NextResponse.json({ error: rpcErr.message }, { status: 500 })
+      return internalError('governance rpc', rpcErr)
     }
 
     return NextResponse.json({ ok: true, action: body.action, patch: result.patch, related: result.related ?? null })
   } catch (err: unknown) {
-    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 })
+    return internalError('handler', err)
   }
 }
