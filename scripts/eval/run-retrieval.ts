@@ -8,8 +8,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  getSupabase, loadGolden, resolveDocMeta, firstMatchRank, hitAtK, mean, pct, pad, padL,
-  type Golden, type DocMeta,
+  getSupabase, loadGolden, resolveDocMeta, firstMatchRank, firstMatchRankById, precisionAtK,
+  hitAtK, mean, pct, pad, padL, type Golden, type DocMeta,
 } from './_harness'
 import { retrieveDocuments } from '../../src/lib/rag/retrieve'
 
@@ -24,6 +24,10 @@ type RunOut = {
   overlapCount: number
   degraded: boolean
   rank: number
+  /** How `rank` was scored: 'id' (pinned expected_doc_ids — honest) > 'title' (substring — optimistic). */
+  scoredBy: 'id' | 'title' | 'none'
+  /** precision@5 by pinned ids; null when the case is not yet id-pinned. */
+  precisionAt5: number | null
   topTitles: { title: string | null; project_id: string | null; doc_type: string | null; authority: number | null; review: string | null }[]
 }
 
@@ -42,12 +46,19 @@ async function runOne(
   const ms = Date.now() - t0
   await resolveDocMeta(sb, ranked.map((r) => r.document_id), cache)
   const rankedTitles = ranked.map((r) => cache.get(r.document_id)?.title)
-  const rank = firstMatchRank(rankedTitles, g.ground_truth?.titles)
+  const rankedDocIds = ranked.map((r) => r.document_id)
+  // Prefer honest id-match (pinned expected_doc_ids); fall back to optimistic title substring only when unpinned.
+  const expectedIds = g.ground_truth?.expected_doc_ids
+  const rankById = firstMatchRankById(rankedDocIds, expectedIds)
+  const rankByTitle = firstMatchRank(rankedTitles, g.ground_truth?.titles)
+  const rank = rankById || rankByTitle
+  const scoredBy: 'id' | 'title' | 'none' = expectedIds?.length ? 'id' : g.ground_truth?.titles?.length ? 'title' : 'none'
+  const precisionAt5 = precisionAtK(rankedDocIds, expectedIds, 5)
   const topTitles = ranked.slice(0, 5).map((r) => {
     const m = cache.get(r.document_id)
     return { title: m?.title ?? null, project_id: m?.project_id ?? null, doc_type: m?.doc_type ?? null, authority: m?.authority_score ?? null, review: m?.review_status ?? null }
   })
-  return { mode, ms, ...diagnostics, rank, topTitles }
+  return { mode, ms, ...diagnostics, rank, scoredBy, precisionAt5, topTitles }
 }
 
 function hasScoped(g: Golden): boolean {
@@ -94,7 +105,7 @@ async function main() {
     return mean(rows.map((r) => (r.rank ? 1 / r.rank : 0)))
   }
 
-  console.log('\n── RECALL@k (documentary questions, by title) ──')
+  console.log('\n── RECALL@k (documentary questions, by id when pinned else title) ──')
   console.log(`             ${K_VALUES.map((k) => padL('@' + k, 6)).join('')}   MRR`)
   for (const mode of ['cross', 'scoped'] as const) {
     const rec = K_VALUES.map((k) => { const { hits, total } = recall(mode, k); return padL(pct(hits, total), 6) }).join('')
@@ -102,6 +113,13 @@ async function main() {
     if (!scopedHasAny) continue
     console.log(`  ${pad(mode, 8)} ${rec}   ${mrr(mode).toFixed(3)}`)
   }
+
+  // Precision@5 (only over id-pinned cases) + honesty footer about the scoring mode.
+  const pinned = docQs.filter((r) => r.cross.scoredBy === 'id')
+  const p5vals = pinned.map((r) => r.cross.precisionAt5).filter((x): x is number => x != null)
+  const titleOnly = docQs.filter((r) => r.cross.scoredBy !== 'id').length
+  console.log(`  precision@5 ${p5vals.length ? mean(p5vals).toFixed(3) : 'n/a'} (over ${pinned.length} id-pinned cases)`)
+  console.log(`  ⚠ title-only (optimistic) cases: ${titleOnly}/${docQs.length} — pin via resolve-ids.ts → expected_doc_ids to make precision/recall honest`)
 
   const allCross = results.map((r) => r.cross)
   console.log('\n── POOL / LATENCY (all questions, cross) ──')
