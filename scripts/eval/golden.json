@@ -5,7 +5,7 @@
     "lang": "es",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["29 de junio de 2023", "Madrid Playa Surf"] },
+    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["29 de junio de 2023", "Madrid Playa Surf"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "SCOPING DEFECT: the most authoritative legal doc lives under project_id=KLP (Kelpa HoldCo), but the query names Madrid so the model scopes to MAD and hard-filters it out."
   },
@@ -15,7 +15,7 @@
     "lang": "en",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["2023", "Madrid Playa Surf"] },
+    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["2023", "Madrid Playa Surf"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "Multilingual: English query must retrieve a Spanish document (dual-language FTS). Also scoping defect (KLP vs MAD)."
   },
@@ -25,7 +25,7 @@
     "lang": "es",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["personas apoderadas"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["Grupo 1", "Sergio García"] },
+    "ground_truth": { "expected_doc_ids": ["7610f984-707f-4b91-9224-3e1b7ac05665", "d1b95f6c-4575-40ca-b071-68a358651051"], "titles": ["personas apoderadas"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["Grupo 1", "Sergio García"] },
     "scoped_filter": { "project_id": null },
     "notes": "No project named; model likely omits project filter. Tests cross-project ranking of a high-authority legal doc."
   },
@@ -35,7 +35,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
+    "ground_truth": { "expected_doc_ids": ["1094af8d-4d39-435a-80dd-e5cdc98305f4"], "titles": ["loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Lender = Varia Structured Opportunities Real Estate III; borrower = Wave Park Holdings. GT is correctly under BHX."
   },
@@ -45,7 +45,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["sh01"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
+    "ground_truth": { "expected_doc_ids": ["51a1444e-50a3-4912-8aa4-90c755e089c0", "18675f0e-336c-4679-9761-32d89f491c09", "a5e4be3c-2c80-4434-a1e5-c7993405a3d4", "c1e01aca-0f8b-49f2-8109-570122d87e4b", "52bd4f56-6ded-416d-bd6e-3c24d5b53142", "ae03e20c-ed46-4efe-b132-524acf049562"], "titles": ["sh01"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Borrower entity: Wave Park Holdings (Warwickshire) Ltd, company number 15326333."
   },
@@ -55,7 +55,7 @@
     "lang": "es",
     "category": "board",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["junta 24.2.26"], "project_id": "MAD", "doc_type": "board", "must_contain": ["financiación"] },
+    "ground_truth": { "expected_doc_ids": ["0b504142-132c-471d-b368-3f2fb2bc4bf6"], "titles": ["junta 24.2.26"], "project_id": "MAD", "doc_type": "board", "must_contain": ["financiación"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "Board resolution (ACTA) authorizing the financing operation + interest-rate derivatives."
   },
@@ -65,7 +65,7 @@
     "lang": "es",
     "category": "board",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["quincenal 13-12-2024"], "project_id": "MAD", "doc_type": "board", "must_contain": ["capital call", "diciembre"] },
+    "ground_truth": { "expected_doc_ids": ["04f98e6d-202a-443d-a69a-8644b103bd7e"], "titles": ["quincenal 13-12-2024"], "project_id": "MAD", "doc_type": "board", "must_contain": ["capital call", "diciembre"] },
     "scoped_filter": { "project_id": "MAD" }
   },
   {
@@ -74,7 +74,7 @@
     "lang": "es",
     "category": "financial_statements",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["mpscierredef-2025"], "project_id": "MAD", "doc_type": "financial_statements", "must_contain": ["27,031,176"] },
+    "ground_truth": { "expected_doc_ids": ["9e948cdf-54b8-4427-ab7d-84d08a698bf1"], "titles": ["mpscierredef-2025"], "project_id": "MAD", "doc_type": "financial_statements", "must_contain": ["27,031,176"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "Citation-precision: exact figure 27,031,176.36 (2025) vs 14,001,142.67 (2024). Must not confuse the year."
   },
@@ -84,7 +84,7 @@
     "lang": "en",
     "category": "cross_project",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["gemswell financials cast", "deck_membership"], "project_id": "PHILAE", "doc_type": "funding", "must_contain": ["Madrid", "Birmingham"] },
+    "ground_truth": { "expected_doc_ids": ["d7deb190-3406-4e07-94c0-8e3c66571c9e", "5da87f16-3c4f-40d7-a50c-2b098e5fb859", "5ab43a70-34b8-493c-b6a1-147958a256bd", "7e5a113f-9797-4e66-a761-cacfab5d91ba"], "titles": ["gemswell financials cast", "deck_membership"], "project_id": "PHILAE", "doc_type": "funding", "must_contain": ["Madrid", "Birmingham"] },
     "scoped_filter": { "project_id": null },
     "notes": "SCOPING DEFECT: fund-level docs live under PHILAE, which is not even in the chat's project enum (MAD|BHX)."
   },
@@ -94,7 +94,7 @@
     "lang": "es",
     "category": "cross_project",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["pacto de socios", "personas apoderadas"], "project_id": "KLP", "doc_type": "legal" },
+    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5", "7610f984-707f-4b91-9224-3e1b7ac05665", "d1b95f6c-4575-40ca-b071-68a358651051"], "titles": ["pacto de socios", "personas apoderadas"], "project_id": "KLP", "doc_type": "legal" },
     "scoped_filter": { "project_id": null }
   },
   {
