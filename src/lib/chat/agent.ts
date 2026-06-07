@@ -254,7 +254,7 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        project_id: { type: 'string', enum: ['MAD', 'BHX'], description: 'Optional project filter for corpus status.' },
+        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'], description: 'Optional entity filter for corpus status (MAD/BHX projects or KLP/PHILAE/GVF holding entities).' },
       },
     },
   },
