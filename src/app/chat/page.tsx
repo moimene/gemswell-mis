@@ -1,6 +1,7 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
 import { formatToolCall } from '@/lib/chat/tool-call-display'
+import { citationPage, hasStoredOriginal, originalDownloadHref } from '@/lib/chat/citation-link'
 
 // Mirror of ToolCallAudit (kept local so this client page never imports server-only agent.ts at runtime).
 type ToolCall = {
@@ -440,6 +441,10 @@ export default function ChatPage() {
                         const flagged = src.metadata?.injection_flagged === true
                         const unreviewed = src.metadata?.review_status === 'needs_review' || src.metadata?.review_status === 'pending'
                         const label = src.label || sourceText(src.metadata?.source_label) || sourceText(src.metadata?.source_file) || 'documento'
+                        // Fase 5: a citation resolves to a page (WS2-T4/023) and, when the original is in
+                        // Storage, opens the real PDF at that page via the signed-download endpoint.
+                        const page = citationPage(src.metadata)
+                        const canOpenOriginal = hasStoredOriginal(src.metadata) && !!src.documentId
                         return (
                           <div key={j} className={`text-xs rounded-md p-2.5 border ${flagged ? 'bg-red-50/40 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
                             <div className="flex items-center gap-2 mb-1">
@@ -474,6 +479,21 @@ export default function ChatPage() {
                               <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
                                 {VERIFICATION_LABELS[src.verification || 'unverified']}
                               </span>
+                              {page != null && (
+                                <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100">
+                                  pág {page}
+                                </span>
+                              )}
+                              {canOpenOriginal && (
+                                <a
+                                  href={originalDownloadHref(src.documentId!, page)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 border border-indigo-100 hover:bg-indigo-100"
+                                >
+                                  abrir original{page != null ? ` (pág ${page})` : ''}
+                                </a>
+                              )}
                               {unreviewed && (
                                 <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 border border-amber-100">
                                   sin revisar
