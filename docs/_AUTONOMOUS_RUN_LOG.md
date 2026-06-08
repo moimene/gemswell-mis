@@ -27,6 +27,7 @@ _(none yet — table filled as deploys happen)_
 
 | # | When | What | Net (probe / smoke) | Live verify | Rollback command |
 |---|------|------|---------------------|-------------|------------------|
+| 1 | 2026-06-08 | **Deploy Fase 3 code** to prod (merge `agent/autonomous-f3-f8` → main `d70f39c`, push → Vercel auto-deploy). Page provenance + OCR(off) + embedding_model. NO migration applied. | `next build` green + 150/150 tests + **Ronda 2: 3 independent opus reviewers unanimous SAFE-TO-DEPLOY** (blast radius proven ingest-only; chat read path byte-identical; SQL files inert on deploy; OCR double-gated off). | ✅ Vercel deployment `mekk5y5r4` **Ready** (30s build, Production); prod alias serves it: `/login`→200, `/`→307→login. Read path byte-identical by construction → no retrieval regression possible. **No rollback triggered.** | `git revert -m 1 d70f39c && git push origin main` (re-deploys prev build 3e6cde5). New chunks' extra jsonb metadata keys are inert after revert (no DB cleanup). |
 
 ## PENDIENTE USUARIO (action needs a net the agent can't mount, or needs a secret/dashboard)
 | Item | Why pending | Exact apply + verify + rollback |
