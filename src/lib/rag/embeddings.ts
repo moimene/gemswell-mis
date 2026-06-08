@@ -233,7 +233,7 @@ function isSepRow(l: string): boolean {
  * if no genuine table (>=3 rows with a separator second row) is present, so the caller falls through.
  */
 function tryMarkdownTableChunk(text: string, base: ChunkMetadata): Chunk[] {
-  const lines = text.split('\n')
+  const lines = text.split(/\r?\n/) // tolerate CRLF — don't leak \r into chunk content (review F2)
   type Seg = { type: 'table' | 'text'; lines: string[] }
   const segs: Seg[] = []
   let i = 0
@@ -242,8 +242,12 @@ function tryMarkdownTableChunk(text: string, base: ChunkMetadata): Chunk[] {
     if (isPipeRow(lines[i])) {
       const run: string[] = []
       while (i < lines.length && isPipeRow(lines[i])) { run.push(lines[i]); i++ }
-      if (run.length >= 3 && isSepRow(run[1])) { segs.push({ type: 'table', lines: run }); sawTable = true }
-      else segs.push({ type: 'text', lines: run }) // pipe-ish but not a real table — treat as prose
+      // The separator may sit at row 1 OR row 2 (a caption/title row, or a 2-row header above it — both
+      // common LlamaParse shapes). Treat as a table when a separator is in the first 3 rows with ≥1 data
+      // row after it; else hand the run to the prose path (review F1). (sepIdx<0 fails the >=1 test.)
+      const sepIdx = run.findIndex((r, k) => k >= 1 && k <= 2 && isSepRow(r))
+      if (sepIdx >= 1 && run.length >= sepIdx + 2) { segs.push({ type: 'table', lines: run }); sawTable = true }
+      else segs.push({ type: 'text', lines: run })
     } else {
       const run: string[] = []
       while (i < lines.length && !isPipeRow(lines[i])) { run.push(lines[i]); i++ }
@@ -267,10 +271,13 @@ function tryMarkdownTableChunk(text: string, base: ChunkMetadata): Chunk[] {
 /** Chunk one markdown table block: header + separator repeat on EVERY fragment; a data row is atomic
  *  (never split, even if a single oversized row exceeds MAX_CHUNK_SIZE). */
 function chunkTableBlock(rows: string[], base: ChunkMetadata): Chunk[] {
-  const header = rows[0]
-  const sep = isSepRow(rows[1]) ? rows[1] : ''
-  const prefix = sep ? `${header}\n${sep}` : header
-  const dataRows = rows.slice(sep ? 2 : 1)
+  // Everything up to AND INCLUDING the separator row is the repeated "prefix" (caption + header(s) + sep),
+  // so caption-row / multi-row-header tables keep their header on every fragment (review F1). A run with
+  // no separator in the first 3 rows falls back to just rows[0] as the header.
+  const sepIdx = rows.findIndex((r, k) => k >= 1 && k <= 2 && isSepRow(r))
+  const prefixEnd = sepIdx >= 1 ? sepIdx : 0
+  const prefix = rows.slice(0, prefixEnd + 1).join('\n')
+  const dataRows = rows.slice(prefixEnd + 1)
   const chunks: Chunk[] = []
   let cur: string[] = []
   let curLen = prefix.length

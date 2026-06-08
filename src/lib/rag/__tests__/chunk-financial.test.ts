@@ -55,4 +55,25 @@ describe('chunkFinancialContent — markdown pipe-table awareness (audit A1)', (
     expect(chunks.length).toBeGreaterThanOrEqual(1)
     expect(chunks[0].metadata.chunk_type).toBe('narrative')
   })
+
+  it('handles a caption row above the header (separator at row 2) — still table-aware (review F1)', () => {
+    const caption = '| Presupuesto consolidado del grupo 2024-2026 |'
+    const text = [caption, HEADER, SEP, ...Array.from({ length: 50 }, (_, i) =>
+      `| Partida presupuestaria numero ${i} con descripcion larga | 1,234,567 | 2,345,678 | 3,456,789 | comentario detallado de la partida ${i} |`)].join('\n')
+    const chunks = chunkFinancialContent(text)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) {
+      expect(c.content).toContain(HEADER) // header repeated despite the caption pushing the separator to row 2
+      for (const l of pipeLines(c.content)) expect(l.trim().endsWith('|'), `broken row: ${l}`).toBe(true)
+    }
+    // all 50 data rows conserved exactly once
+    const data = chunks.flatMap((c) => pipeLines(c.content)).filter((l) => l.includes('Partida'))
+    expect(data.length).toBe(50)
+  })
+
+  it('strips CR from CRLF input so no raw \\r leaks into chunk content (review F2)', () => {
+    const chunks = chunkFinancialContent(pipeTable(40).replace(/\n/g, '\r\n'))
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) expect(c.content.includes('\r')).toBe(false)
+  })
 })
