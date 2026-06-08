@@ -65,40 +65,50 @@ async function main() {
     return
   }
 
-  let q = sb.from('rag_documents').select('id, title, authority_tier, current_version')
-    .eq('review_status', 'needs_review').order('id', { ascending: true })
-  if (LIMIT) q = q.limit(LIMIT)
-  const { data: docs, error } = await q
-  if (error) throw new Error(error.message)
-
+  // Cursor-paginate by id over ALL needs_review docs (PostgREST caps a select at 1000 rows). Ordering by
+  // id and advancing the cursor means each doc is processed exactly once even though approving removes it
+  // from the needs_review set mid-pass.
   const tally = { approve: 0, keep: 0, classify_failed: 0 }
   let applied = 0
-  for (const doc of docs ?? []) {
-    const sample = await contentSample(doc.id as string)
-    let decisionApprove = false
-    try {
-      const cls = await classifyDocument({ title: (doc.title as string) ?? '', sample, dmsFolder: null }, anthropic)
-      if (!cls) { tally.classify_failed++; continue }
-      const d = triageNeedsReview(
-        { doc_type: cls.result.doc_type, authority_tier: cls.result.authority_tier, confidence: cls.result.confidence },
-        { authority_tier: doc.authority_tier as AuthorityTier },
-      )
-      decisionApprove = d.action === 'approve'
-      tally[decisionApprove ? 'approve' : 'keep']++
-    } catch (e) {
-      tally.classify_failed++
-      continue
-    }
-    if (decisionApprove && APPLY) {
-      const { error: e2 } = await sb.rpc('apply_document_governance', {
-        p_doc_id: doc.id, p_patch: { review_status: 'approved' }, p_expected_version: doc.current_version,
-        p_events: [{ document_id: doc.id, action: 'triage_approve', field: 'review_status', old_value: 'needs_review', new_value: 'approved', actor: 'admin:console', reason: REASON }],
-      })
-      if (!e2) { applied++; if (applied % 50 === 0) console.log(`  approved ${applied}…`) }
-      else console.error(`  apply ${doc.id} failed: ${e2.message}`)
+  let processed = 0
+  let lastId = ''
+  while (!(LIMIT && processed >= LIMIT)) {
+    const pageSize = LIMIT ? Math.min(1000, LIMIT - processed) : 1000
+    const { data: docs, error } = await sb.from('rag_documents')
+      .select('id, title, authority_tier, current_version')
+      .eq('review_status', 'needs_review').gt('id', lastId)
+      .order('id', { ascending: true }).limit(pageSize)
+    if (error) throw new Error(error.message)
+    if (!docs || docs.length === 0) break
+    for (const doc of docs) {
+      lastId = doc.id as string
+      processed++
+      const sample = await contentSample(doc.id as string)
+      let decisionApprove = false
+      try {
+        const cls = await classifyDocument({ title: (doc.title as string) ?? '', sample, dmsFolder: null }, anthropic)
+        if (!cls) { tally.classify_failed++; continue }
+        const d = triageNeedsReview(
+          { doc_type: cls.result.doc_type, authority_tier: cls.result.authority_tier, confidence: cls.result.confidence },
+          { authority_tier: doc.authority_tier as AuthorityTier },
+        )
+        decisionApprove = d.action === 'approve'
+        tally[decisionApprove ? 'approve' : 'keep']++
+      } catch {
+        tally.classify_failed++
+        continue
+      }
+      if (decisionApprove && APPLY) {
+        const { error: e2 } = await sb.rpc('apply_document_governance', {
+          p_doc_id: doc.id, p_patch: { review_status: 'approved' }, p_expected_version: doc.current_version,
+          p_events: [{ document_id: doc.id, action: 'triage_approve', field: 'review_status', old_value: 'needs_review', new_value: 'approved', actor: 'admin:console', reason: REASON }],
+        })
+        if (!e2) { applied++; if (applied % 50 === 0) console.log(`  approved ${applied}…`) }
+        else console.error(`  apply ${doc.id} failed: ${e2.message}`)
+      }
     }
   }
-  console.log(`DECISIONS over ${docs?.length ?? 0} docs: approve=${tally.approve} keep=${tally.keep} classify_failed=${tally.classify_failed}`)
+  console.log(`DECISIONS over ${processed} docs: approve=${tally.approve} keep=${tally.keep} classify_failed=${tally.classify_failed}`)
   if (!APPLY) console.log('DRY-RUN — pass --apply to approve the auto-approvable ones.')
   else console.log(`applied ${applied} approvals`)
   const after = await counts(); console.log(`AFTER: needs_review=${after.needs_review} approved=${after.approved}`)
