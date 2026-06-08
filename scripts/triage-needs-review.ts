@@ -71,7 +71,7 @@ async function main() {
   const tally = { approve: 0, keep: 0, classify_failed: 0 }
   let applied = 0
   let processed = 0
-  let lastId = ''
+  let lastId = '00000000-0000-0000-0000-000000000000' // min uuid (id is a uuid column; '' is not a valid cursor)
   while (!(LIMIT && processed >= LIMIT)) {
     const pageSize = LIMIT ? Math.min(1000, LIMIT - processed) : 1000
     const { data: docs, error } = await sb.from('rag_documents')
