@@ -27,6 +27,7 @@ _(none yet — table filled as deploys happen)_
 
 | # | When | What | Net (probe / smoke) | Live verify | Rollback command |
 |---|------|------|---------------------|-------------|------------------|
+| 2 | 2026-06-08 | **Deploy M4** (chat `tool_calls` provenance render) to prod (main `92850e9` → deploy `iue5x74xr`). Render-only, additive. | `next build` green + 157 tests + 2 opus Ronda 1/2 SAFE-TO-DEPLOY + Codex (succeeded, 1 robustness finding fixed). | ✅ deploy `iue5x74xr` **Ready**; `/login`→200, `/chat`→307→login. Client bundle stays server-free (`/chat` static). | `git revert <sha> && git push` (render-only; tool_calls persist server-side independently — no DB/state dependency). |
 | 1 | 2026-06-08 | **Deploy Fase 3 code** to prod (merge `agent/autonomous-f3-f8` → main `d70f39c`, push → Vercel auto-deploy). Page provenance + OCR(off) + embedding_model. NO migration applied. | `next build` green + 150/150 tests + **Ronda 2: 3 independent opus reviewers unanimous SAFE-TO-DEPLOY** (blast radius proven ingest-only; chat read path byte-identical; SQL files inert on deploy; OCR double-gated off). | ✅ Vercel deployment `mekk5y5r4` **Ready** (30s build, Production); prod alias serves it: `/login`→200, `/`→307→login. Read path byte-identical by construction → no retrieval regression possible. **No rollback triggered.** | `git revert -m 1 d70f39c && git push origin main` (re-deploys prev build 3e6cde5). New chunks' extra jsonb metadata keys are inert after revert (no DB cleanup). |
 
 ## PENDIENTE USUARIO (action needs a net the agent can't mount, or needs a secret/dashboard)
@@ -69,6 +70,14 @@ The full `eval:retrieval`/`eval:answers` harness (paid, live LLM+DB) was **not**
 ---
 
 ## Incremental log (each increment: TDD → Ronda 1 → gates → commit)
+
+### INC-5 — Fase 7 / JOB A: offline CI eval-gate · 2026-06-08 · CI-only (no runtime/prod-app impact)
+- **What:** new `.github/workflows/eval-gate.yml` — runs tsc + lint + vitest + `next build` on every PR and push to main, blocking broken merges. There was **no CI at all** before. Build uses placeholder `NEXT_PUBLIC_*` (verified: compiles with empty secrets), so it's deterministic + secret-free. JOB B (scored eval with live-API secrets) intentionally deferred — add as a nightly/manual workflow once repo secrets exist.
+- **Safety:** GitHub-CI config only; does not touch the deployed Vercel app. Verified the build step passes with placeholder env so it won't false-fail PRs.
+
+### INC-4 — Fase 5 / M4: render tool_calls provenance in chat UI · 2026-06-08 · prod-safe (deployed, entry #2 above)
+- Pure `formatToolCall` mapper (friendly labels + input summary, defensive over malformed stream payload after Codex finding) + collapsible `<details>` per assistant message. `result_preview` (can hold doc text) never rendered. Client-bundle server-free. 2 opus SAFE-TO-DEPLOY + Codex finding fixed. +7 tests.
+
 
 ### INC-1 — Fase 3 / WS2-T4: page provenance (`metadata.page`) · 2026-06-08 · prod-safe (new ingests only)
 - **What:** `chunkFinancialContent` now stamps `metadata.page` (1-based) on each chunk via a non-invasive post-pass `assignPages`, mapping each chunk back to the source page-offset map (LlamaParse `---` page_separator). Table-aware (A1) + clause-aware (T3) chunkers untouched. `page?: number` added to `ChunkMetadata`; persists via existing `metadata: chunk.metadata` insert (queue-processor.ts:261) — no ingest/RPC change. Files: `src/lib/rag/embeddings.ts`, new test `src/lib/rag/__tests__/chunk-page-provenance.test.ts`.

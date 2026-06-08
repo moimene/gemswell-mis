@@ -1,0 +1,51 @@
+name: eval-gate
+
+# Fase 7 / JOB A — the OFFLINE, deterministic, secret-free gate. Runs on every PR and on push to main,
+# blocking a merge if types, lint, the unit/invariant suite, or the production build break. There was no
+# CI before this, so broken code could merge unchecked. The scored eval (JOB B: run-retrieval/run-answers
+# + LLM judge vs targets+baseline) needs live API secrets and is intentionally NOT here — add it as a
+# separate nightly/manual workflow once the repo secrets (ANTHROPIC/COHERE/GOOGLE/SUPABASE) are configured.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: eval-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-gate:
+    name: types + lint + tests + build (offline, blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Unit + governance-invariant tests (vitest)
+        run: npm test
+
+      # Build with PLACEHOLDER public env: these NEXT_PUBLIC_* vars are only used at runtime via fetch,
+      # but the supabase client is constructed at module load, so a syntactically-valid URL avoids a
+      # static-generation crash. No real secret is needed to prove the build compiles.
+      - name: Production build (next build)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-for-build-only
