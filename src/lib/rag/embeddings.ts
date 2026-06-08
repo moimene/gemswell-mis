@@ -182,7 +182,7 @@ export type ChunkMetadata = {
   parser_used?: string
   ocr_used?: boolean
   md_path?: string
-  chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary'
+  chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary' | 'clause'
 }
 
 export type Chunk = {
@@ -204,12 +204,182 @@ export function chunkFinancialContent(
   text: string,
   baseMetadata: ChunkMetadata = {}
 ): Chunk[] {
-  // Try structured chunking first
+  // Markdown pipe-tables FIRST (audit A1, the worst-engineered component). LlamaParse emits financial
+  // data as `| col | col |` markdown tables whose numbers carry commas (1,234,567), so the legacy
+  // comma/tab heuristics either mangle them (tryStructuredChunk) or, when they don't fire, split a table
+  // mid-row in chunkNarrative — severing a value from its header. Chunk pipe-tables table-aware (a data
+  // row is atomic, the header+separator repeat on every fragment) before anything else.
+  const tableAware = tryMarkdownTableChunk(text, baseMetadata)
+  if (tableAware.length > 0) return tableAware
+
+  // Legal docs (>=3 explicit article/clause headers): split on clause boundaries so a 40-page
+  // shareholders' agreement isn't torn on blank lines mid-clause (audit A1, legal). (WS2-T3)
+  const clauseAware = tryClauseChunk(text, baseMetadata)
+  if (clauseAware.length > 0) return clauseAware
+
+  // Try structured chunking next (TSV/CSV)
   const structured = tryStructuredChunk(text, baseMetadata)
   if (structured.length > 0) return structured
 
   // Fallback: paragraph-aware narrative chunking
   return chunkNarrative(text, baseMetadata)
+}
+
+function isPipeRow(l: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(l)
+}
+function isSepRow(l: string): boolean {
+  return /^\s*\|[\s:|-]+\|\s*$/.test(l) && l.includes('-')
+}
+
+/**
+ * Split text into ordered table / non-table segments and chunk each: markdown pipe-table blocks via
+ * chunkTableBlock (row-atomic, header repeated), the prose between them via chunkNarrative. Returns []
+ * if no genuine table (>=3 rows with a separator second row) is present, so the caller falls through.
+ */
+function tryMarkdownTableChunk(text: string, base: ChunkMetadata): Chunk[] {
+  const lines = text.split(/\r?\n/) // tolerate CRLF — don't leak \r into chunk content (review F2)
+  type Seg = { type: 'table' | 'text'; lines: string[] }
+  const segs: Seg[] = []
+  let i = 0
+  let sawTable = false
+  while (i < lines.length) {
+    if (isPipeRow(lines[i])) {
+      const run: string[] = []
+      while (i < lines.length && isPipeRow(lines[i])) { run.push(lines[i]); i++ }
+      // The separator may sit at row 1 OR row 2 (a caption/title row, or a 2-row header above it — both
+      // common LlamaParse shapes). Treat as a table when a separator is in the first 3 rows with ≥1 data
+      // row after it; else hand the run to the prose path (review F1). (sepIdx<0 fails the >=1 test.)
+      const sepIdx = run.findIndex((r, k) => k >= 1 && k <= 2 && isSepRow(r))
+      if (sepIdx >= 1 && run.length >= sepIdx + 2) { segs.push({ type: 'table', lines: run }); sawTable = true }
+      else segs.push({ type: 'text', lines: run })
+    } else {
+      const run: string[] = []
+      while (i < lines.length && !isPipeRow(lines[i])) { run.push(lines[i]); i++ }
+      segs.push({ type: 'text', lines: run })
+    }
+  }
+  if (!sawTable) return []
+
+  const out: Chunk[] = []
+  for (const seg of segs) {
+    if (seg.type === 'table') {
+      out.push(...chunkTableBlock(seg.lines, base))
+    } else {
+      const t = seg.lines.join('\n').trim()
+      if (t) out.push(...chunkNarrative(t, base))
+    }
+  }
+  return out
+}
+
+/** Chunk one markdown table block: header + separator repeat on EVERY fragment; a data row is atomic
+ *  (never split, even if a single oversized row exceeds MAX_CHUNK_SIZE). */
+function chunkTableBlock(rows: string[], base: ChunkMetadata): Chunk[] {
+  // Everything up to AND INCLUDING the separator row is the repeated "prefix" (caption + header(s) + sep),
+  // so caption-row / multi-row-header tables keep their header on every fragment (review F1). A run with
+  // no separator in the first 3 rows falls back to just rows[0] as the header.
+  const sepIdx = rows.findIndex((r, k) => k >= 1 && k <= 2 && isSepRow(r))
+  const prefixEnd = sepIdx >= 1 ? sepIdx : 0
+  const prefix = rows.slice(0, prefixEnd + 1).join('\n')
+  const dataRows = rows.slice(prefixEnd + 1)
+  const chunks: Chunk[] = []
+  let cur: string[] = []
+  let curLen = prefix.length
+  const flush = () => {
+    if (cur.length === 0) return
+    const content = [prefix, ...cur].join('\n')
+    chunks.push({
+      content,
+      metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: 'table_section' },
+      tokenEstimate: Math.ceil(content.length / 4),
+    })
+    cur = []
+    curLen = prefix.length
+  }
+  for (const row of dataRows) {
+    if (cur.length > 0 && curLen + row.length + 1 > MAX_CHUNK_SIZE) flush()
+    cur.push(row)
+    curLen += row.length + 1
+  }
+  flush()
+  if (chunks.length === 0) {
+    chunks.push({ content: prefix, metadata: { ...base, chunk_type: 'table_section' }, tokenEstimate: Math.ceil(prefix.length / 4) })
+  }
+  return chunks
+}
+
+// Explicit article/clause headers (ES+EN) — the ONLY split points. We deliberately do NOT split on bare
+// numbered lines (1., 3.1, 2.5 millones, 2024…): that orphaned sub-clauses/definitions from their article
+// and matched figures/dates (adversarial review #2). Numbered sub-items stay inside their parent clause.
+const CLAUSE_KEYWORD_RE = /^\s*(art[íi]culo|cl[áa]usula|secci[óo]n|article|clause|section)\s+(\d+|[ivxlcdm]+|primer|segund|tercer|cuart|quint|sext|s[eé]ptim|octav|noven|d[eé]cim)/i
+
+// Clause-aware chunking only applies to genuinely legal documents — gating on the classified doc_type
+// (set by the ingest before chunking) stops a financial report's "Section 1 Revenue" headings from being
+// mis-split as legal clauses (adversarial review #1).
+const LEGAL_DOC_TYPES = new Set(['legal', 'board'])
+
+/** Split a legal document on article/clause boundaries (one clause per chunk; an oversized clause is split
+ *  by line with its header repeated). Returns [] unless the doc is legal/board with >=3 clause headers. (WS2-T3) */
+function tryClauseChunk(text: string, base: ChunkMetadata): Chunk[] {
+  if (!LEGAL_DOC_TYPES.has(base.doc_type ?? '')) return []
+  const lines = text.split(/\r?\n/)
+  const headerIdxs = lines.map((l, i) => (CLAUSE_KEYWORD_RE.test(l) ? i : -1)).filter((i) => i >= 0)
+  if (headerIdxs.length < 3) return []
+
+  const blocks: { lines: string[]; isClause: boolean }[] = []
+  if (headerIdxs[0] > 0) blocks.push({ lines: lines.slice(0, headerIdxs[0]), isClause: false }) // preamble
+  for (let k = 0; k < headerIdxs.length; k++) {
+    const start = headerIdxs[k]
+    const end = k + 1 < headerIdxs.length ? headerIdxs[k + 1] : lines.length
+    blocks.push({ lines: lines.slice(start, end), isClause: true })
+  }
+
+  const chunks: Chunk[] = []
+  for (const block of blocks) {
+    const content = block.lines.join('\n').trim()
+    if (!content) continue
+    if (content.length <= MAX_CHUNK_SIZE) {
+      chunks.push({
+        content,
+        metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: block.isClause ? 'clause' : 'narrative' },
+        tokenEstimate: Math.ceil(content.length / 4),
+      })
+    } else if (block.isClause) {
+      chunks.push(...splitOversizedClause(block.lines[0], block.lines.slice(1), base))
+    } else {
+      chunks.push(...chunkNarrative(content, base))
+    }
+  }
+  return chunks
+}
+
+/** Split an oversized clause body by line (atomic), repeating the clause header on each fragment. */
+function splitOversizedClause(headerLine: string, bodyLines: string[], base: ChunkMetadata): Chunk[] {
+  const chunks: Chunk[] = []
+  let cur: string[] = []
+  let curLen = headerLine.length
+  const flush = () => {
+    if (cur.length === 0) return
+    const content = [headerLine, ...cur].join('\n')
+    chunks.push({
+      content,
+      metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: 'clause' },
+      tokenEstimate: Math.ceil(content.length / 4),
+    })
+    cur = []
+    curLen = headerLine.length
+  }
+  for (const line of bodyLines) {
+    if (cur.length > 0 && curLen + line.length + 1 > MAX_CHUNK_SIZE) flush()
+    cur.push(line)
+    curLen += line.length + 1
+  }
+  flush()
+  if (chunks.length === 0) {
+    chunks.push({ content: headerLine, metadata: { ...base, chunk_type: 'clause' }, tokenEstimate: Math.ceil(headerLine.length / 4) })
+  }
+  return chunks
 }
 
 /**
