@@ -183,6 +183,7 @@ export type ChunkMetadata = {
   ocr_used?: boolean
   md_path?: string
   chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary' | 'clause'
+  page?: number            // 1-based source page (audit A5 / WS2-T4); only set when the doc carries page separators
 }
 
 export type Chunk = {
@@ -201,6 +202,17 @@ const CHUNK_OVERLAP = 200      // chars overlap between narrative chunks
  * text, falls back to paragraph-aware splitting.
  */
 export function chunkFinancialContent(
+  text: string,
+  baseMetadata: ChunkMetadata = {}
+): Chunk[] {
+  // Page provenance (audit A5 / WS2-T4): chunk as usual, then stamp metadata.page on every chunk by
+  // mapping it back to the source page-offset map. This is a NON-invasive post-pass so the table-aware
+  // (A1) and clause-aware (T3) chunkers are untouched — page-segmenting up front would blind the clause
+  // chunker (it needs the whole doc to find >=3 clause headers) and tear multi-page tables.
+  return assignPages(text, chunkFinancialContentInner(text, baseMetadata))
+}
+
+function chunkFinancialContentInner(
   text: string,
   baseMetadata: ChunkMetadata = {}
 ): Chunk[] {
@@ -223,6 +235,85 @@ export function chunkFinancialContent(
 
   // Fallback: paragraph-aware narrative chunking
   return chunkNarrative(text, baseMetadata)
+}
+
+// A bare horizontal-rule line (`---`, `----`, …) is the LlamaParse page_separator (parse.ts emits
+// page_separator='\n---\n'). A markdown table separator (`| --- |`) is a PIPE row and is NOT matched.
+const PAGE_SEPARATOR_RE = /^\s*-{3,}\s*$/
+
+/**
+ * Locate a chunk in the source by trying its most distinctive lines (longest first) and returning the
+ * offset of the first one found at/after `cursor`. We try several candidates, not just the single longest,
+ * because chunkNarrative prepends a SYNTHETIC overlap line (the previous chunk's last ~40 words space-joined)
+ * that is often the longest line yet does NOT exist verbatim in the source — anchoring on it would fail.
+ * A repeated table/clause header is short, so the longest REAL lines are per-page content. Returns
+ * {idx,len} or null when no candidate is locatable (→ honest "no page"). Min length 12 keeps anchors distinctive.
+ */
+function findPageAnchor(content: string, text: string, cursor: number): { idx: number; len: number } | null {
+  const candidates = content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length >= 12 && !PAGE_SEPARATOR_RE.test(l))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 8)
+  for (const c of candidates) {
+    const idx = text.indexOf(c, cursor)
+    if (idx >= 0) return { idx, len: c.length }
+  }
+  return null
+}
+
+/**
+ * Stamp metadata.page (1-based) on each chunk by locating it in the page-offset map of the source.
+ * No page separators → returns chunks unchanged (Excel / single-page docs are behavior-identical).
+ * Chunks are produced in document order, so a monotonic search cursor resolves duplicate lines to the
+ * correct (forward) page. Best-effort provenance: an unlocatable chunk simply keeps no page.
+ */
+function assignPages(originalText: string, chunks: Chunk[]): Chunk[] {
+  const text = originalText.replace(/\r\n/g, '\n')
+  const lines = text.split('\n')
+
+  // The ingest chunks the markdown ARTIFACT, which buildMarkdownArtifact() opens and closes with bare
+  // `---` YAML-frontmatter fences (markdown-artifact.ts). Those two lines are NOT page breaks — counting
+  // them would inflate every page number by two. Detect a genuine leading frontmatter block (opens with
+  // `---`, closes with `---` within the first lines, with >=1 `key: value` line between) and exclude its
+  // fence lines. The yaml-key check distinguishes frontmatter from a doc that simply starts with a page break.
+  let frontmatterEnd = -1
+  if (lines[0] !== undefined && PAGE_SEPARATOR_RE.test(lines[0])) {
+    for (let i = 1; i < lines.length && i <= 60; i++) {
+      if (PAGE_SEPARATOR_RE.test(lines[i])) {
+        if (lines.slice(1, i).some((l) => /^[A-Za-z_][\w-]*:\s/.test(l))) frontmatterEnd = i
+        break
+      }
+    }
+  }
+
+  // pageStart[i] = char offset where page (i+1) begins; page 1 begins at 0 (covers any frontmatter).
+  const pageStart = [0]
+  let offset = 0
+  for (let i = 0; i < lines.length; i++) {
+    const consumed = lines[i].length + 1 // include the '\n' we split on
+    if (i > frontmatterEnd && PAGE_SEPARATOR_RE.test(lines[i])) pageStart.push(offset + consumed)
+    offset += consumed
+  }
+  if (pageStart.length <= 1) return chunks // single page → leave page undefined
+
+  const offsetToPage = (off: number): number => {
+    let page = 1
+    for (let i = 0; i < pageStart.length; i++) {
+      if (pageStart[i] <= off) page = i + 1
+      else break
+    }
+    return page
+  }
+
+  let cursor = 0
+  return chunks.map((chunk) => {
+    const anchor = findPageAnchor(chunk.content, text, cursor)
+    if (!anchor) return chunk // nothing locatable forward → honest "no page" rather than risk a wrong/earlier page
+    cursor = anchor.idx + anchor.len // advance PAST the match so an anchor that recurs on a later page still moves forward
+    return { ...chunk, metadata: { ...chunk.metadata, page: offsetToPage(anchor.idx) } }
+  })
 }
 
 function isPipeRow(l: string): boolean {
