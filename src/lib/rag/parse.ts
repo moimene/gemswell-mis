@@ -10,6 +10,8 @@
  * multi-header structures, and currency formatting.
  */
 
+import { extractWithMistralOcr, isGarbledText, isOcrSupportedMime } from '@/lib/rag/ocr'
+
 const LLAMA_PARSE_API = 'https://api.cloud.llamaindex.ai/api/v1/parsing'
 
 // Generous timeouts — quality over speed for one-time ingestion
@@ -21,7 +23,28 @@ type ParseResult = {
   content: string      // Markdown text
   sheets?: string[]    // Sheet names (Excel only)
   pageCount?: number   // PDF page count
-  parser: 'llamaparse' | 'local-xlsx'  // Track which parser was used
+  parser: 'llamaparse' | 'local-xlsx' | 'mistral-ocr'  // Track which parser was used
+  ocr_used?: boolean   // true when Mistral OCR produced the content (audit A2 / WS2-T7)
+}
+
+/**
+ * OCR fallback (audit A2). Returns a ParseResult from Mistral OCR, or null when OCR is disabled/unavailable
+ * or fails — so the caller keeps today's behavior. Default-OFF: requires MISTRAL_API_KEY and is suppressed
+ * by RAG_OCR_ENABLED='false'. Any OCR error (incl. missing key) is swallowed to null; the caller then throws
+ * its existing "scanned document" message, never a raw OCR error.
+ */
+async function tryOcrFallback(buffer: Buffer, mimeType: string, fileName: string): Promise<ParseResult | null> {
+  // True opt-in: requires BOTH a key AND RAG_OCR_ENABLED='true' (default-off posture; matches the runbook).
+  if (!process.env.MISTRAL_API_KEY || process.env.RAG_OCR_ENABLED !== 'true') return null
+  if (!isOcrSupportedMime(mimeType)) return null
+  try {
+    const ocr = await extractWithMistralOcr(buffer, mimeType)
+    console.log(`[parse] 🔎 Mistral OCR used for ${fileName}: ${ocr.pageCount} pages, ${ocr.markdown.length} chars`)
+    return { content: ocr.markdown, pageCount: ocr.pageCount, parser: 'mistral-ocr', ocr_used: true }
+  } catch (err: unknown) {
+    console.error(`[parse] OCR fallback failed for ${fileName}:`, err instanceof Error ? err.message : err)
+    return null
+  }
 }
 
 /**
@@ -54,7 +77,10 @@ PDF-SPECIFIC RULES:
 GENERAL RULES:
 - Output in clean markdown format
 - Use ## for sheet names / section headers
-- Use markdown tables (| col1 | col2 |) for tabular data
+- Use GitHub-flavored markdown PIPE tables for ALL tabular data: a header row (| col1 | col2 |), a separator
+  row directly under it (| --- | --- |), then one pipe row per data row. EVERY row — header, separator and
+  data — must start and end with a pipe and have the SAME number of columns. Never emit a data row without
+  the header+separator above it; never break a single logical row across two lines.
 - Preserve row labels and column headers exactly as shown
 - Do NOT summarize or skip any data rows
 - Do NOT add commentary — just extract the raw data faithfully
@@ -67,9 +93,8 @@ export async function parseDocument(
   _filePath: string,
   fileBuffer: Buffer,
   fileName: string,
-  _mimeType: string
+  mimeType: string
 ): Promise<ParseResult> {
-  void _mimeType
   const apiKey = process.env.LLAMA_CLOUD_API_KEY
 
   if (apiKey) {
@@ -77,6 +102,13 @@ export async function parseDocument(
     try {
       const result = await parseLlama(fileBuffer, fileName, apiKey)
       console.log(`[parse] ✅ LlamaParse completed: ${fileName} → ${result.content.length} chars`)
+      // LlamaParse succeeded but returned GARBLED text (broken-CMap single-char-line garbage) on a scanned
+      // PDF/image → try OCR (audit A2). Uses the garbage-only signal, NOT a char-count rule, so a short but
+      // clean document is never needlessly OCR'd. Default-OFF (opt-in gate), so this is a no-op in prod.
+      if (isGarbledText(result.content) && isOcrSupportedMime(mimeType)) {
+        const ocr = await tryOcrFallback(fileBuffer, mimeType, fileName)
+        if (ocr) return ocr
+      }
       return result
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown parse error'
@@ -86,6 +118,9 @@ export async function parseDocument(
         console.log(`[parse] 🔄 Falling back to local xlsx parser for ${fileName}`)
         return parseExcelLocal(fileBuffer, fileName)
       }
+      // LlamaParse threw (commonly a near-empty scanned PDF) → OCR fallback before giving up (audit A2).
+      const ocr = await tryOcrFallback(fileBuffer, mimeType, fileName)
+      if (ocr) return ocr
       throw err
     }
   }
@@ -96,6 +131,10 @@ export async function parseDocument(
   if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
     return parseExcelLocal(fileBuffer, fileName)
   }
+
+  // No LlamaParse key: a scanned PDF/image can still be ingested via OCR if enabled.
+  const ocr = await tryOcrFallback(fileBuffer, mimeType, fileName)
+  if (ocr) return ocr
 
   throw new Error(`No parser available for ${fileName}. Set LLAMA_CLOUD_API_KEY for full format support.`)
 }

@@ -48,3 +48,11 @@ _(none yet — table filled as deploys happen)_
 - **Codex (best-effort):** launched once, background, hard 10-min timeout — see verdict appended below.
 - **Rollback:** `git revert <commit>` (pure TS, additive metadata field).
 
+### INC-2 — Fase 3 / WS2-T7/T8/T10: Mistral OCR port (default-OFF) + pipe-table instruction · 2026-06-08 · prod-safe
+- **What:** New `src/lib/rag/ocr.ts` (faithful port of `mdl-patrimonio/src/lib/agent/ocr.ts` — error taxonomy, caps, Retry-After, timeout all preserved) + `isLowTextQuality`/`isGarbledText`/`isOcrSupportedMime` triggers. Wired into `parse.ts` `parseDocument` as a fallback at 3 sites (garbled-success, in-catch, no-llama-key); `queue-processor.ts` sets real `ocr_used`/`parser`, maps image extensions, and OCR joins pages with `---` so WS2-T4 page provenance covers OCR'd docs. Reinforced LlamaParse pipe-table instruction. New tests `ocr.test.ts` + `parse-ocr-wiring.test.ts`.
+- **Default-OFF (opt-in):** OCR runs only when `MISTRAL_API_KEY` **and** `RAG_OCR_ENABLED='true'`. Prod has neither → strict no-op; any OCR error (incl. missing key) is swallowed to the existing "scanned document" behavior. Verified by integration tests.
+- **TDD/gates:** suite 150/150 (+18 across two rounds). tsc clean; lint clean.
+- **Ronda 1 (2 opus + Codex):** both opus = SAFE-WITH-NITS (port faithful, default-off holds, no SQL/RPC). Fixed F1 (success path used `<500 chars` → would OCR a short *clean* PDF; now garbage-only `isGarbledText`) and F4 (`RAG_OCR_ENABLED` was opt-out → now true opt-in, matches runbook). Added reviewer-B boundary tests (500/0.4) + parse integration tests.
+- **Eval:** not run — only affects NEW ingests and is off in prod; cannot regress retrieval.
+- **Live-enable = PENDIENTE USUARIO** (no `MISTRAL_API_KEY`): add key → set `RAG_OCR_ENABLED=true` in Vercel → upload a scanned PDF → expect `ocr_used=true`, doc ingested. **Rollback:** unset either env var (instant), or `git revert`.
+

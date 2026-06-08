@@ -73,6 +73,13 @@ export function getMimeType(ext: string): string {
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.csv': 'text/csv',
     '.txt': 'text/plain',
+    // image mimes so a scanned image routes to OCR (audit A2)
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.tiff': 'image/tiff',
+    '.tif': 'image/tiff',
+    '.heic': 'image/heic',
   }
   return map[ext] || 'application/octet-stream'
 }
@@ -354,7 +361,7 @@ export async function ingestBuffer(
       file_name: input.fileName, mime_type: getMimeType(input.fileExt), business_line_id: null,
       project_id: input.projectId || null, doc_type: govDocType, lifecycle: govLifecycle,
       authority_tier: govTier, authority_score: govScore, classification_source: govSource,
-      review_status: govReview, parser: parsed.parser, ocr_used: false,
+      review_status: govReview, parser: parsed.parser, ocr_used: parsed.ocr_used ?? false,
       generated_at: new Date().toISOString(), version: 1,
     }
     const finalMarkdown = buildMarkdownArtifact(parsed.content, mdFrontmatter)
@@ -365,7 +372,7 @@ export async function ingestBuffer(
       source_file: input.fileName, document_id: documentId, source_hash: sourceHash,
       source_channel: DEFAULT_SOURCE_CHANNEL, review_status: govReview, classification_source: govSource,
       lifecycle: govLifecycle, authority_tier: govTier, authority_score: govScore,
-      parser_used: parsed.parser, ocr_used: false, ...(mdPath ? { md_path: mdPath } : {}),
+      parser_used: parsed.parser, ocr_used: parsed.ocr_used ?? false, ...(mdPath ? { md_path: mdPath } : {}),
     }
     const chunks = chunkFinancialContent(finalMarkdown, baseMetadata)
     if (chunks.length === 0) throw new Error('No chunks generated from content')
