@@ -88,19 +88,40 @@ describe('chunkFinancialContent — clause/article-aware legal chunking (audit A
   ].join('\n')
 
   it('splits a legal document on clause/article boundaries (one clause per chunk)', () => {
-    const chunks = chunkFinancialContent(legalDoc)
+    const chunks = chunkFinancialContent(legalDoc, { doc_type: 'legal' })
     const clauseChunks = chunks.filter((c) => c.metadata.chunk_type === 'clause')
     expect(clauseChunks.length).toBeGreaterThanOrEqual(4) // ART 1,2,3 + Cláusula 4
-    // each clause chunk begins at its clause header (not mid-clause)
     expect(clauseChunks.some((c) => c.content.startsWith('ARTÍCULO 2'))).toBe(true)
     expect(clauseChunks.some((c) => c.content.startsWith('Cláusula 4'))).toBe(true)
-    // a clause keeps its header WITH its body
     const art2 = clauseChunks.find((c) => c.content.startsWith('ARTÍCULO 2'))!
     expect(art2.content).toContain('duración del presente pacto')
   })
 
-  it('does not clause-split a doc with <3 clause headers (falls through to narrative)', () => {
-    const chunks = chunkFinancialContent('Solo un parrafo normal.\n\nOtro parrafo sin estructura legal alguna.')
+  it('does NOT clause-split a non-legal doc even with "Section N" headings (review FP #1)', () => {
+    const financial = ['ANNUAL FINANCIAL REPORT 2025', '',
+      'Section 1 Revenue', 'Total revenue was 12,000,000.', '',
+      'Section 2 Costs', 'Operating costs were 8,000,000.', '',
+      'Section 3 Outlook', 'The outlook is positive.'].join('\n')
+    const chunks = chunkFinancialContent(financial, { doc_type: 'financial_statements' })
+    expect(chunks.every((c) => c.metadata.chunk_type !== 'clause')).toBe(true) // gated out by doc_type
+  })
+
+  it('keeps numbered sub-items / definitions INSIDE their parent clause, not orphaned (review over-split #2)', () => {
+    const text = ['ARTÍCULO 1. DEFINICIONES', 'A efectos del presente contrato:',
+      '1. "Sociedad" significa Gemswell Ventures.', '2. "Socio" significa cualquier titular.', '3. "Parte" significa cualquier firmante.', '',
+      'ARTÍCULO 2. OBJETO', 'El objeto es regular las relaciones.', '',
+      'ARTÍCULO 3. DURACIÓN', 'Indefinida.'].join('\n')
+    const chunks = chunkFinancialContent(text, { doc_type: 'legal' })
+    const art1 = chunks.find((c) => c.content.startsWith('ARTÍCULO 1'))!
+    // the three numbered definitions live INSIDE the Artículo 1 chunk, not as 3 orphan chunks
+    expect(art1.content).toContain('1. "Sociedad"')
+    expect(art1.content).toContain('2. "Socio"')
+    expect(art1.content).toContain('3. "Parte"')
+    expect(chunks.filter((c) => c.metadata.chunk_type === 'clause').length).toBe(3) // ART 1,2,3 only
+  })
+
+  it('does not clause-split a legal doc with <3 clause headers (falls through to narrative)', () => {
+    const chunks = chunkFinancialContent('Solo un parrafo normal.\n\nOtro parrafo sin estructura legal alguna.', { doc_type: 'legal' })
     expect(chunks[0].metadata.chunk_type).toBe('narrative')
   })
 })

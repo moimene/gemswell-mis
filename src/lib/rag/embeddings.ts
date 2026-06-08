@@ -182,7 +182,7 @@ export type ChunkMetadata = {
   parser_used?: string
   ocr_used?: boolean
   md_path?: string
-  chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary'
+  chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary' | 'clause'
 }
 
 export type Chunk = {
@@ -309,43 +309,44 @@ function chunkTableBlock(rows: string[], base: ChunkMetadata): Chunk[] {
   return chunks
 }
 
-// Explicit article/clause headers (ES+EN). Bare numbered headers (1, 2.3, 4.1.2) are split-points too,
-// but only AFTER the doc is confirmed legal by >=3 keyword headers — so numbered narrative lists don't trip it.
+// Explicit article/clause headers (ES+EN) — the ONLY split points. We deliberately do NOT split on bare
+// numbered lines (1., 3.1, 2.5 millones, 2024…): that orphaned sub-clauses/definitions from their article
+// and matched figures/dates (adversarial review #2). Numbered sub-items stay inside their parent clause.
 const CLAUSE_KEYWORD_RE = /^\s*(art[íi]culo|cl[áa]usula|secci[óo]n|article|clause|section)\s+(\d+|[ivxlcdm]+|primer|segund|tercer|cuart|quint|sext|s[eé]ptim|octav|noven|d[eé]cim)/i
-const NUMBERED_HEADER_RE = /^\s*\d+(\.\d+){0,3}[.)]?\s+\S/
 
-function isClauseHeader(l: string): boolean {
-  return CLAUSE_KEYWORD_RE.test(l) || NUMBERED_HEADER_RE.test(l)
-}
+// Clause-aware chunking only applies to genuinely legal documents — gating on the classified doc_type
+// (set by the ingest before chunking) stops a financial report's "Section 1 Revenue" headings from being
+// mis-split as legal clauses (adversarial review #1).
+const LEGAL_DOC_TYPES = new Set(['legal', 'board'])
 
-/** Split a legal document on article/clause boundaries (one clause per chunk; an oversized clause is
- *  split by line with its header repeated). Returns [] for non-legal text (<3 keyword headers). (WS2-T3) */
+/** Split a legal document on article/clause boundaries (one clause per chunk; an oversized clause is split
+ *  by line with its header repeated). Returns [] unless the doc is legal/board with >=3 clause headers. (WS2-T3) */
 function tryClauseChunk(text: string, base: ChunkMetadata): Chunk[] {
+  if (!LEGAL_DOC_TYPES.has(base.doc_type ?? '')) return []
   const lines = text.split(/\r?\n/)
-  if (lines.filter((l) => CLAUSE_KEYWORD_RE.test(l)).length < 3) return []
+  const headerIdxs = lines.map((l, i) => (CLAUSE_KEYWORD_RE.test(l) ? i : -1)).filter((i) => i >= 0)
+  if (headerIdxs.length < 3) return []
 
-  const headerIdxs = lines.map((l, i) => (isClauseHeader(l) ? i : -1)).filter((i) => i >= 0)
-  const blocks: string[][] = []
-  if (headerIdxs[0] > 0) blocks.push(lines.slice(0, headerIdxs[0])) // preamble before the first clause
+  const blocks: { lines: string[]; isClause: boolean }[] = []
+  if (headerIdxs[0] > 0) blocks.push({ lines: lines.slice(0, headerIdxs[0]), isClause: false }) // preamble
   for (let k = 0; k < headerIdxs.length; k++) {
     const start = headerIdxs[k]
     const end = k + 1 < headerIdxs.length ? headerIdxs[k + 1] : lines.length
-    blocks.push(lines.slice(start, end))
+    blocks.push({ lines: lines.slice(start, end), isClause: true })
   }
 
   const chunks: Chunk[] = []
   for (const block of blocks) {
-    const isClause = isClauseHeader(block[0] ?? '')
-    const content = block.join('\n').trim()
+    const content = block.lines.join('\n').trim()
     if (!content) continue
     if (content.length <= MAX_CHUNK_SIZE) {
       chunks.push({
         content,
-        metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: isClause ? 'clause' : 'narrative' },
+        metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: block.isClause ? 'clause' : 'narrative' },
         tokenEstimate: Math.ceil(content.length / 4),
       })
-    } else if (isClause) {
-      chunks.push(...splitOversizedClause(block[0], block.slice(1), base))
+    } else if (block.isClause) {
+      chunks.push(...splitOversizedClause(block.lines[0], block.lines.slice(1), base))
     } else {
       chunks.push(...chunkNarrative(content, base))
     }
