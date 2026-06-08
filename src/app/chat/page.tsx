@@ -1,5 +1,16 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
+import { formatToolCall } from '@/lib/chat/tool-call-display'
+
+// Mirror of ToolCallAudit (kept local so this client page never imports server-only agent.ts at runtime).
+type ToolCall = {
+  iteration: number
+  name: string
+  input: unknown
+  is_error: boolean
+  source_count: number
+  result_preview: string
+}
 
 type Source = {
   id: string
@@ -15,6 +26,7 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+  toolCalls?: ToolCall[]
   entities?: { type: string; value: string }[]
   degraded?: boolean
   injectionFlagged?: boolean
@@ -190,6 +202,7 @@ export default function ChatPage() {
               role: 'assistant',
               content: String(payload.message ?? ''),
               sources: (payload.sources as Source[]) ?? undefined,
+              toolCalls: (payload.toolCalls as ToolCall[]) ?? undefined,
               entities: (payload.entities as { type: string; value: string }[]) ?? undefined,
               degraded: Boolean(payload.degraded),
               injectionFlagged: Boolean(payload.injectionFlagged),
@@ -371,6 +384,41 @@ export default function ChatPage() {
                     </span>
                   ))}
                 </div>
+              )}
+
+              {/* M4 — structured-answer provenance: which tools produced this answer, and with what input */}
+              {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+                <details className="mt-2 ml-11 group">
+                  <summary className="text-xs font-medium text-slate-600 hover:text-slate-800 flex items-center gap-1 cursor-pointer list-none">
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    Cómo se obtuvo ({msg.toolCalls.length} {msg.toolCalls.length === 1 ? 'herramienta' : 'herramientas'})
+                  </summary>
+                  <div className="mt-2 space-y-1.5">
+                    {msg.toolCalls.map((call, j) => {
+                      const d = formatToolCall(call)
+                      return (
+                        <div key={j} className={`text-xs rounded-md p-2.5 border ${d.isError ? 'bg-red-50/40 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-slate-700">{d.label}</span>
+                            {d.detail && <span className="font-mono text-[11px] text-slate-500">{d.detail}</span>}
+                            {d.sourceCount > 0 && (
+                              <span className="rounded bg-white px-1.5 py-0.5 text-slate-500 border border-slate-100 font-mono text-[10px] uppercase tracking-widest">
+                                {d.sourceCount} {d.sourceCount === 1 ? 'fuente' : 'fuentes'}
+                              </span>
+                            )}
+                            {d.isError && (
+                              <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-700 border border-red-100 font-mono text-[10px] uppercase tracking-widest">
+                                error
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </details>
               )}
 
               {/* Sources — expanded by default (citations are the point of the documental chat) */}
