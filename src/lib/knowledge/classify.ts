@@ -132,6 +132,57 @@ export async function classifyDocument(
   })
   const text = resp.content.find(b => b.type === 'text')?.text ?? ''
   const result = parseClassifyResponse(text)
+  if (!result) { if (process.env.TRIAGE_DEBUG) console.error('[triage parse-miss raw]:', text.slice(0, 400)); return null }
+  return { result, authority_score: tierToScore(result.authority_tier) }
+}
+
+// ─── Stronger TRIAGE analysis (aggressive policy) ──────────────────────────────
+// A due-diligence-grade re-classification with a more capable model, focused on the FINALITY signal
+// (draft vs signed/executed/filed/audited) that the aggressive triage policy keys on. Default Sonnet 4.6
+// (quality + throughput for a large batch); pass Opus for the most careful read. Reuses the same schema.
+export const TRIAGE_DEFAULT_MODEL = 'claude-sonnet-4-6'
+
+export function buildTriagePrompt(doc: { title: string; sample: string }): string {
+  return [
+    'Eres un analista documental senior (legal + financiero corporativo) de un grupo de parques de olas (Gemswell).',
+    'Clasifica el documento con rigor de due-diligence.',
+    '',
+    'DETERMINA CON ESPECIAL CUIDADO LA FINALIDAD (es lo más importante):',
+    '- BORRADOR / draft / versión de trabajo / sin firmar → lifecycle "draft" o "working_paper".',
+    '- FINAL: firmado, ejecutado, elevado a público (escritura notarial), presentado/registrado, o auditado',
+    '  → lifecycle "signed" / "executed" / "filed" / "audited".',
+    '- Señales de FINAL: firmas, fecha de otorgamiento, sello/protocolo notarial, "elevado a público",',
+    '  "ejecutado", "auditado por", número de registro. Señales de BORRADOR: "DRAFT"/"borrador", "v0.x",',
+    '  control de cambios, ausencia de firmas.',
+    '- Si NO puedes determinar la finalidad con seguridad, usa lifecycle "unknown" y BAJA la confianza.',
+    '',
+    'Tipos de ALTO VALOR: legal (contratos, pactos de socios, escrituras), board (actas), annual_accounts /',
+    'financial_statements (cuentas, estados financieros), bp_model (modelos financieros), funding, tax, dd, kyc.',
+    '',
+    `Título: ${doc.title}`,
+    `Extracto:\n${doc.sample.slice(0, 6000)}`,
+    '',
+    'Responde SOLO con un objeto JSON (sin markdown, sin texto adicional) con EXACTAMENTE estas claves y',
+    'usando ÚNICAMENTE los valores permitidos:',
+    `- doc_type: uno de [${DOC_TYPES.join('|')}]`,
+    `- authority_tier: uno de [${TIERS.join('|')}]`,
+    `- lifecycle: uno de [${LIFECYCLES.join('|')}]`,
+    '- period: string o null · currency: EUR|GBP|USD|null · topics: string[] · summary: 1 frase · confidence: 0..1',
+  ].join('\n')
+}
+
+export async function classifyForTriage(
+  doc: { title: string; sample: string },
+  anthropic: Anthropic,
+  model: string = TRIAGE_DEFAULT_MODEL,
+): Promise<{ result: ClassifyResult; authority_score: number } | null> {
+  const resp = await anthropic.messages.create({
+    model,
+    max_tokens: 700,
+    messages: [{ role: 'user', content: buildTriagePrompt(doc) }],
+  })
+  const text = resp.content.find(b => b.type === 'text')?.text ?? ''
+  const result = parseClassifyResponse(text)
   if (!result) return null
   return { result, authority_score: tierToScore(result.authority_tier) }
 }

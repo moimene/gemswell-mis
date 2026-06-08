@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { triageNeedsReview } from '@/lib/knowledge/triage'
+import { triageNeedsReview, triageAggressive } from '@/lib/knowledge/triage'
 import type { AuthorityTier } from '@/lib/knowledge/contracts'
 
 const cur = (authority_tier: AuthorityTier = 'internal') => ({ authority_tier })
@@ -41,5 +41,55 @@ describe('triageNeedsReview — automated needs_review backlog triage (WS3-T5)',
       const d = triageNeedsReview({ doc_type: 'other', authority_tier: 'unverified', confidence: conf }, cur('unverified'))
       expect(['approve', 'keep_needs_review']).toContain(d.action)
     }
+  })
+})
+
+// AGGRESSIVE policy — high-quality FINAL docs → high authority automatically (operator-chosen).
+describe('triageAggressive — high-value final docs → high authority (fuente oficial)', () => {
+  const cur = (authority_tier: AuthorityTier = 'unverified') => ({ authority_tier })
+
+  it('promotes a signed contract (not draft) to executed/90 → source_of_record', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'internal', confidence: 0.85, lifecycle: 'signed' }, cur())
+    expect(d.action).toBe('approve')
+    expect(d.authority_score).toBe(90)
+    expect(d.authority_tier).toBe('executed')
+  })
+
+  it('promotes an audited set of accounts to audited/100', () => {
+    const d = triageAggressive({ doc_type: 'annual_accounts', authority_tier: 'internal', confidence: 0.9, lifecycle: 'audited' }, cur())
+    expect(d.authority_score).toBe(100)
+    expect(d.authority_tier).toBe('audited')
+  })
+
+  it('promotes a contract whose lifecycle is unknown (NOT identified as draft) — per the policy', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.8, lifecycle: 'unknown' }, cur())
+    expect(d.action).toBe('approve')
+    expect(d.authority_score).toBe(90)
+  })
+
+  it('does NOT promote a DRAFT contract (falls back to conservative)', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'internal', confidence: 0.9, lifecycle: 'draft' }, cur('internal'))
+    expect(d.authority_score).toBeUndefined() // no high-authority promotion
+    // conservative fallback may still keep/approve at low authority, but never high-authority
+  })
+
+  it('does NOT promote a working_paper financial model', () => {
+    const d = triageAggressive({ doc_type: 'bp_model', authority_tier: 'internal', confidence: 0.9, lifecycle: 'working_paper' }, cur())
+    expect(d.authority_score).toBeUndefined()
+  })
+
+  it('does NOT promote a low-confidence high-value doc (needs a confident analysis)', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'internal', confidence: 0.4, lifecycle: 'signed' }, cur())
+    expect(d.authority_score).toBeUndefined()
+  })
+
+  it('does NOT promote a low-value type (e.g. correspondence) even if final', () => {
+    const d = triageAggressive({ doc_type: 'correspondence', authority_tier: 'internal', confidence: 0.9, lifecycle: 'signed' }, cur())
+    expect(d.authority_score).toBeUndefined()
+  })
+
+  it('never promotes a superseded doc', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'internal', confidence: 0.9, lifecycle: 'superseded' }, cur())
+    expect(d.authority_score).toBeUndefined()
   })
 })
