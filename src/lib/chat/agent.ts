@@ -914,6 +914,13 @@ export async function verifyAnswer(
   ].join('\n')
 
   try {
+    // WS1-T8 + adversarial review F2: cap the evidence and ALWAYS terminate it — a raw 14k slice can cut
+    // mid-chunk, leaving a dangling <document_content> open tag that would swallow the SOURCE CARDS that
+    // follow. Append an explicit close + end-marker so the boundary is always well-formed.
+    const evidence = input.evidence ?? []
+    const evidenceBlock = evidence.length
+      ? evidence.join('\n\n---\n\n').slice(0, 14000) + '\n</document_content>\n[END OF FULL RETRIEVED EVIDENCE]'
+      : '(no documentary evidence retrieved)'
     const response = await anthropic.messages.create({
       model: CHAT_VERIFIER_MODEL,
       max_tokens: CHAT_MAX_TOKENS,
@@ -925,7 +932,7 @@ export async function verifyAnswer(
             `USER QUERY:\n${input.query}`,
             `DRAFT ANSWER:\n${input.draft}`,
             `TOOL CALLS:\n${JSON.stringify(input.toolCalls.map(call => ({ name: call.name, input: call.input, is_error: call.is_error, source_count: call.source_count, result_preview: call.result_preview })), null, 2)}`,
-            `FULL RETRIEVED EVIDENCE (exact document chunks the assistant read — confirm claims against THIS, not the truncated previews):\n${(input.evidence ?? []).join('\n\n---\n\n').slice(0, 14000) || '(no documentary evidence retrieved)'}`,
+            `FULL RETRIEVED EVIDENCE (exact document chunks the assistant read — confirm claims against THIS, not the truncated previews):\n${evidenceBlock}`,
             `SOURCE CARDS:\n${JSON.stringify(sourceSummary, null, 2)}`,
             'Return only the final user-facing answer.',
           ].join('\n\n---\n\n'),
