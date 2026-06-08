@@ -61,7 +61,7 @@ export function liftUpFromChunks(metas: ChunkMetaLite[]): LiftedLabels {
 // F16: tiers that imply high authority must NOT be auto-approved on the classifier's word alone — a
 // hallucinated/prompt-influenced "audited"/"executed" label would otherwise inflate a doc straight to
 // high-authority approved. These always require a human to confirm the authority claim.
-const HUMAN_CONFIRM_TIERS = new Set<AuthorityTier>(['audited', 'executed', 'controller'])
+export const HUMAN_CONFIRM_TIERS = new Set<AuthorityTier>(['audited', 'executed', 'controller'])
 
 export function decideReviewStatus(labels: {
   doc_type: string | null
