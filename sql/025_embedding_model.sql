@@ -15,22 +15,27 @@
 -- change). Verify live AFTER: `select embedding_model, count(*) from rag_chunks group by 1` → all
 -- 'gemini-embedding-001'. Rollback: sql/rollback/025_rollback.sql.
 
-begin;
+-- NOTE ON APPLICATION: the backfill is a 156,898-row UPDATE. Applying the whole thing inside one HTTP
+-- request to the Supabase Management API times out the socket (the transaction then rolls back cleanly).
+-- So apply in fast steps: (1) add column, (2) set default, then (3) backfill in batches until 0 nulls.
+-- The steps below are written as one transcript; run the backfill batched (see run log) if via the API.
 
+-- (1) + (2): instant DDL — add the column and a default so NEW rows are labelled too (one model today;
+-- a future model change is a deliberate Fase 8 migration that updates the default + the insert together).
 alter table public.rag_chunks
   add column if not exists embedding_model text;
 
--- Backfill: every existing vector was produced by gemini-embedding-001 (the only model this app has used;
--- legacy 156,898 + new). Prefer the value already stamped in metadata when present, else the constant.
-update public.rag_chunks
-  set embedding_model = coalesce(nullif(metadata->>'embedding_model', ''), 'gemini-embedding-001')
-  where embedding_model is null;
+alter table public.rag_chunks
+  alter column embedding_model set default 'gemini-embedding-001';
 
 comment on column public.rag_chunks.embedding_model is
   'Embedding model that produced this chunk vector (e.g. gemini-embedding-001). Never mix incompatible models in one retrieval corpus — Fase 8 convergence pin.';
 
-commit;
+-- (3) Backfill: every existing vector was produced by gemini-embedding-001. Prefer the value already
+-- stamped in metadata when present, else the constant. BATCH this over the API (30k/iteration) to stay
+-- within the HTTP window; a single statement is fine over a direct psql connection.
+update public.rag_chunks
+  set embedding_model = coalesce(nullif(metadata->>'embedding_model', ''), 'gemini-embedding-001')
+  where embedding_model is null;
 
--- Optional follow-up (run separately once values are confirmed) — enforce going forward:
---   alter table public.rag_chunks alter column embedding_model set default 'gemini-embedding-001';
---   alter table public.rag_chunks alter column embedding_model set not null;  -- only after 0 nulls
+-- Optional follow-up once 0 nulls confirmed: alter column embedding_model set not null;

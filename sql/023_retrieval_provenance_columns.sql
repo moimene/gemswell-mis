@@ -1,8 +1,10 @@
 -- 023 — UNIFIED retrieval-RPC recreation (ÚNICO DUEÑO DE RPC — the ONLY migration after 019 that
 -- recreates match_chunks / keyword_search_chunks). Charter guardrail #1: body is VERBATIM from sql/019
 -- (HNSW iterative scan + df-aware keyword + lifecycle<>'superseded' filter) — the ONLY change is that the
--- returned `metadata` jsonb now also carries chunk_index, page, and storage_path, so a citation can deep-link
--- to the exact page of the original artifact (Fase 5 WS5-T5/T6) and the original file can be opened.
+-- returned `metadata` jsonb now also carries chunk_index + storage_path, so the original file can be opened
+-- and a citation ordered (Fase 5 WS5-T5/T6). `page` is NOT re-emitted here: it already flows through
+-- coalesce(metadata,…) (WS2-T4 stamps it into the chunk's own metadata jsonb), and a (metadata->>'page')::int
+-- cast would THROW at query time on a non-numeric value — so it was deliberately removed.
 --
 -- DESIGN CHOICE (conservative): we surface the 3 fields INSIDE the existing `metadata` jsonb instead of
 -- adding return COLUMNS. This keeps the function SIGNATURE / RETURNS TABLE shape IDENTICAL to 019, so:
@@ -15,7 +17,7 @@
 --
 -- VERBATIM-FROM-019 INVARIANT (do not drift): the WHERE clauses, the HNSW set_config, the df_ceiling/or_cap/
 -- and_n keyword logic, ordering, limits, grants and signatures are copied char-for-char from sql/019. Only
--- the jsonb_build_object override gains 'chunk_index','page','storage_path'. If 019 ever changes, re-copy.
+-- the jsonb_build_object override gains 'chunk_index','storage_path'. If 019 ever changes, re-copy.
 --
 -- RISK: high (it recreates the retrieval RPCs). NET (charter §"Mutación autónoma de prod" step 1): apply
 -- first in a Supabase BRANCH, EXPLAIN ANALYZE via the real supabase-js client (index-served <100ms on MAD
@@ -61,8 +63,11 @@ begin
            'md_path',              v.md_path,
            'document_source_hash', v.source_hash,
            'chunk_index',          v.chunk_index,
-           'page',                 (v.metadata->>'page')::int,
            'storage_path',         v.storage_path) as metadata,
+    -- NOTE: `page` is NOT re-emitted here — it already flows through coalesce(v.metadata,…) (WS2-T4 stamps
+    -- it into the chunk's own metadata jsonb). Re-casting (metadata->>'page')::int would THROW at query
+    -- time on any non-numeric page value and break retrieval; chunk_index/storage_path are added because
+    -- they are real columns NOT present in the chunk metadata jsonb.
     1 - v.dist as similarity
   from (
     select c.id, c.document_id, c.content, c.metadata, c.chunk_index, c.embedding <=> query_embedding as dist,
@@ -159,8 +164,7 @@ begin
            'md_path',               d.md_path,
            'document_source_hash',  d.source_hash,
            'chunk_index',           c.chunk_index,
-           'page',                  (c.metadata->>'page')::int,
-           'storage_path',          d.storage_path) as metadata,
+           'storage_path',          d.storage_path) as metadata,  -- page already flows via coalesce(c.metadata,…); no ::int cast (would throw on non-numeric)
     ts_rank_cd(c.fts, tsq) as rank
   from public.rag_chunks c
   join public.rag_documents d on d.id = c.document_id
