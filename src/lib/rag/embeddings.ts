@@ -212,6 +212,11 @@ export function chunkFinancialContent(
   const tableAware = tryMarkdownTableChunk(text, baseMetadata)
   if (tableAware.length > 0) return tableAware
 
+  // Legal docs (>=3 explicit article/clause headers): split on clause boundaries so a 40-page
+  // shareholders' agreement isn't torn on blank lines mid-clause (audit A1, legal). (WS2-T3)
+  const clauseAware = tryClauseChunk(text, baseMetadata)
+  if (clauseAware.length > 0) return clauseAware
+
   // Try structured chunking next (TSV/CSV)
   const structured = tryStructuredChunk(text, baseMetadata)
   if (structured.length > 0) return structured
@@ -300,6 +305,78 @@ function chunkTableBlock(rows: string[], base: ChunkMetadata): Chunk[] {
   flush()
   if (chunks.length === 0) {
     chunks.push({ content: prefix, metadata: { ...base, chunk_type: 'table_section' }, tokenEstimate: Math.ceil(prefix.length / 4) })
+  }
+  return chunks
+}
+
+// Explicit article/clause headers (ES+EN). Bare numbered headers (1, 2.3, 4.1.2) are split-points too,
+// but only AFTER the doc is confirmed legal by >=3 keyword headers — so numbered narrative lists don't trip it.
+const CLAUSE_KEYWORD_RE = /^\s*(art[íi]culo|cl[áa]usula|secci[óo]n|article|clause|section)\s+(\d+|[ivxlcdm]+|primer|segund|tercer|cuart|quint|sext|s[eé]ptim|octav|noven|d[eé]cim)/i
+const NUMBERED_HEADER_RE = /^\s*\d+(\.\d+){0,3}[.)]?\s+\S/
+
+function isClauseHeader(l: string): boolean {
+  return CLAUSE_KEYWORD_RE.test(l) || NUMBERED_HEADER_RE.test(l)
+}
+
+/** Split a legal document on article/clause boundaries (one clause per chunk; an oversized clause is
+ *  split by line with its header repeated). Returns [] for non-legal text (<3 keyword headers). (WS2-T3) */
+function tryClauseChunk(text: string, base: ChunkMetadata): Chunk[] {
+  const lines = text.split(/\r?\n/)
+  if (lines.filter((l) => CLAUSE_KEYWORD_RE.test(l)).length < 3) return []
+
+  const headerIdxs = lines.map((l, i) => (isClauseHeader(l) ? i : -1)).filter((i) => i >= 0)
+  const blocks: string[][] = []
+  if (headerIdxs[0] > 0) blocks.push(lines.slice(0, headerIdxs[0])) // preamble before the first clause
+  for (let k = 0; k < headerIdxs.length; k++) {
+    const start = headerIdxs[k]
+    const end = k + 1 < headerIdxs.length ? headerIdxs[k + 1] : lines.length
+    blocks.push(lines.slice(start, end))
+  }
+
+  const chunks: Chunk[] = []
+  for (const block of blocks) {
+    const isClause = isClauseHeader(block[0] ?? '')
+    const content = block.join('\n').trim()
+    if (!content) continue
+    if (content.length <= MAX_CHUNK_SIZE) {
+      chunks.push({
+        content,
+        metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: isClause ? 'clause' : 'narrative' },
+        tokenEstimate: Math.ceil(content.length / 4),
+      })
+    } else if (isClause) {
+      chunks.push(...splitOversizedClause(block[0], block.slice(1), base))
+    } else {
+      chunks.push(...chunkNarrative(content, base))
+    }
+  }
+  return chunks
+}
+
+/** Split an oversized clause body by line (atomic), repeating the clause header on each fragment. */
+function splitOversizedClause(headerLine: string, bodyLines: string[], base: ChunkMetadata): Chunk[] {
+  const chunks: Chunk[] = []
+  let cur: string[] = []
+  let curLen = headerLine.length
+  const flush = () => {
+    if (cur.length === 0) return
+    const content = [headerLine, ...cur].join('\n')
+    chunks.push({
+      content,
+      metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: 'clause' },
+      tokenEstimate: Math.ceil(content.length / 4),
+    })
+    cur = []
+    curLen = headerLine.length
+  }
+  for (const line of bodyLines) {
+    if (cur.length > 0 && curLen + line.length + 1 > MAX_CHUNK_SIZE) flush()
+    cur.push(line)
+    curLen += line.length + 1
+  }
+  flush()
+  if (chunks.length === 0) {
+    chunks.push({ content: headerLine, metadata: { ...base, chunk_type: 'clause' }, tokenEstimate: Math.ceil(headerLine.length / 4) })
   }
   return chunks
 }

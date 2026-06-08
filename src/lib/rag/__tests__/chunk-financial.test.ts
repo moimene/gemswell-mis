@@ -77,3 +77,30 @@ describe('chunkFinancialContent — markdown pipe-table awareness (audit A1)', (
     for (const c of chunks) expect(c.content.includes('\r')).toBe(false)
   })
 })
+
+describe('chunkFinancialContent — clause/article-aware legal chunking (audit A1, legal)', () => {
+  const legalDoc = [
+    'PACTO DE SOCIOS', '',
+    'ARTÍCULO 1. OBJETO', 'El objeto del presente pacto es regular las relaciones entre los socios.', '',
+    'ARTÍCULO 2. DURACIÓN', 'La duración del presente pacto será indefinida desde la fecha de firma.', '',
+    'ARTÍCULO 3. ÓRGANO DE ADMINISTRACIÓN', 'La sociedad estará administrada por un consejo de administración.', '',
+    'Cláusula 4. Confidencialidad', 'Las partes se obligan a mantener la confidencialidad de la información.',
+  ].join('\n')
+
+  it('splits a legal document on clause/article boundaries (one clause per chunk)', () => {
+    const chunks = chunkFinancialContent(legalDoc)
+    const clauseChunks = chunks.filter((c) => c.metadata.chunk_type === 'clause')
+    expect(clauseChunks.length).toBeGreaterThanOrEqual(4) // ART 1,2,3 + Cláusula 4
+    // each clause chunk begins at its clause header (not mid-clause)
+    expect(clauseChunks.some((c) => c.content.startsWith('ARTÍCULO 2'))).toBe(true)
+    expect(clauseChunks.some((c) => c.content.startsWith('Cláusula 4'))).toBe(true)
+    // a clause keeps its header WITH its body
+    const art2 = clauseChunks.find((c) => c.content.startsWith('ARTÍCULO 2'))!
+    expect(art2.content).toContain('duración del presente pacto')
+  })
+
+  it('does not clause-split a doc with <3 clause headers (falls through to narrative)', () => {
+    const chunks = chunkFinancialContent('Solo un parrafo normal.\n\nOtro parrafo sin estructura legal alguna.')
+    expect(chunks[0].metadata.chunk_type).toBe('narrative')
+  })
+})
