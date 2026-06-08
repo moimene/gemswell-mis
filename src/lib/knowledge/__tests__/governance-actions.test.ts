@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { computeGovernanceAction, InvalidTransitionError } from '@/lib/knowledge/governance-actions'
+import { verificationFromGovernance } from '@/lib/knowledge/source-reference'
 import type { DocGovernanceState } from '@/lib/knowledge/contracts'
 
 const base: DocGovernanceState = {
@@ -178,5 +179,64 @@ describe('computeGovernanceAction', () => {
     const r = computeGovernanceAction({ action: 'reclassify', documentId: 'd1', current: base,
       fields: { project_id: 'MAD' }, actor: 'a' })
     expect(r.patch.project_id).toBe('MAD')
+  })
+})
+
+// Fase 4 / WS3 — "Endorsar como fuente oficial": make source_of_record REACHABLE (audit C2). A doc with
+// authority≥90 + approved + a human-validated classification_source is source_of_record. 0 docs qualify
+// today because classification_source is never human-validated. `endorse` is the explicit one-click action.
+describe('computeGovernanceAction — endorse (source_of_record, audit C2)', () => {
+  it('endorses a high-authority machine doc → approved + agent_reviewed + endorse event → source_of_record', () => {
+    const r = computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, review_status: 'approved', classification_source: 'agent_auto', authority_score: 95 }, actor: 'admin:console' })
+    expect(r.patch.review_status).toBe('approved')
+    expect(r.patch.classification_source).toBe('agent_reviewed')
+    expect(r.events).toHaveLength(1)
+    expect(r.events[0]).toMatchObject({ action: 'endorse', field: 'classification_source' })
+    // the resulting governance state is now source_of_record-eligible
+    expect(verificationFromGovernance(95, 'approved', 'agent_reviewed')).toBe('source_of_record')
+  })
+
+  it('endorses a needs_review high-authority doc straight to official (approves + endorses in one action)', () => {
+    const r = computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, review_status: 'needs_review', classification_source: 'rule', authority_score: 92 }, actor: 'a' })
+    expect(r.patch.review_status).toBe('approved')
+    expect(r.patch.classification_source).toBe('agent_reviewed')
+  })
+
+  it('refuses to endorse a doc with authority < 90 (an official source must have authority)', () => {
+    expect(() => computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, authority_score: 80, review_status: 'approved' }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
+  it('refuses to endorse a non-live doc (retired or rejected)', () => {
+    expect(() => computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, status: 'retired', authority_score: 95 }, actor: 'a' })).toThrow(InvalidTransitionError)
+    expect(() => computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, review_status: 'rejected', authority_score: 95 }, actor: 'a' })).toThrow(InvalidTransitionError)
+  })
+
+  it('never downgrades an already human-validated source (keeps classification_source out of the patch)', () => {
+    const r = computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, review_status: 'approved', classification_source: 'human', authority_score: 95 }, actor: 'a' })
+    expect(r.patch.classification_source).toBeUndefined()
+    expect(r.patch.review_status).toBe('approved')
+    expect(r.events).toHaveLength(1)
+    // event keyed on review_status (the field actually asserted), not a no-op classification_source old→new
+    expect(r.events[0]).toMatchObject({ action: 'endorse', field: 'review_status' })
+  })
+
+  it('refuses to endorse an agent_rejected doc (must reclassify/restore first — mirrors approve F3)', () => {
+    expect(() => computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, classification_source: 'agent_rejected', review_status: 'needs_review', authority_score: 95 }, actor: 'a' }))
+      .toThrow(InvalidTransitionError)
+  })
+
+  it('endorses at the exact authority boundary (score === 90, the "executed" tier)', () => {
+    const r = computeGovernanceAction({ action: 'endorse', documentId: 'd1',
+      current: { ...base, review_status: 'approved', classification_source: 'agent_auto', authority_score: 90 }, actor: 'a' })
+    expect(r.patch.classification_source).toBe('agent_reviewed')
+    expect(verificationFromGovernance(90, 'approved', 'agent_reviewed')).toBe('source_of_record')
   })
 })

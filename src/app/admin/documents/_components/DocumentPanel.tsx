@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
 import { AUTHORITY_TIER_SCORE, DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
@@ -39,7 +39,7 @@ type Detail = {
 }
 
 type PatchBody = {
-  action: 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede'
+  action: 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede' | 'endorse'
   fields?: Record<string, string>
   supersedesId?: string
   reason?: string
@@ -102,6 +102,12 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
   )
   const doc = d.document
   const retired = doc.status === 'retired'
+  // Endorse ("fuente oficial") eligibility (audit C2): a live, authoritative doc that is not ALREADY a
+  // source of record. Mirrors verificationFromGovernance: authority≥90 ∧ approved ∧ human-validated source.
+  const score = doc.authority_score ?? 0
+  const isOfficial = score >= 90 && doc.review_status === 'approved'
+    && ['human', 'agent_reviewed', 'agent_corrected'].includes(doc.classification_source)
+  const canEndorse = !retired && doc.review_status !== 'rejected' && doc.classification_source !== 'agent_rejected' && score >= 90 && !isOfficial
 
   return (
     <aside className="flex w-[460px] shrink-0 flex-col overflow-auto border-l border-slate-200 bg-white">
@@ -137,6 +143,10 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
             ? <button onClick={() => act({ action: 'restore' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Restaurar</button>
             : <button onClick={() => act({ action: 'retire' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><Archive className="h-3.5 w-3.5" /> Retirar</button>}
           <button disabled={retired || doc.review_status === 'rejected'} title={retired || doc.review_status === 'rejected' ? 'Un documento retirado o rechazado no puede superseder a otro' : undefined} onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
+          {/* C2: one-click "endorse as official source" — only for live, authoritative, not-yet-official docs */}
+          {canEndorse && (
+            <button onClick={() => act({ action: 'endorse' })} title="Marca el documento como fuente oficial (source of record) del chat" className="col-span-2 flex items-center justify-center gap-1 rounded bg-indigo-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Endorsar como fuente oficial</button>
+          )}
         </div>
 
         {/* Reject inline form (F9): reason required; Cancel does NOT dispatch */}

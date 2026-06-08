@@ -74,6 +74,33 @@ export function computeGovernanceAction(input: GovernanceActionInput): Governanc
       }
     }
 
+    case 'endorse': {
+      // "Endorsar como fuente oficial" (audit C2): make a doc source_of_record-eligible. The chat treats a
+      // doc as source_of_record only when authority≥90 AND approved AND classification_source is human-
+      // validated — so endorse asserts approved + stamps the human-validated marker (agent_reviewed),
+      // gated to genuinely authoritative, live documents. It NEVER downgrades an existing human source.
+      // Mirror approve's F3 guard: a doc the agent explicitly rejected (sticky agent_rejected) must not be
+      // silently promoted to an OFFICIAL source — endorse would overwrite the rejection. Force an explicit
+      // reclassify/restore first. (Ronda 1: both reviewers flagged this asymmetry vs approve.)
+      if (current.classification_source === 'agent_rejected')
+        throw new InvalidTransitionError('document was auto-rejected (agent_rejected); reclassify or restore it explicitly before endorsing')
+      if (current.authority_score < 90)
+        throw new InvalidTransitionError('endorse requires authority ≥ 90 (an official source must be authoritative)')
+      if (current.status === RETIRED_STATUS || current.review_status === 'rejected')
+        throw new InvalidTransitionError('only a live (indexed, non-rejected) document can be endorsed')
+      const patch: Record<string, unknown> = { review_status: 'approved' }
+      if (!HUMAN_VALIDATED_SOURCES.has(current.classification_source)) {
+        patch.classification_source = 'agent_reviewed' as ClassificationSource
+      }
+      // Key the audit event on the field that actually changed: classification_source when we stamped the
+      // human-validated marker (the meaningful "became official" transition), else review_status — so the
+      // event never claims a no-op old→new on a field it didn't touch (Ronda 1 audit-fidelity fix).
+      const endorseEvent = patch.classification_source !== undefined
+        ? ev(documentId, 'endorse', 'classification_source', current.classification_source, patch.classification_source, actor, reason)
+        : ev(documentId, 'endorse', 'review_status', current.review_status, 'approved', actor, reason)
+      return { patch, events: [endorseEvent] }
+    }
+
     case 'reject': {
       if (current.review_status === 'rejected') throw new InvalidTransitionError('document already rejected')
       return {

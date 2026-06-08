@@ -150,7 +150,7 @@ export const AUTHORITY_TIER_SCORE: Record<AuthorityTier, number> = {
 
 // ─── Governance actions (Spec B) ────────────────────────────────────────────
 export type GovernanceAction =
-  | 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede'
+  | 'approve' | 'reject' | 'reclassify' | 'retire' | 'restore' | 'supersede' | 'endorse'
 
 /** status is a text column; retire sets this sentinel (RPC filters status='indexed') */
 export const RETIRED_STATUS = 'retired' as const
