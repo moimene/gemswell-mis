@@ -52,8 +52,14 @@ function summarizeInput(input: unknown): string {
 }
 
 export function formatToolCall(call: ToolCallAudit): ToolCallDisplay {
+  // Defensive: `call` arrives from a streamed JSON payload, so don't trust the static type at runtime —
+  // a null/non-object/missing-name item must degrade gracefully rather than crash the chat render.
+  if (call == null || typeof call !== 'object') {
+    return { label: 'herramienta', detail: '', isError: false, sourceCount: 0 }
+  }
+  const name = typeof call.name === 'string' ? call.name : 'herramienta'
   return {
-    label: TOOL_LABELS[call.name] ?? call.name,
+    label: TOOL_LABELS[name] ?? name,
     detail: summarizeInput(call.input),
     isError: call.is_error === true,
     sourceCount: typeof call.source_count === 'number' ? call.source_count : 0,

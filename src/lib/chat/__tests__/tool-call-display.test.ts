@@ -39,6 +39,15 @@ describe('formatToolCall — M4: make structured-answer provenance inspectable i
     expect(d.sourceCount).toBe(7)
   })
 
+  it('degrades gracefully on a null / non-object / nameless call (Codex repro: streamed payload not trusted)', () => {
+    for (const bad of [null, undefined, 'x', 42, [], {}, { name: 123 }] as unknown[]) {
+      const d = formatToolCall(bad as never)
+      expect(typeof d.label).toBe('string')
+      expect(d.label.length).toBeGreaterThan(0)
+      expect(d.isError).toBe(false)
+    }
+  })
+
   it('never throws on a malformed/empty input (defensive — input is unknown JSON)', () => {
     const cases: unknown[] = [null, undefined, 'a string', 42, [], { project_id: 123 }]
     for (const input of cases) {

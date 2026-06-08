@@ -202,7 +202,7 @@ export default function ChatPage() {
               role: 'assistant',
               content: String(payload.message ?? ''),
               sources: (payload.sources as Source[]) ?? undefined,
-              toolCalls: (payload.toolCalls as ToolCall[]) ?? undefined,
+              toolCalls: Array.isArray(payload.toolCalls) ? (payload.toolCalls as ToolCall[]) : undefined,
               entities: (payload.entities as { type: string; value: string }[]) ?? undefined,
               degraded: Boolean(payload.degraded),
               injectionFlagged: Boolean(payload.injectionFlagged),
@@ -387,7 +387,7 @@ export default function ChatPage() {
               )}
 
               {/* M4 — structured-answer provenance: which tools produced this answer, and with what input */}
-              {msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && (
+              {msg.role === 'assistant' && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0 && (
                 <details className="mt-2 ml-11 group">
                   <summary className="text-xs font-medium text-slate-600 hover:text-slate-800 flex items-center gap-1 cursor-pointer list-none">
                     <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
