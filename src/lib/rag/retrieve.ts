@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
-import { rankBySourceTrust } from '@/lib/rag/rank'
+import { rankBySourceTrust, trustTier } from '@/lib/rag/rank'
 
 // ─── Shared retrieval core ───────────────────────────────────────────
 // Single source of truth for the documentary retrieval pipeline used by /api/chat's
@@ -60,6 +60,15 @@ export const RAG_VECTOR_MATCH_COUNT = Number(process.env.RAG_VECTOR_MATCH_COUNT 
 export const RAG_KEYWORD_MATCH_COUNT = Number(process.env.RAG_KEYWORD_MATCH_COUNT || '15')
 export const RAG_FINAL_TOP_K = Number(process.env.RAG_FINAL_TOP_K || '10')
 
+// Fase 2 (WS1) — hybrid fusion + precision floor. Defaults reproduce the CURRENT behavior
+// (vector_first dedup, no floor), so landing this is a no-op until the env flags are flipped — the
+// flag-flip is A/B-gated against the ws1-base baseline and adversarially reviewed before going live.
+export const RAG_FUSION_MODE: 'rrf' | 'vector_first' = process.env.RAG_FUSION_MODE === 'rrf' ? 'rrf' : 'vector_first'
+export const RAG_RRF_K = Number(process.env.RAG_RRF_K || '60')
+export const RAG_RRF_W_VECTOR = Number(process.env.RAG_RRF_W_VECTOR || '1')
+export const RAG_RRF_W_KEYWORD = Number(process.env.RAG_RRF_W_KEYWORD || '1')
+export const RAG_RELEVANCE_FLOOR = Number(process.env.RAG_RELEVANCE_FLOOR || '0')
+
 function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = metadata?.[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -87,6 +96,65 @@ export function isExcludedFromRetrieval(metadata: Record<string, unknown> | unde
 function isUnreviewedSource(metadata: Record<string, unknown> | undefined): boolean {
   const rs = metadataString(metadata, 'review_status')
   return rs === 'needs_review' || rs === 'pending'
+}
+
+export type FusionConfig = { mode: 'rrf' | 'vector_first'; k: number; wVector: number; wKeyword: number }
+export type FusedChunk = RetrievedChunk & { fusedScore?: number }
+
+/**
+ * Merge the vector + keyword lanes into a deduped pool (excluded sources removed). In 'rrf' mode each
+ * chunk carries a Reciprocal Rank Fusion score — a chunk found by BOTH lanes gets the additive agreement
+ * boost (the precision signal the old vector-first dedup threw away, audit A3) and the pool is ordered by
+ * it; 'vector_first' preserves the legacy order. The pool is still Cohere-reranked downstream, so RRF most
+ * affects pool inclusion + the DEGRADED (Cohere-down) ordering, which now uses fusedScore (scale-free).
+ */
+export function fusePool(
+  vectorResults: RetrievedChunk[],
+  keywordResults: RetrievedChunk[],
+  config: FusionConfig,
+): { pool: FusedChunk[]; overlapCount: number } {
+  // Exclude rejected/superseded BEFORE computing ranks, so an excluded row cannot consume a rank slot
+  // and distort an allowed chunk's RRF score (adversarial review). The SQL already excludes these; this
+  // is the defense-in-depth mirror, and overlapCount/ranks are now over genuinely-usable evidence only.
+  const vAllowed = vectorResults.filter((r) => !isExcludedFromRetrieval(r.metadata))
+  const kAllowed = keywordResults.filter((r) => !isExcludedFromRetrieval(r.metadata))
+  const vRank = new Map<string, number>()
+  vAllowed.forEach((r, i) => { if (!vRank.has(r.id)) vRank.set(r.id, i + 1) })
+  const kRank = new Map<string, number>()
+  kAllowed.forEach((r, i) => { if (!kRank.has(r.id)) kRank.set(r.id, i + 1) })
+  let overlapCount = 0
+  for (const id of vRank.keys()) if (kRank.has(id)) overlapCount++
+
+  const merged = new Map<string, FusedChunk>()
+  for (const r of [...vAllowed, ...kAllowed]) {
+    if (merged.has(r.id)) continue
+    const vr = vRank.get(r.id)
+    const kr = kRank.get(r.id)
+    const fusedScore = (vr ? config.wVector / (config.k + vr) : 0) + (kr ? config.wKeyword / (config.k + kr) : 0)
+    merged.set(r.id, { ...r, fusedScore })
+  }
+  const pool = Array.from(merged.values())
+  if (config.mode === 'rrf') pool.sort((a, b) => (b.fusedScore ?? 0) - (a.fusedScore ?? 0))
+  return { pool, overlapCount }
+}
+
+/**
+ * Drop chunks whose Cohere relevance is below `floor` (precision gate, WS1-T3). NEVER empties a non-empty
+ * set — if everything is below the floor it keeps the single most-relevant chunk so the chat still has its
+ * best evidence. `floor <= 0` is a no-op (recall-first default).
+ */
+export function applyRelevanceFloor<T extends { relevanceScore?: number }>(
+  chunks: T[],
+  floor: number,
+  isProtected?: (c: T) => boolean,
+): T[] {
+  if (!(floor > 0)) return chunks
+  // A protected chunk (e.g. high trust tier) is NEVER dropped by the floor — relevance must not override
+  // governance (adversarial review F1: trust dominates relevance).
+  const keep = chunks.filter((c) => (isProtected?.(c) ?? false) || (c.relevanceScore ?? 0) >= floor)
+  if (keep.length > 0) return keep
+  const best = chunks.slice().sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))[0]
+  return best ? [best] : []
 }
 
 /**
@@ -183,19 +251,13 @@ export async function retrieveDocuments(
   const vectorResults = vector.rows
   const keywordResults = keyword.rows
 
-  // Merge + dedup by id (vector results take precedence for similarity score)
-  const vectorIds = new Set(vectorResults.map((r) => r.id))
-  const keywordIds = new Set(keywordResults.map((r) => r.id))
-  let overlapCount = 0
-  for (const id of vectorIds) if (keywordIds.has(id)) overlapCount++
-
-  const merged = new Map<string, RetrievedChunk>()
-  for (const r of [...vectorResults, ...keywordResults]) {
-    if (isExcludedFromRetrieval(r.metadata)) continue
-    if (!merged.has(r.id)) merged.set(r.id, r)
-  }
-
-  const pool = Array.from(merged.values())
+  // Merge the two lanes into a deduped, excluded-filtered pool (RRF or legacy vector-first, env-gated).
+  const { pool, overlapCount } = fusePool(vectorResults, keywordResults, {
+    mode: RAG_FUSION_MODE,
+    k: RAG_RRF_K,
+    wVector: RAG_RRF_W_VECTOR,
+    wKeyword: RAG_RRF_W_KEYWORD,
+  })
   if (pool.length === 0) {
     return {
       ranked: [],
@@ -216,7 +278,13 @@ export async function retrieveDocuments(
   // Cohere scored modestly — otherwise Cohere's relevance cut would drop it before trust is considered.
   const { chunks: rerankedRaw, degraded } = await rerankChunks(query, pool, pool.length)
   const reranked = rerankedRaw.filter((c) => !isExcludedFromRetrieval(c.metadata))
-  const ranked = rankBySourceTrust(reranked).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
+  // Precision floor on the Cohere relevance (WS1-T3) — only on the trustworthy (non-degraded) path,
+  // since degraded scores are normalised approximations, not Cohere relevance. Trust-aware: never floor
+  // out high-trust (source_of_record / supporting, tier >= 2) evidence (adversarial review F1).
+  const floored = degraded
+    ? reranked
+    : applyRelevanceFloor(reranked, RAG_RELEVANCE_FLOOR, (c) => trustTier(c.metadata) >= 2)
+  const ranked = rankBySourceTrust(floored).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
   const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 
   return {

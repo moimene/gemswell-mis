@@ -14,7 +14,7 @@ vi.mock('@/lib/rag/rerank', () => ({
   })),
 }))
 
-import { retrieveDocuments, isRejectedSource, isExcludedFromRetrieval, emptyResultMessage } from '@/lib/rag/retrieve'
+import { retrieveDocuments, isRejectedSource, isExcludedFromRetrieval, emptyResultMessage, fusePool, applyRelevanceFloor } from '@/lib/rag/retrieve'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
 
@@ -184,6 +184,58 @@ describe('retrieveDocuments — superseded exclusion + degradation diagnostics',
     const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
     expect(ranked.map((c) => c.id)).toEqual(['ap', 'nr']) // approved leads, unreviewed is fallback
     expect(diagnostics.unreviewedUsed).toBe(1)
+  })
+})
+
+// ─── Fase 2 (audit master plan WS1) — RRF fusion + relevance floor ───────────
+describe('fusePool (Reciprocal Rank Fusion)', () => {
+  const row = (id: string, meta: Record<string, unknown> = {}): Row =>
+    ({ id, document_id: 'd' + id, content: id, metadata: meta, similarity: 0.9 })
+  const cfg = { k: 60, wVector: 1, wKeyword: 1 }
+
+  it('rrf gives a both-lane chunk a higher fused score than an equal-rank single-lane chunk', () => {
+    const vector = [row('a'), row('b')] // a=vrank1, b=vrank2
+    const keyword = [row('b'), row('c')] // b=krank1, c=krank2
+    const { pool, overlapCount } = fusePool(vector, keyword, { ...cfg, mode: 'rrf' })
+    expect(overlapCount).toBe(1) // b in both
+    const score = Object.fromEntries(pool.map((p) => [p.id, p.fusedScore ?? 0]))
+    // b: 1/(60+2)+1/(60+1); a: 1/(60+1) only → b > a (the agreement boost)
+    expect(score['b']).toBeGreaterThan(score['a'])
+    expect(pool[0].id).toBe('b') // rrf sorts pool by fusedScore desc
+  })
+
+  it('vector_first preserves the legacy order and drops excluded sources', () => {
+    const vector = [row('a'), row('x', { lifecycle: 'superseded' })]
+    const keyword = [row('c'), row('a')] // a overlaps
+    const { pool } = fusePool(vector, keyword, { ...cfg, mode: 'vector_first' })
+    expect(pool.map((p) => p.id)).toEqual(['a', 'c']) // superseded x dropped; vector-first order
+  })
+
+  it('computes RRF ranks over ALLOWED rows only — an excluded row does not consume a rank slot', () => {
+    const vector = [row('x', { lifecycle: 'superseded' }), row('a')] // x excluded; a is rank 1 among allowed
+    const keyword = [row('a')]
+    const { pool } = fusePool(vector, keyword, { ...cfg, mode: 'rrf' })
+    expect(pool.map((p) => p.id)).toEqual(['a'])
+    expect(pool[0].fusedScore).toBeCloseTo(2 / 61, 6) // a is vrank1 + krank1 → 1/61 + 1/61
+  })
+})
+
+describe('applyRelevanceFloor', () => {
+  const c = (id: string, relevanceScore: number) => ({ id, document_id: 'd', content: '', metadata: {}, relevanceScore })
+  it('drops chunks below the floor', () => {
+    expect(applyRelevanceFloor([c('a', 0.8), c('b', 0.2)], 0.5).map((x) => x.id)).toEqual(['a'])
+  })
+  it('floor 0 is a no-op (recall-first default)', () => {
+    const arr = [c('a', 0.1), c('b', 0.05)]
+    expect(applyRelevanceFloor(arr, 0)).toEqual(arr)
+  })
+  it('never empties a non-empty set — keeps the single best chunk', () => {
+    expect(applyRelevanceFloor([c('a', 0.3), c('b', 0.1)], 0.9).map((x) => x.id)).toEqual(['a'])
+  })
+  it('protects flagged chunks even when below the floor (trust beats relevance, F1)', () => {
+    // 'hi' is below the 0.5 floor but protected (e.g. high trust tier) → survives; 'lo' is dropped.
+    const out = applyRelevanceFloor([c('hi', 0.2), c('lo', 0.1)], 0.5, (x) => x.id === 'hi')
+    expect(out.map((x) => x.id)).toEqual(['hi'])
   })
 })
 

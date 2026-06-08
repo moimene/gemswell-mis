@@ -55,6 +55,19 @@ describe('rerankChunks', () => {
     }
   })
 
+  it('degraded path orders by fusedScore (scale-free), NOT mixed-scale similarity', async () => {
+    // The bug (adversarial review / audit A3): degraded sorted by `similarity`, mixing cosine (~0.2-0.9)
+    // with raw ts_rank_cd (unbounded) — a big keyword ts_rank wrongly outranks a strong vector hit.
+    // With RRF fusedScore (scale-free) the order is meaningful even when Cohere is down.
+    rerankMock.mockRejectedValue(new Error('cohere down'))
+    const r = await rerankChunks('q', [
+      { id: 'kw', content: 'k', similarity: 8.5, metadata: {}, fusedScore: 0.01 }, // huge ts_rank, LOW fused
+      { id: 'vec', content: 'v', similarity: 0.7, metadata: {}, fusedScore: 0.03 }, // cosine, HIGHER fused
+    ], 2)
+    expect(r.degraded).toBe(true)
+    expect(r.chunks.map((c) => c.id)).toEqual(['vec', 'kw']) // fusedScore wins, not the 8.5 ts_rank
+  })
+
   it('single chunk returns trivially without calling Cohere (not degraded)', async () => {
     const r = await rerankChunks('q', [chunk('a', 'aaa', 0.7)], 5)
     expect(rerankMock).not.toHaveBeenCalled()

@@ -166,6 +166,7 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 - Respond in the same language as the user.
 - If no relevant evidence is retrieved for a factual question, say so explicitly and abstain — do not answer from general knowledge or assumption.
 - If the question is too vague to identify the project, metric or time scope (e.g. "how much does it cost?", "what's the latest status?"), ask ONE brief clarifying question instead of guessing or dumping a broad multi-project report.
+- COMPOUND/MULTI-TOPIC questions: when a question spans MULTIPLE distinct documents or sub-topics (e.g. "where are the pacto de socios AND the personas apoderadas documented?", or a portfolio/fund question covering several entities), issue SEPARATE search_documents calls — one per sub-topic — instead of a single blended query. A diluted multi-topic query retrieves the average and misses each specific document; targeted per-topic searches surface each one.
 - When you state a CapEx or funding TOTAL for a project, also call get_contradictions for that project and disclose any OPEN contradiction affecting that figure: give both conflicting values and note it awaits CFO confirmation. Never present a contested total as settled.
 
 ## Corpus Project Taxonomy (critical for scoping document searches)
@@ -776,6 +777,9 @@ export type AgentLoopResult = {
   retrievalIncomplete: boolean
   /** Count of distinct cited sources whose parent is needs_review/pending — the answer leaned on ungoverned evidence. */
   unreviewedUsed: number
+  /** Full formatted search_documents results (the exact chunks the drafter read). Passed to the verifier
+   *  so it can CONFIRM claims against the real chunk text, not just the truncated source-card preview (WS1-T8). */
+  searchEvidence: string[]
 }
 
 export async function runAgentLoop(
@@ -792,6 +796,7 @@ export async function runAgentLoop(
   let degraded = false
   let injectionFlagged = false
   let retrievalIncomplete = false
+  const searchEvidence: string[] = []
 
   // Single exit builder so every return path carries the full audit signal set, incl. the
   // deduped count of unreviewed sources the answer actually leaned on (audit 2026-06-07 C1 disclosure).
@@ -807,6 +812,7 @@ export async function runAgentLoop(
       const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
       return rs === 'needs_review' || rs === 'pending'
     }).length,
+    searchEvidence,
   })
 
   for (let iteration = 0; iteration < 5; iteration++) {
@@ -845,6 +851,9 @@ export async function runAgentLoop(
             if (d) degraded = true
             if (inj) injectionFlagged = true
             if (ri) retrievalIncomplete = true
+            // WS1-T8: retain the full search_documents result (full chunk text, already wrapped in the
+            // untrusted-content boundary) so the verifier can confirm claims, not just see 220-char previews.
+            if (block.name === 'search_documents' && (sources?.length ?? 0) > 0) searchEvidence.push(result)
             if (sources) for (const s of sources) if (!allSources.has(s.id)) allSources.set(s.id, s)
             toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, 500) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
@@ -868,7 +877,7 @@ export async function runAgentLoop(
 
 export async function verifyAnswer(
   anthropic: Anthropic,
-  input: { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[] },
+  input: { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[]; evidence?: string[] },
   onProgress?: (stage: string, detail?: string) => void,
   signal?: AbortSignal
 ): Promise<{ text: string; verified: boolean }> {
@@ -893,7 +902,7 @@ export async function verifyAnswer(
     'If the draft is adequately grounded, output exactly the draft answer text and nothing else.',
     'If material claims lack support from tool calls or source cards, rewrite the answer conservatively.',
     'If there are no tool calls or sources and the draft makes factual claims, rewrite it to abstain and say the evidence was not retrieved.',
-    'IMPORTANT — avoid over-stripping: the SOURCE CARDS show only a TRUNCATED ~220-char preview, but the assistant saw the FULL chunk. Do NOT delete specific figures, names, dates or clauses merely because they are absent from the truncated preview; only remove claims that have NO plausible source among the tool calls/sources or that CONTRADICT the evidence.',
+    'IMPORTANT — avoid over-stripping: verify claims against the FULL RETRIEVED EVIDENCE block (the exact chunks the assistant read), NOT the truncated ~220-char source-card previews. A specific figure, name, date or clause that appears in the full evidence is SUPPORTED even if absent from the preview. Only remove claims that have NO plausible source in the full evidence / tool calls, or that CONTRADICT it.',
     'Structured TOOL CALL results (get_capex_summary, get_funding_status, get_covenant_status, get_risk_register, get_cash_runway, compare_projects, get_contradictions) are first-class evidence even though they emit no source cards — figures and statements drawn from a successful structured tool call are supported; do not treat them as unsupported or demand a document citation for them.',
     'Preserve the completeness of well-grounded answers: do not shorten, omit, or excessively hedge a thorough answer that the tool calls / sources support.',
     'Preserve any "[SIN REVISAR]" / "(fuente sin revisar)" caveats and never upgrade an unreviewed source to authoritative.',
@@ -905,6 +914,13 @@ export async function verifyAnswer(
   ].join('\n')
 
   try {
+    // WS1-T8 + adversarial review F2: cap the evidence and ALWAYS terminate it — a raw 14k slice can cut
+    // mid-chunk, leaving a dangling <document_content> open tag that would swallow the SOURCE CARDS that
+    // follow. Append an explicit close + end-marker so the boundary is always well-formed.
+    const evidence = input.evidence ?? []
+    const evidenceBlock = evidence.length
+      ? evidence.join('\n\n---\n\n').slice(0, 14000) + '\n</document_content>\n[END OF FULL RETRIEVED EVIDENCE]'
+      : '(no documentary evidence retrieved)'
     const response = await anthropic.messages.create({
       model: CHAT_VERIFIER_MODEL,
       max_tokens: CHAT_MAX_TOKENS,
@@ -916,6 +932,7 @@ export async function verifyAnswer(
             `USER QUERY:\n${input.query}`,
             `DRAFT ANSWER:\n${input.draft}`,
             `TOOL CALLS:\n${JSON.stringify(input.toolCalls.map(call => ({ name: call.name, input: call.input, is_error: call.is_error, source_count: call.source_count, result_preview: call.result_preview })), null, 2)}`,
+            `FULL RETRIEVED EVIDENCE (exact document chunks the assistant read — confirm claims against THIS, not the truncated previews):\n${evidenceBlock}`,
             `SOURCE CARDS:\n${JSON.stringify(sourceSummary, null, 2)}`,
             'Return only the final user-facing answer.',
           ].join('\n\n---\n\n'),
@@ -958,7 +975,7 @@ export async function runChatTurn(
   const loop = await runAgentLoop(history, SYSTEM_PROMPT, anthropic, model, undefined, opts.signal)
   const { text: answer, verified } = await verifyAnswer(
     anthropic,
-    { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls },
+    { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence },
     undefined,
     opts.signal
   )
