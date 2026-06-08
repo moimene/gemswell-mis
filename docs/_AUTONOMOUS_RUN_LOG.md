@@ -40,6 +40,34 @@ _(none yet — table filled as deploys happen)_
 
 ---
 
+## FINAL REPORT — autonomous run 2026-06-08
+
+### Done & DEPLOYED to prod (verified live, deployment `mekk5y5r4` Ready, main `d70f39c`)
+- **Fase 3 / WS2-T4 — page provenance:** `metadata.page` stamped per chunk via non-invasive post-pass; frontmatter-fence-aware; start-page anchor. (+10 tests)
+- **Fase 3 / WS2-T7/T8/T10 — Mistral OCR:** ported `src/lib/rag/ocr.ts` (faithful), wired into `parseDocument` as a scanned-PDF/image fallback, **strictly opt-in** (`MISTRAL_API_KEY`+`RAG_OCR_ENABLED='true'` — both absent in prod → dead code). Image mimes mapped. Reinforced LlamaParse pipe-table instruction. (+18 tests)
+- **embedding_model provenance:** new ingests stamp `metadata.embedding_model='gemini-embedding-001'`.
+- **Repo hygiene (audit C5):** removed 3 ungoverned legacy ingest scripts.
+- **Doc-rot:** `CLAUDE.md` migrations note corrected (015→019 + ledger pointers).
+- Gates each increment: vitest (150/150), tsc clean, lint clean, `next build` green. Each increment passed a 2-opus Ronda 1; the deploy passed a 3-opus **unanimous** Ronda 2; Codex ran once (succeeded, not fallback) and found 2 real issues that were fixed.
+
+### Authored, NOT applied — PENDIENTE USUARIO (need a net the agent can't mount autonomously)
+- **`sql/023`** (ÚNICO-DUEÑO-DE-RPC): recreates both retrieval RPCs **verbatim from 019** (diff-verified) + chunk_index/page/storage_path in the metadata jsonb (no signature change). Apply with the branch-probe + EXPLAIN ANALYZE + Ronda-2-live + auto-rollback net (runbook in PENDIENTE table). Rollback ready.
+- **`sql/025`**: `rag_chunks.embedding_model` column + backfill. Rollback ready.
+- **OCR live-enable**: add `MISTRAL_API_KEY` + `RAG_OCR_ENABLED=true`.
+
+### NOT done this session (honest scope) — remaining Fases 4–8
+Per charter "lo más conservador y reversible": prod DDL was **not** auto-applied because the mandated Supabase-branch probe net is not mountable autonomously (MCP needs user OAuth; no DB password; out-of-band schema). That gates most of Fases 4–6 (governance/ingest RPCs). Remaining, with the plan §-refs:
+- **Fase 4** (governance endorse / source_of_record reachable): migrations `020/021/022` + `endorse` SSOT fn + UI button + bulk review queue + endorse-797 script. *(migrations unauthored; needs the RPC net.)*
+- **Fase 5** (retrieval window): apply `023`/`024`; signed-download endpoint; citation deep-link `#page=N` (note: `metadata.page`/`storage_path` already flow to retrieval once new docs ingest); render `tool_calls` in chat UI (M4). *(UI parts are prod-safe and unblocked; can be done without DDL.)*
+- **Fase 6** (ingest reliability): `vercel.json` cron reaper (re-ingest), `026/027/028`, durable jobs, `source_channel`, legacy dedup. *(cron + jobs are partly prod-safe.)*
+- **Fase 7** (CI eval gate): `scripts/eval/gate.ts` + `.github/workflows/eval-gate.yml`. *(fully prod-safe — config/CI; good next autonomous target.)*
+- **Fase 8** (convergence): `WS7-T1` embedding-compat experiment (`gemini-embedding-001` vs `-2-preview`) → `embedding-pin-decision.md`; extract `@teras/rag-core`; remove MDL inline anon JWT (rotation = PENDIENTE USUARIO).
+
+### Eval note
+The full `eval:retrieval`/`eval:answers` harness (paid, live LLM+DB) was **not** run: every deployed change is ingest-path-only and provably cannot alter retrieval over the existing 156,898 chunks (Ronda 2 verified the chat read path imports none of the changed modules). Re-running ws1-base would measure nothing new. Run it after the first real new-doc ingest or after applying `023`.
+
+---
+
 ## Incremental log (each increment: TDD → Ronda 1 → gates → commit)
 
 ### INC-1 — Fase 3 / WS2-T4: page provenance (`metadata.page`) · 2026-06-08 · prod-safe (new ingests only)
