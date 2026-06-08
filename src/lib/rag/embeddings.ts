@@ -204,12 +204,97 @@ export function chunkFinancialContent(
   text: string,
   baseMetadata: ChunkMetadata = {}
 ): Chunk[] {
-  // Try structured chunking first
+  // Markdown pipe-tables FIRST (audit A1, the worst-engineered component). LlamaParse emits financial
+  // data as `| col | col |` markdown tables whose numbers carry commas (1,234,567), so the legacy
+  // comma/tab heuristics either mangle them (tryStructuredChunk) or, when they don't fire, split a table
+  // mid-row in chunkNarrative — severing a value from its header. Chunk pipe-tables table-aware (a data
+  // row is atomic, the header+separator repeat on every fragment) before anything else.
+  const tableAware = tryMarkdownTableChunk(text, baseMetadata)
+  if (tableAware.length > 0) return tableAware
+
+  // Try structured chunking next (TSV/CSV)
   const structured = tryStructuredChunk(text, baseMetadata)
   if (structured.length > 0) return structured
 
   // Fallback: paragraph-aware narrative chunking
   return chunkNarrative(text, baseMetadata)
+}
+
+function isPipeRow(l: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(l)
+}
+function isSepRow(l: string): boolean {
+  return /^\s*\|[\s:|-]+\|\s*$/.test(l) && l.includes('-')
+}
+
+/**
+ * Split text into ordered table / non-table segments and chunk each: markdown pipe-table blocks via
+ * chunkTableBlock (row-atomic, header repeated), the prose between them via chunkNarrative. Returns []
+ * if no genuine table (>=3 rows with a separator second row) is present, so the caller falls through.
+ */
+function tryMarkdownTableChunk(text: string, base: ChunkMetadata): Chunk[] {
+  const lines = text.split('\n')
+  type Seg = { type: 'table' | 'text'; lines: string[] }
+  const segs: Seg[] = []
+  let i = 0
+  let sawTable = false
+  while (i < lines.length) {
+    if (isPipeRow(lines[i])) {
+      const run: string[] = []
+      while (i < lines.length && isPipeRow(lines[i])) { run.push(lines[i]); i++ }
+      if (run.length >= 3 && isSepRow(run[1])) { segs.push({ type: 'table', lines: run }); sawTable = true }
+      else segs.push({ type: 'text', lines: run }) // pipe-ish but not a real table — treat as prose
+    } else {
+      const run: string[] = []
+      while (i < lines.length && !isPipeRow(lines[i])) { run.push(lines[i]); i++ }
+      segs.push({ type: 'text', lines: run })
+    }
+  }
+  if (!sawTable) return []
+
+  const out: Chunk[] = []
+  for (const seg of segs) {
+    if (seg.type === 'table') {
+      out.push(...chunkTableBlock(seg.lines, base))
+    } else {
+      const t = seg.lines.join('\n').trim()
+      if (t) out.push(...chunkNarrative(t, base))
+    }
+  }
+  return out
+}
+
+/** Chunk one markdown table block: header + separator repeat on EVERY fragment; a data row is atomic
+ *  (never split, even if a single oversized row exceeds MAX_CHUNK_SIZE). */
+function chunkTableBlock(rows: string[], base: ChunkMetadata): Chunk[] {
+  const header = rows[0]
+  const sep = isSepRow(rows[1]) ? rows[1] : ''
+  const prefix = sep ? `${header}\n${sep}` : header
+  const dataRows = rows.slice(sep ? 2 : 1)
+  const chunks: Chunk[] = []
+  let cur: string[] = []
+  let curLen = prefix.length
+  const flush = () => {
+    if (cur.length === 0) return
+    const content = [prefix, ...cur].join('\n')
+    chunks.push({
+      content,
+      metadata: { ...base, ...detectFinancialMetadata(content), chunk_type: 'table_section' },
+      tokenEstimate: Math.ceil(content.length / 4),
+    })
+    cur = []
+    curLen = prefix.length
+  }
+  for (const row of dataRows) {
+    if (cur.length > 0 && curLen + row.length + 1 > MAX_CHUNK_SIZE) flush()
+    cur.push(row)
+    curLen += row.length + 1
+  }
+  flush()
+  if (chunks.length === 0) {
+    chunks.push({ content: prefix, metadata: { ...base, chunk_type: 'table_section' }, tokenEstimate: Math.ceil(prefix.length / 4) })
+  }
+  return chunks
 }
 
 /**
