@@ -31,7 +31,9 @@ _(none yet — table filled as deploys happen)_
 ## PENDIENTE USUARIO (action needs a net the agent can't mount, or needs a secret/dashboard)
 | Item | Why pending | Exact apply + verify + rollback |
 |------|-------------|----------------------------------|
-| Migrations `sql/020`–`028` | branch-probe net not mountable autonomously (see decision above) | runbook per-migration appended below as each is authored |
+| **`sql/025`** embedding_model (authored) | additive column + 156k UPDATE; no branch needed but a prod write | apply `sql/025_embedding_model.sql` → verify `select embedding_model,count(*) from rag_chunks group by 1` (all `gemini-embedding-001`) → rollback `sql/rollback/025_rollback.sql` (drop column) |
+| **`sql/023`** retrieval RPC provenance (authored — ÚNICO DUEÑO) | high-risk RPC recreation; needs branch-probe + EXPLAIN ANALYZE the agent can't mount | apply `sql/023_retrieval_provenance_columns.sql` in a Supabase **branch** first → EXPLAIN ANALYZE via supabase-js (match_chunks index-served <100ms MAD+KLP, keyword <1s) → confirm 7 superseded docs/369 chunks return 0 → Ronda 2 → prod → re-verify live → AUTO-ROLLBACK `sql/rollback/023_rollback.sql` on any regression. Body is verbatim-019 (diff-verified) + chunk_index/page/storage_path in metadata jsonb (no signature change). |
+| Migrations `sql/020/021/022/024/026/027/028` | branch-probe net not mountable autonomously; Fase 4/5/6 RPCs not yet authored this run | designs specified in plan §2/§3; author + apply with the same net. Not authored this session (scope/time) — see final report. |
 | OCR live-enable (Fase 3) | no `MISTRAL_API_KEY` in env | add key → set `RAG_OCR_ENABLED=true` in Vercel → upload a scanned PDF → expect `ocr_used=true` |
 | Rotate MDL anon JWT (Fase 8 WS7-T2) | key rotation is a Supabase-dashboard action | rotate anon key in dashboard after inline JWT removed from code |
 
@@ -55,4 +57,11 @@ _(none yet — table filled as deploys happen)_
 - **Ronda 1 (2 opus + Codex):** both opus = SAFE-WITH-NITS (port faithful, default-off holds, no SQL/RPC). Fixed F1 (success path used `<500 chars` → would OCR a short *clean* PDF; now garbage-only `isGarbledText`) and F4 (`RAG_OCR_ENABLED` was opt-out → now true opt-in, matches runbook). Added reviewer-B boundary tests (500/0.4) + parse integration tests.
 - **Eval:** not run — only affects NEW ingests and is off in prod; cannot regress retrieval.
 - **Live-enable = PENDIENTE USUARIO** (no `MISTRAL_API_KEY`): add key → set `RAG_OCR_ENABLED=true` in Vercel → upload a scanned PDF → expect `ocr_used=true`, doc ingested. **Rollback:** unset either env var (instant), or `git revert`.
+
+### INC-3 — Fase 3/5: embedding_model provenance (code, prod-safe) + migrations 025 & 023 authored (PENDIENTE) · 2026-06-08
+- **Code (prod-safe):** new ingests stamp `metadata.embedding_model='gemini-embedding-001'` (`EMBEDDING_MODEL` exported from embeddings.ts; set in queue-processor baseMetadata). `embedding_model?: string` added to `ChunkMetadata`. Suite 150/150; tsc clean.
+- **`sql/025` (PENDIENTE):** `rag_chunks.embedding_model` column + backfill (constant/metadata). Rollback drops the column. Runbook in the table above.
+- **`sql/023` (PENDIENTE, ÚNICO-DUEÑO-DE-RPC):** recreates both retrieval RPCs **verbatim from 019** (diff-verified — only the documented additions differ) and surfaces `chunk_index`/`page`/`storage_path` via the **metadata jsonb override** (NO return-signature change → `create or replace`, fully backward-compatible — deliberately avoids the riskier column/DROP variant). Note: `metadata.page` already flows to retrieval today via `coalesce(v.metadata,…)`, so once new docs are ingested, page deep-links are unblocked even before 023. Live schema confirmed `chunk_index` + `storage_path` exist.
+- **Doc-rot fixed:** `CLAUDE.md` "Migrations applied through 015" → corrected to **019 live** + ledger/PENDIENTE pointers.
+- **Ronda 1 on 023:** done by careful verbatim-diff against 019 (the único-dueño guardrail) — see diff in commit. Full Ronda 2 (live EXPLAIN ANALYZE) is part of the PENDIENTE apply runbook since it requires a branch.
 

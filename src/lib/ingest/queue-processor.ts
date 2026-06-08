@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { parseDocument } from '@/lib/rag/parse'
-import { chunkFinancialContent, embedBatch, DIMENSIONS, type ChunkMetadata } from '@/lib/rag/embeddings'
+import { chunkFinancialContent, embedBatch, DIMENSIONS, EMBEDDING_MODEL, type ChunkMetadata } from '@/lib/rag/embeddings'
 import { buildMarkdownArtifact, type MarkdownFrontmatter } from '@/lib/knowledge/markdown-artifact'
 import { classifyDocument, decideReviewStatus } from '@/lib/knowledge/classify'
 import type {
@@ -372,7 +372,8 @@ export async function ingestBuffer(
       source_file: input.fileName, document_id: documentId, source_hash: sourceHash,
       source_channel: DEFAULT_SOURCE_CHANNEL, review_status: govReview, classification_source: govSource,
       lifecycle: govLifecycle, authority_tier: govTier, authority_score: govScore,
-      parser_used: parsed.parser, ocr_used: parsed.ocr_used ?? false, ...(mdPath ? { md_path: mdPath } : {}),
+      parser_used: parsed.parser, ocr_used: parsed.ocr_used ?? false,
+      embedding_model: EMBEDDING_MODEL, ...(mdPath ? { md_path: mdPath } : {}),
     }
     const chunks = chunkFinancialContent(finalMarkdown, baseMetadata)
     if (chunks.length === 0) throw new Error('No chunks generated from content')

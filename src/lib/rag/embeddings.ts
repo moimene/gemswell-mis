@@ -184,6 +184,7 @@ export type ChunkMetadata = {
   md_path?: string
   chunk_type?: string      // 'table_row' | 'table_section' | 'narrative' | 'kpi_summary' | 'clause'
   page?: number            // 1-based source page (audit A5 / WS2-T4); only set when the doc carries page separators
+  embedding_model?: string // embedding model that produced this chunk's vector (Fase 3/8 — convergence pin provenance)
 }
 
 export type Chunk = {
@@ -710,5 +711,9 @@ function detectFinancialMetadata(text: string): Partial<ChunkMetadata> {
 
   return meta
 }
+
+/** The embedding model that produces every vector in this app. Stamped per-chunk for convergence
+ *  provenance (Fase 8 pin decision): a corpus must never mix vectors from incompatible models. */
+export const EMBEDDING_MODEL = MODEL
 
 export { detectFinancialMetadata, DIMENSIONS }
