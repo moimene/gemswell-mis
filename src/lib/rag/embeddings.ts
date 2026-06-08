@@ -242,25 +242,28 @@ function chunkFinancialContentInner(
 const PAGE_SEPARATOR_RE = /^\s*-{3,}\s*$/
 
 /**
- * Locate a chunk in the source by trying its most distinctive lines (longest first) and returning the
- * offset of the first one found at/after `cursor`. We try several candidates, not just the single longest,
- * because chunkNarrative prepends a SYNTHETIC overlap line (the previous chunk's last ~40 words space-joined)
- * that is often the longest line yet does NOT exist verbatim in the source — anchoring on it would fail.
- * A repeated table/clause header is short, so the longest REAL lines are per-page content. Returns
- * {idx,len} or null when no candidate is locatable (→ honest "no page"). Min length 12 keeps anchors distinctive.
+ * Locate where a chunk STARTS in the source: walk its lines IN ORDER and return the offset of the FIRST
+ * distinctive line found at/after `cursor`. Start-of-chunk (not longest-line) is the right citation
+ * convention — a chunk that straddles a page break belongs to the page it begins on. Walking in order
+ * also sidesteps two traps: (a) chunkNarrative prepends a SYNTHETIC overlap line (prev chunk's last ~40
+ * words space-joined) that is not in the source, so it simply isn't found and we move on; (b) a table
+ * fragment repeats the header as a prefix — for the first fragment the header IS the start, and for later
+ * fragments the single header occurrence already sits behind `cursor`, so we fall through to its real data
+ * rows. Min length 12 keeps anchors distinctive. Returns null when nothing is locatable (→ honest no-page).
  */
 function findPageAnchor(content: string, text: string, cursor: number): { idx: number; len: number } | null {
-  const candidates = content
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length >= 12 && !PAGE_SEPARATOR_RE.test(l))
-    .sort((a, b) => b.length - a.length)
-    .slice(0, 8)
-  for (const c of candidates) {
-    const idx = text.indexOf(c, cursor)
-    if (idx >= 0) return { idx, len: c.length }
+  // Take the MINIMUM source offset among the chunk's distinctive lines = where the chunk truly starts.
+  // A repeated table header (identical across pages) would mis-match a LATER page if taken alone, but a
+  // page-unique data row of the same chunk sits at an EARLIER offset, so the min wins it back to the
+  // correct (start) page. The synthetic narrative-overlap line isn't in the source, so it never matches.
+  let best: { idx: number; len: number } | null = null
+  for (const raw of content.split('\n')) {
+    const l = raw.trim()
+    if (l.length < 12 || PAGE_SEPARATOR_RE.test(l)) continue
+    const idx = text.indexOf(l, cursor)
+    if (idx >= 0 && (best === null || idx < best.idx)) best = { idx, len: l.length }
   }
-  return null
+  return best
 }
 
 /**
@@ -282,7 +285,10 @@ function assignPages(originalText: string, chunks: Chunk[]): Chunk[] {
   if (lines[0] !== undefined && PAGE_SEPARATOR_RE.test(lines[0])) {
     for (let i = 1; i < lines.length && i <= 60; i++) {
       if (PAGE_SEPARATOR_RE.test(lines[i])) {
-        if (lines.slice(1, i).some((l) => /^[A-Za-z_][\w-]*:\s/.test(l))) frontmatterEnd = i
+        // Require an ARTIFACT-specific key (buildMarkdownArtifact always emits these) — not just any
+        // `key: value` line — so a raw doc that genuinely opens with `---` then a "Title:" line is NOT
+        // mistaken for frontmatter, which would swallow a real first page break (Codex finding #2).
+        if (lines.slice(1, i).some((l) => /^(document_id|source_hash|generated_at):\s/.test(l))) frontmatterEnd = i
         break
       }
     }

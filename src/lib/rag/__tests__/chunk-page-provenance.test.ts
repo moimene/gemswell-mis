@@ -102,10 +102,33 @@ describe('chunkFinancialContent — page provenance robustness (Ronda 1 nits #2/
     expect(chunks.some((c) => c.metadata.page === 2)).toBe(true)
   })
 
+  it('a single chunk straddling a page break is assigned its START page, not the page of its longest line (Codex #1)', () => {
+    // Small doc → one narrative chunk spanning `---`; page 2 holds the longest line. Start-page convention → page 1.
+    const doc = ['P1 linea corta unica.', '', '---', '',
+      'P2 linea mucho mas larga y distintiva que ganaria la seleccion de anchor por longitud y vive en pagina dos.'].join('\n')
+    const chunks = chunkFinancialContent(doc)
+    const straddling = chunks.find((c) => c.content.includes('P1 linea') && c.content.includes('P2 linea'))
+    expect(straddling, 'expected a single chunk holding both pages').toBeTruthy()
+    expect(straddling!.metadata.page).toBe(1)
+  })
+
+  it('does NOT treat a raw doc that opens with `---` + a non-artifact key line as frontmatter (Codex #2)', () => {
+    // Real page breaks must not be swallowed: `Title:` is not an artifact key, so the leading `---` is a page
+    // break. Bodies are large so each forms its own chunk (a tiny doc would collapse into one chunk).
+    const doc = ['---', 'Title: Board Pack extraido del PDF', bigPara('ALPHA'), '---', bigPara('BRAVO'), '---', bigPara('CHARLIE')].join('\n')
+    const chunks = chunkFinancialContent(doc)
+    // deep marker (numero 50) sits well inside each page, past any boundary-straddling chunk
+    const pageOf = (m: string) => chunks.find((c) => c.content.includes(`${m} parrafo relleno numero 50`))?.metadata.page
+    // ascending, distinct pages — the first `---` was NOT consumed as a frontmatter fence
+    expect(pageOf('BRAVO')!).toBeGreaterThan(pageOf('ALPHA')!)
+    expect(pageOf('CHARLIE')!).toBeGreaterThan(pageOf('BRAVO')!)
+  })
+
   it('a trailing page separator does not crash and assigns sane pages', () => {
     const doc = [bigPara('ZULU'), '', '---', '', bigPara('YANKEE'), '', '---'].join('\n')
     const chunks = chunkFinancialContent(doc)
-    expect(chunks.find((c) => c.content.includes('ZULU parrafo'))?.metadata.page).toBe(1)
-    expect(chunks.find((c) => c.content.includes('YANKEE parrafo'))?.metadata.page).toBe(2)
+    // deep markers avoid the page-straddling boundary chunk (which legitimately keeps its START page)
+    expect(chunks.find((c) => c.content.includes('ZULU parrafo relleno numero 50'))?.metadata.page).toBe(1)
+    expect(chunks.find((c) => c.content.includes('YANKEE parrafo relleno numero 50'))?.metadata.page).toBe(2)
   })
 })
