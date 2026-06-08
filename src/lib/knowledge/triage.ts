@@ -44,16 +44,22 @@ const HIGH_VALUE_TYPES = new Set<string>([
   'legal', 'board', 'annual_accounts', 'financial_statements', 'bp_model', 'funding', 'tax', 'dd', 'kyc',
 ])
 const DRAFT_LIFECYCLES = new Set<Lifecycle>(['draft', 'working_paper'])
-const AGGRESSIVE_MIN_CONFIDENCE = 0.6
+const FINAL_LIFECYCLES = new Set<Lifecycle>(['signed', 'executed', 'filed', 'audited'])
+// Explicitly-final docs promote at >=0.6; a doc whose finality the model could NOT determine ('unknown')
+// must clear a HIGHER bar (>=0.75) before becoming "fuente oficial" — the main residual risk an undetected
+// draft could slip through (Ronda 1). This still honors the operator's "no identificado como draft" intent.
+const MIN_CONFIDENCE_FINAL = 0.6
+const MIN_CONFIDENCE_UNKNOWN = 0.75
 
 export function triageAggressive(reclass: Reclassification, current: { authority_tier: AuthorityTier }): TriageDecision {
   const lifecycle = reclass.lifecycle ?? 'unknown'
-  // never auto-promote a superseded doc (it is excluded from retrieval regardless)
+  const minConfidence = FINAL_LIFECYCLES.has(lifecycle) ? MIN_CONFIDENCE_FINAL : MIN_CONFIDENCE_UNKNOWN
+  // never auto-promote a draft/working_paper or a superseded doc (the latter is excluded from retrieval anyway)
   const isHighValueFinal =
     HIGH_VALUE_TYPES.has(reclass.doc_type ?? '') &&
     lifecycle !== 'superseded' &&
     !DRAFT_LIFECYCLES.has(lifecycle) &&
-    reclass.confidence >= AGGRESSIVE_MIN_CONFIDENCE
+    reclass.confidence >= minConfidence
   if (isHighValueFinal) {
     const tier: AuthorityTier = lifecycle === 'audited' ? 'audited' : 'executed'
     return {

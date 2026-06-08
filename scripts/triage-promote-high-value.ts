@@ -47,8 +47,10 @@ async function main() {
   console.log('BEFORE:', JSON.stringify(await sor()))
 
   if (REVERT) {
+    // OLDEST event per doc = the TRUE pre-promotion baseline (a doc promoted twice would otherwise restore
+    // to its intermediate promoted state). Order ascending + keep-first (Ronda 1 finding 3a).
     const { data: evs } = await sb.from('rag_document_events').select('document_id, old_value, created_at')
-      .eq('action', 'triage_promote').eq('reason', REASON).order('created_at', { ascending: false })
+      .eq('action', 'triage_promote').eq('reason', REASON).order('created_at', { ascending: true })
     const priorById = new Map<string, string>()
     for (const e of evs ?? []) if (!priorById.has(e.document_id as string)) priorById.set(e.document_id as string, e.old_value as string)
     const entries = LIMIT ? [...priorById].slice(0, LIMIT) : [...priorById]

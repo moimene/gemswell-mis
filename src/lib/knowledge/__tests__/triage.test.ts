@@ -61,9 +61,17 @@ describe('triageAggressive — high-value final docs → high authority (fuente 
     expect(d.authority_tier).toBe('audited')
   })
 
-  it('promotes a contract whose lifecycle is unknown (NOT identified as draft) — per the policy', () => {
-    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.8, lifecycle: 'unknown' }, cur())
-    expect(d.action).toBe('approve')
+  it('promotes a contract whose lifecycle is unknown (NOT draft) ONLY above the stricter 0.75 bar', () => {
+    const hi = triageAggressive({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.8, lifecycle: 'unknown' }, cur())
+    expect(hi.action).toBe('approve')
+    expect(hi.authority_score).toBe(90)
+    // an unknown-finality doc at 0.6 (would pass for an explicitly-signed doc) must NOT promote
+    const lo = triageAggressive({ doc_type: 'legal', authority_tier: 'unverified', confidence: 0.6, lifecycle: 'unknown' }, cur())
+    expect(lo.authority_score).toBeUndefined()
+  })
+
+  it('a signed doc still promotes at the 0.6 bar (explicit finality)', () => {
+    const d = triageAggressive({ doc_type: 'legal', authority_tier: 'internal', confidence: 0.6, lifecycle: 'signed' }, cur())
     expect(d.authority_score).toBe(90)
   })
 
