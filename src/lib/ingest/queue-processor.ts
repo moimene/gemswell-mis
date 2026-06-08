@@ -414,6 +414,26 @@ export async function ingestBuffer(
       .eq('id', documentId)
     if (finalUpdateErr) throw new Error(`rag_documents final update failed: ${finalUpdateErr.message}`)
 
+    // A4: keep the keyword-selectivity oracle (rag_term_df) fresh now that the corpus changed, so the
+    // keyword lane can't silently time out on a stale df after a bulk ingest. Best-effort — a refresh
+    // failure must NOT fail an otherwise-successful ingest (the oracle degrades gracefully: an unknown
+    // lexeme defaults to df=0 = treated rare = kept). DEBOUNCED: ts_stat is a full scan, so a bulk N-file
+    // upload would otherwise recompute N times — skip if the oracle was refreshed in the last 10 min
+    // (Ronda 2). The tail file of a bulk run still refreshes once the window elapses.
+    try {
+      const { data: meta } = await supabase
+        .from('rag_term_df_meta').select('refreshed_at').maybeSingle()
+      const staleMs = meta?.refreshed_at ? Date.now() - new Date(meta.refreshed_at as string).getTime() : Infinity
+      if (staleMs >= 10 * 60 * 1000) {
+        const { error: refreshErr } = await supabase.rpc('refresh_rag_term_df')
+        if (refreshErr) log(`[upload] rag_term_df refresh skipped: ${refreshErr.message}`)
+      } else {
+        log(`[upload] rag_term_df refresh debounced (last ${Math.round(staleMs / 1000)}s ago)`)
+      }
+    } catch (e) {
+      log(`[upload] rag_term_df refresh threw (non-fatal): ${errorMessage(e)}`)
+    }
+
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
     log(`[upload] Done: ${input.fileName} -> ${insertedChunks} chunks in ${elapsed}s (parser: ${parsed.parser})`)
     return {
