@@ -10,7 +10,19 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { isAdminUser } from '@/lib/is-admin'
 
-const PUBLIC_PATHS = [/^\/login(\/|$)/, /^\/auth\//]
+// `/api/cron/ingest-reaper` is public TO THE PROXY only: it self-authenticates in its own handler via
+// `Authorization: Bearer ${CRON_SECRET}` (fail-closed → 401 without it). Vercel cron sends the secret,
+// not a login cookie, so the admin gate below would 401 it before the handler ran — the bug this fixes.
+// EXACT route (not an `/api/cron/` prefix) on purpose: a prefix would make any FUTURE /api/cron/* route
+// born proxy-public; listing the route explicitly means each new cron endpoint is opted in deliberately
+// (Ronda-1 N1). Traversal-safety relies on Next normalizing the pathname before the proxy sees it
+// (skipProxyUrlNormalize stays off — see next.config).
+const PUBLIC_PATHS = [/^\/login(\/|$)/, /^\/auth\//, /^\/api\/cron\/ingest-reaper$/]
+
+/** Paths the proxy lets through without the admin gate. Exported for testing the security boundary. */
+export function isPublicPath(path: string): boolean {
+  return PUBLIC_PATHS.some((re) => re.test(path))
+}
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -44,7 +56,7 @@ export async function proxy(request: NextRequest) {
     user = null
   }
   const path = request.nextUrl.pathname
-  const isPublic = PUBLIC_PATHS.some((re) => re.test(path))
+  const isPublic = isPublicPath(path)
 
   // Must be a seeded ADMIN, not merely authenticated (CX-1: a stray self-signup gets nothing).
   if (!isAdminUser(user) && !isPublic) {
