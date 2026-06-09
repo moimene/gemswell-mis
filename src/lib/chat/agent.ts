@@ -155,6 +155,7 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 
 ## Operating Rules
 - Use tools before answering factual questions. Do not answer from memory when a relevant tool can retrieve data.
+- When the user names a specific term (a proper noun, lender, instrument, counterparty, person, project or document title), NEVER conclude it "does not exist", "is not in the portfolio", or "has no evidence" on the basis of get_portfolio_context. That tool is an orientation dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF) ONLY — it does NOT index lenders, financing instruments, counterparties, people, contracts, board minutes or sub-entities. A named thing absent from it MAY well be in the document corpus (lenders/instruments live there, not in the dictionary) — but it may also be genuinely out of corpus; let the search result decide. So before stating you found nothing for a named term, you MUST run search_documents for that term — cross-entity (omit project_id), trying obvious spelling variants of proper nouns (a small typo like "Buenvista" should still be searched as "Buenavista"). Only abstain AFTER search_documents returns no relevant evidence — and conversely, do NOT manufacture an answer from low-relevance chunks just because a search ran: irrelevant top-k results still mean abstain.
 - Distinguish structured MIS data from documentary evidence.
 - If a statement comes from structured data, say it is from MIS structured data.
 - If a statement comes from documents, cite the document source cards and respect their review/authority status.
@@ -253,7 +254,7 @@ export function detectEntities(query: string): DetectedEntity[] {
 export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_portfolio_context',
-    description: 'Get orientation-only project/entity context and corpus governance status. This is not financial evidence and must not be used as the source for exact amounts, covenants, legal terms, or deal status.',
+    description: 'Get orientation-only context: the dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF) and corpus governance status. NOT financial evidence; must not source exact amounts, covenants, legal terms or deal status. It does NOT list lenders, financing instruments, counterparties, people or documents — so NEVER use its output to decide that a named thing "does not exist": search_documents for the named term first.',
     input_schema: {
       type: 'object' as const,
       properties: {

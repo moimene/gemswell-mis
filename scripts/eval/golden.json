@@ -200,5 +200,25 @@
     "expected_kind": "documentary",
     "ground_truth": {},
     "notes": "All-common-term query — regression guard for the keyword df-fallback: it must NOT time out the keyword lane (sql/018 AND-fallback). Watch the pool/latency, not recall."
+  },
+  {
+    "id": "mad-buenavista-lender",
+    "question": "¿Cómo es la financiación de buenvista?",
+    "lang": "es",
+    "category": "funding",
+    "expected_kind": "documentary",
+    "ground_truth": { "titles": ["financiación"], "project_id": "MAD", "doc_type": "funding", "tool": "search_documents", "must_contain": ["Buenavista", "participativo"] },
+    "scoped_filter": { "project_id": null },
+    "notes": "TOOL-ORCHESTRATION DEFECT (2026-06-09): Buenavista is an in-corpus LENDER / participative-loan instrument for MAD (Buenavista Nextgen Urbano S.I.C.C.; crédito participativo, máx 15.657.498,18€), NOT a top-level project. The agent must NOT deny its existence from get_portfolio_context (which only lists MAD/BHX/KLP/PHILAE/GVF) — it MUST search_documents and FIND it. Deliberate typo ('buenvista') also tests spelling-variant robustness. Correct answer is documentary (cites the financing contract), NOT an abstain/clarify. Guards the prompt rule added to agent.ts (verified: before fix the agent called only get_portfolio_context and denied; after fix it searches and finds 12 sources)."
+  },
+  {
+    "id": "named-absent-abstain",
+    "question": "¿Cómo es la financiación del prestamista Sukarrieta en el proyecto de Madrid?",
+    "lang": "es",
+    "category": "robustness",
+    "expected_kind": "abstain",
+    "ground_truth": { "tool": "search_documents" },
+    "scoped_filter": { "project_id": null },
+    "notes": "ADVERSARIAL COUNTERPART to mad-buenavista-lender (Ronda-1 finding #2): 'Sukarrieta' is a plausible-sounding but ABSENT named lender. The fix forces a search_documents before denying — this case guards that the search-before-deny rule does NOT tip into hallucination: after the search returns only low-relevance top-k chunks (vector search always returns something), the agent MUST still abstain ('no encuentro evidencia de un prestamista Sukarrieta'), NOT manufacture a financing structure. So: must call search_documents AND must abstain."
   }
 ]
