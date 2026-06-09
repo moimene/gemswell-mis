@@ -181,6 +181,6 @@ The second session's **aggressive promotion completed**: live now `source_of_rec
 | Item | Why pending | Action |
 |------|-------------|--------|
 | **Dedup `--apply`** (dedicated session) | high-impact bulk governance; max scope ~1,116 dups + 96 zero-chunk + ~1,270 `._*` junk | `node scripts/dedup-legacy-corpus.mjs --max-scope` (dry-run) → `--apply` → BEFORE/AFTER → `--revert` if needed; then `sql/028` PHASE 2 index |
-| **`CRON_SECRET`** in Vercel | activate the F6 reaper (sql/029 ✅ applied #15; code ✅ deployed) | `openssl rand -hex 32` → `vercel env add CRON_SECRET production` (or dashboard) → `vercel --prod` redeploy → next cron returns 200 with `capDisabled:false` |
+| **Re-run cron to confirm 200** | activation blocker was a PROXY bug, now fixed (commit `5545a8e`, pushed → auto-deploying). sql/029 ✅ #15, CRON_SECRET ✅ set, code ✅ deployed. | **Root cause (user diag via Vercel logs):** `src/proxy.ts` admin-gated `/api/*` → 401'd the cron before its handler (not the secret). Fixed: exact-route allowlist `/^\/api\/cron\/ingest-reaper$/` + constant-time secret check + skipProxyUrlNormalize-off guard (Ronda-1 opus SAFE-WITH-NITS, all nits applied; +4 boundary tests). Once the deploy is Ready, press **Run** → expect `200 {ok:true, capDisabled:false}`. |
 | **Deploy F6 reaper + push** | local commits `57b4e88`/`0f33485`/… not pushed | `git push origin main` (reaper is fail-closed without CRON_SECRET; rag-core is behavior-identical) |
 
