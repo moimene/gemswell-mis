@@ -43,6 +43,13 @@ const argv = process.argv.slice(2)
 const APPLY = argv.includes('--apply')
 const REVERT = argv.includes('--revert')
 const BACKFILL = argv.includes('--backfill-hash')
+// MAX SCOPE (operator-chosen, dedicated session): also supersede dead-weight + macOS junk, not just
+// byte-exact dup copies. --include-zero-chunk: docs with chunk_count=0 (ingested, produced no chunks →
+// invisible to retrieval anyway, pure clutter). --include-apple-junk: macOS `._*` AppleDouble resource
+// forks wrongly ingested. --max-scope enables both. All still REVERSIBLE (lifecycle supersede) + audited.
+const MAX_SCOPE = argv.includes('--max-scope')
+const INCLUDE_ZERO = MAX_SCOPE || argv.includes('--include-zero-chunk')
+const INCLUDE_APPLE = MAX_SCOPE || argv.includes('--include-apple-junk')
 const li = argv.indexOf('--limit'); const LIMIT = li >= 0 ? parseInt(argv[li + 1], 10) : Infinity
 const pi = argv.indexOf('--project'); const PROJECT = pi >= 0 ? argv[pi + 1] : null
 const ACTOR = 'admin:console'
@@ -70,12 +77,28 @@ async function pullDocs() {
   return rows
 }
 
-// exact content signature: normalized, order-stable concat of this doc's chunk text
+// exact content signature: normalized, order-stable concat of this doc's chunk text.
+// PAGINATED (1000/page) so a heavy doc never hits the PostgREST statement timeout; the incremental
+// hash means we never hold all chunks in memory. Returns null on any fetch error so the caller SKIPS
+// that doc (never supersede a doc whose content we could not fully read) — a heavy doc aborting the
+// whole bulk was the original brittleness (57014 statement timeout on limit=10000).
 async function contentHash(docId) {
-  const chunks = await rest(`rag_chunks?select=content,chunk_index&document_id=eq.${docId}&order=chunk_index&limit=10000`)
-  if (!chunks.length) return null
-  const norm = chunks.map(c => (c.content ?? '').replace(/\s+/g, ' ').trim()).join('\n')
-  return createHash('sha256').update(norm).digest('hex')
+  const hasher = createHash('sha256')
+  let any = false
+  for (let off = 0; ; off += 1000) {
+    let page
+    try {
+      page = await rest(`rag_chunks?select=content,chunk_index&document_id=eq.${docId}&order=chunk_index&limit=1000&offset=${off}`)
+    } catch (e) {
+      console.error(`  [skip] content fetch failed for ${docId} @off=${off}: ${e.message}`)
+      return null // skip this doc entirely — do not supersede on a partial/failed read
+    }
+    if (!page.length) break
+    for (const c of page) hasher.update((c.content ?? '').replace(/\s+/g, ' ').trim() + '\n')
+    any = true
+    if (page.length < 1000) break
+  }
+  return any ? hasher.digest('hex') : null
 }
 
 async function revertDedup() {
@@ -154,10 +177,27 @@ async function main() {
     }
   }
 
+  const exactContentRedundant = toSupersede.length
+
+  // MAX SCOPE additions (opt-in): dead-weight + macOS junk. No canonical (removed outright, not deduped).
+  let zeroChunk = 0, appleJunk = 0
+  const seen = new Set(toSupersede.map(t => t.doc.id))
+  for (const d of docs) {
+    if (d.lifecycle === 'superseded' || seen.has(d.id)) continue
+    if (INCLUDE_ZERO && (d.chunk_count ?? 0) === 0) {
+      toSupersede.push({ doc: d, canonicalId: null, hash: null, kind: 'dead_weight_zero_chunk' }); seen.add(d.id); zeroChunk++
+    } else if (INCLUDE_APPLE && (d.title ?? '').startsWith('._')) {
+      toSupersede.push({ doc: d, canonicalId: null, hash: null, kind: 'apple_double_junk' }); seen.add(d.id); appleJunk++
+    }
+  }
+
   console.log(JSON.stringify({
     heuristicClusters: candidates.length,
-    exactContentRedundant: toSupersede.length,
-    sample: toSupersede.slice(0, 8).map(t => ({ supersede: t.doc.id, title: t.doc.title, keepCanonical: t.canonicalId })),
+    exactContentRedundant,
+    zeroChunkDeadWeight: INCLUDE_ZERO ? zeroChunk : 'excluded (use --include-zero-chunk/--max-scope)',
+    appleDoubleJunk: INCLUDE_APPLE ? appleJunk : 'excluded (use --include-apple-junk/--max-scope)',
+    totalToSupersede: toSupersede.length,
+    sample: toSupersede.slice(0, 8).map(t => ({ supersede: t.doc.id, title: t.doc.title, keepCanonical: t.canonicalId, kind: t.kind ?? 'dup_copy' })),
   }, null, 2))
 
   if (!APPLY) { console.error('\nDRY-RUN. Re-run with --apply (after explicit authorization) to supersede.'); return }
@@ -174,11 +214,14 @@ async function main() {
     const [cur] = await rest(`rag_documents?select=current_version,lifecycle&id=eq.${t.doc.id}`)
     if (!cur || cur.lifecycle === 'superseded') { skipped++; continue }
     try {
+      const reason = t.kind
+        ? `F6 legacy dedup: ${t.kind} superseded (sql/028)`
+        : `${REASON} (canonical ${t.canonicalId}, hash ${String(t.hash).slice(0, 12)})`
       await rpc('apply_document_governance', {
         p_doc_id: t.doc.id,
-        p_patch: { lifecycle: 'superseded', supersedes_document_id: t.canonicalId },
+        p_patch: { lifecycle: 'superseded', ...(t.canonicalId ? { supersedes_document_id: t.canonicalId } : {}) },
         p_expected_version: cur.current_version,
-        p_events: [{ document_id: t.doc.id, action: 'dedup_supersede', field: 'lifecycle', old_value: cur.lifecycle, new_value: 'superseded', actor: ACTOR, reason: `${REASON} (canonical ${t.canonicalId}, hash ${t.hash.slice(0, 12)})` }],
+        p_events: [{ document_id: t.doc.id, action: 'dedup_supersede', field: 'lifecycle', old_value: cur.lifecycle, new_value: 'superseded', actor: ACTOR, reason }],
       })
       if (BACKFILL) await rpc('apply_document_governance', { p_doc_id: t.canonicalId, p_patch: { content_hash: t.hash }, p_expected_version: undefined, p_events: [] }).catch(() => {})
       done++
