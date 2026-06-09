@@ -103,8 +103,8 @@ async function contentHash(docId) {
 
 async function revertDedup() {
   // find supersede audit events for this op, restore prior lifecycle
-  const events = await rest(`knowledge_audit_event?select=document_id,old_value,new_value,action,created_at&action=eq.dedup_supersede&order=created_at.desc&limit=10000`)
-    .catch(() => { throw new Error('audit table name/columns differ — verify knowledge_audit_event schema before revert') })
+  const events = await rest(`rag_document_events?select=document_id,old_value,new_value,action,created_at&action=eq.dedup_supersede&order=created_at.desc&limit=10000`)
+    .catch(() => { throw new Error('audit table name/columns differ — verify rag_document_events schema before revert') })
   let restored = 0
   for (const e of events) {
     const [cur] = await rest(`rag_documents?select=current_version,lifecycle&id=eq.${e.document_id}`)
