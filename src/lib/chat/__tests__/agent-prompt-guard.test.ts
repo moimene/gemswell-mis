@@ -23,4 +23,32 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/Only abstain AFTER search_documents/i)
     expect(src).toMatch(/do NOT manufacture an answer from low-relevance chunks/i)
   })
+
+  // Council safe-subset (2026-06-09, eval-gated 0-regression): evidence-discipline + orchestration rules.
+  it('closes the evidence escape clause (no independent knowledge of Gemswell)', () => {
+    expect(src).toMatch(/NO independent knowledge of Gemswell/i)
+    expect(src).toMatch(/Use a tool before answering ANY factual question about Gemswell/i)
+  })
+
+  it('subordinates style/depth to evidence discipline', () => {
+    expect(src).toMatch(/Evidence discipline OUTRANKS/i)
+  })
+
+  it('requires an auditable coverage statement on abstention', () => {
+    expect(src).toMatch(/disclose your COVERAGE so the abstention is auditable/i)
+  })
+
+  it('has the bilingual alias list (compensates tsvector simple, no stemming)', () => {
+    expect(src).toMatch(/pacto de socios.*shareholders agreement/i)
+    expect(src).toMatch(/the keyword lane has no stemming/i)
+  })
+
+  it('generalizes the contradiction check beyond totals', () => {
+    expect(src).toMatch(/funding gap, sufficiency\/headroom conclusion, facility size, or a drawn-vs-available/i)
+  })
+
+  it('distinguishes injection from legitimate contractual language', () => {
+    expect(src).toMatch(/legitimate CONTRACTUAL\/CORPORATE language/i)
+    expect(src).toMatch(/supersedes all prior agreements/i)
+  })
 })
