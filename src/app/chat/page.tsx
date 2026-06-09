@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { formatToolCall } from '@/lib/chat/tool-call-display'
 import { citationPage, hasStoredOriginal, originalDownloadHref } from '@/lib/chat/citation-link'
+import { formatCorpusStats, type CorpusStat } from '@/lib/chat/corpus-stats'
 
 // Mirror of ToolCallAudit (kept local so this client page never imports server-only agent.ts at runtime).
 type ToolCall = {
@@ -96,6 +97,8 @@ export default function ChatPage() {
   // collapsed-set: sources show by default (UAT is about citations); clicking COLLAPSES a message's sources
   const [collapsedSources, setCollapsedSources] = useState<Set<number>>(new Set())
   const [progress, setProgress] = useState<Progress | null>(null)
+  const [stats, setStats] = useState<CorpusStat[]>([])               // #2 live corpus stats strip
+  const [viewer, setViewer] = useState<{ documentId: string; page?: number; label: string } | null>(null) // #4 inline PDF
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -105,6 +108,17 @@ export default function ChatPage() {
   }, [messages, progress])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // #2 — live corpus stats for the "Contexto activo" strip (read-only; admin-gated endpoint; the chat
+  // is already admin-only). Best-effort: a failure just leaves the generic fallback line.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/knowledge/corpus/health')
+      .then(r => (r.ok ? r.json() : null))
+      .then(h => { if (!cancelled) setStats(formatCorpusStats(h)) })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [])
 
   function toggleSources(i: number) {
     setCollapsedSources(prev => {
@@ -269,11 +283,21 @@ export default function ChatPage() {
       <div className="flex-none border-b border-slate-100 bg-slate-50 px-6 py-2">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
           <span className="font-mono font-bold uppercase tracking-widest text-slate-400">Contexto activo</span>
-          <span>Documentos aprobados · últimos packs de reporting · métricas publicadas</span>
-          <span className="ml-auto inline-flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            Actualizado con <strong className="font-medium text-slate-600">MAD · Semana 23/2026</strong> (Finanzas, Construcción, Marketing) · pendiente: Operaciones
-          </span>
+          {stats.length > 0 ? (
+            <>
+              {stats.map((s) => (
+                <span key={s.label} className="inline-flex items-baseline gap-1">
+                  <strong className="font-semibold text-slate-700">{s.value}</strong> {s.label}
+                </span>
+              ))}
+              <span className="ml-auto inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                corpus en vivo
+              </span>
+            </>
+          ) : (
+            <span>Documentos aprobados · últimos packs de reporting · métricas publicadas</span>
+          )}
         </div>
       </div>
 
@@ -334,6 +358,13 @@ export default function ChatPage() {
                   )}
                 </div>
               </div>
+
+              {/* #3 — copy the answer (financial answers are tables/figures pasted into reports) */}
+              {msg.role === 'assistant' && msg.content && (
+                <div className="mt-1.5 ml-11">
+                  <CopyButton text={msg.content} />
+                </div>
+              )}
 
               {/* Answer-level advisories (degraded / injection / truncated / not-persisted / retrieval-incomplete / unreviewed) */}
               {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false || msg.verified === false || msg.retrievalIncomplete || (msg.unreviewedUsed ?? 0) > 0) && (
@@ -485,14 +516,12 @@ export default function ChatPage() {
                                 </span>
                               )}
                               {canOpenOriginal && (
-                                <a
-                                  href={originalDownloadHref(src.documentId!, page)}
-                                  target="_blank"
-                                  rel="noreferrer"
+                                <button
+                                  onClick={() => setViewer({ documentId: src.documentId!, page, label })}
                                   className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 border border-indigo-100 hover:bg-indigo-100"
                                 >
                                   abrir original{page != null ? ` (pág ${page})` : ''}
-                                </a>
+                                </button>
                               )}
                               {unreviewed && (
                                 <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 border border-amber-100">
@@ -589,6 +618,76 @@ export default function ChatPage() {
             </svg>
           </button>
         </div>
+      </div>
+
+      {/* #4 — inline PDF viewer modal (over the existing signed-download endpoint) */}
+      {viewer && <PdfViewerModal doc={viewer} onClose={() => setViewer(null)} />}
+    </div>
+  )
+}
+
+/** #3 — copy an assistant answer to the clipboard. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setCopied(true)
+          if (timer.current) clearTimeout(timer.current)
+          timer.current = setTimeout(() => setCopied(false), 1500)
+        } catch { /* clipboard unavailable (insecure context) — no-op */ }
+      }}
+      className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 transition-colors hover:text-slate-600"
+    >
+      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+      </svg>
+      {copied ? 'copiado' : 'copiar'}
+    </button>
+  )
+}
+
+/** #4 — inline viewer for a citation's original PDF. Iframes the signed-download endpoint (302→signed
+ *  Storage URL, served inline) at the cited page; keeps a new-tab link as a fallback for browsers that
+ *  refuse to render the PDF inline. */
+function PdfViewerModal({ doc, onClose }: { doc: { documentId: string; page?: number; label: string }; onClose: () => void }) {
+  const href = originalDownloadHref(doc.documentId, doc.page)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    // scroll-lock the page behind the modal
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="flex h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-none items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-slate-800">{doc.label}</p>
+            {doc.page != null && <p className="text-[11px] text-slate-500">página {doc.page}</p>}
+          </div>
+          <div className="flex flex-none items-center gap-2">
+            <a href={href} target="_blank" rel="noreferrer" className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+              Abrir en pestaña ↗
+            </a>
+            <button onClick={onClose} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+              Cerrar ✕
+            </button>
+          </div>
+        </div>
+        <iframe src={href} title={doc.label} className="w-full flex-1" />
+        <p className="flex-none rounded-b-lg border-t border-slate-100 bg-slate-50 px-4 py-1.5 text-center text-[11px] text-slate-400">
+          ¿No se ve el documento? Usa <span className="font-medium text-slate-500">Abrir en pestaña ↗</span>
+        </p>
       </div>
     </div>
   )
