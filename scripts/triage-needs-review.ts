@@ -26,6 +26,10 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const argv = process.argv.slice(2)
 const APPLY = argv.includes('--apply')
 const REVERT = argv.includes('--revert')
+// Skip docs already out of retrieval (lifecycle='superseded' — e.g. legacy dedup, sql/028). They never
+// need triage; classifying them wastes LLM calls and pollutes the tally. The corpus-health needs_review
+// count is lifecycle-blind, so the live needs_review set can be dominated by superseded dedup residue.
+const EXCLUDE_SUPERSEDED = argv.includes('--exclude-superseded')
 const li = argv.indexOf('--limit')
 const LIMIT = li >= 0 ? parseInt(argv[li + 1], 10) : null
 const REASON = 'automated needs_review triage (Fase 4 WS3-T5)'
@@ -74,9 +78,11 @@ async function main() {
   let lastId = '00000000-0000-0000-0000-000000000000' // min uuid (id is a uuid column; '' is not a valid cursor)
   while (!(LIMIT && processed >= LIMIT)) {
     const pageSize = LIMIT ? Math.min(1000, LIMIT - processed) : 1000
-    const { data: docs, error } = await sb.from('rag_documents')
+    let q = sb.from('rag_documents')
       .select('id, title, authority_tier, current_version')
       .eq('review_status', 'needs_review').gt('id', lastId)
+    if (EXCLUDE_SUPERSEDED) q = q.neq('lifecycle', 'superseded')
+    const { data: docs, error } = await q
       .order('id', { ascending: true }).limit(pageSize)
     if (error) throw new Error(error.message)
     if (!docs || docs.length === 0) break
