@@ -35,7 +35,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["1094af8d-4d39-435a-80dd-e5cdc98305f4"], "titles": ["loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
+    "ground_truth": { "expected_doc_ids": ["d4738ec5-3f54-42ea-a02c-afcbdb030b0c", "1094af8d-4d39-435a-80dd-e5cdc98305f4"], "titles": ["signed loan agreement", "loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Lender = Varia Structured Opportunities Real Estate III; borrower = Wave Park Holdings. GT is correctly under BHX."
   },
