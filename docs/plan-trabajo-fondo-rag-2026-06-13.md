@@ -34,7 +34,17 @@ Pilot `scripts/rechunk-pilot.ts` (read-only, reconstruye texto de chunks → cor
 - **Apply completo (#27 prod):** EN CURSO (~175 docs / ~11.4k chunks, re-embed bulk ~30-35min). Rollback: restore desde `rag_chunks_rechunk_bak_20260613`.
 - Pendiente al terminar: re-eval `run-retrieval.ts`, refresh `rag_term_df` (keyword oracle), verificación integridad, commit.
 
-### Tareas de seguimiento (NO en este pase)
+## EJECUCIÓN — Backlog completo (2026-06-13, adversarial + Codex ×3, mutaciones #28–30)
+Modo adversarial (auto-revisión con datos live) + **Codex `gpt-5.5` como 2º adversarial, 3 pasadas**. El bucle redujo riesgo iterativamente; cada hallazgo concreto fijado.
+- **B1 (sql/032, #28):** 29 anexos de ingeniería (HUB URB planos/MEM, COVE mediciones, PLAN DE PLAZOS, ahorros, BREEAM, drawings) mal puestos `legal/board`@audited-95 → `capex`. **Codex cazó:** `\bloan\b` no es boundary en PG; `pliego` demasiado amplio → fijado (drop `pliego`, `breeam` cubre; +loan/prestamo/cesion/covenant/pliego-de-condicion al exclude). Auditado, reversible. legal/board 706→677, capex 450→479.
+- **B2 (sql/033, #29):** 9 planos image-only (<200 chars) auth→10. **Codex cazó:** "<200 chars" pillaba firmados/certificados cortos → re-scopeado a títulos de DIBUJO ∧ excluye legal/cert/authorization/deed/lease/notice/surrender; quitado `render`(→surrender). El anexo audited-95 near-empty se deja intacto.
+- **B4 (scripts/dedup-near-dups.mjs, #30):** **9** near-dups superseded (variantes mismo-día formato/copia/firma, sim≥0.95 ∧ len≥0.92). **Bucle adversarial 56→12→9:** auto-review cazó que el stem colapsaba series temporales (Tablas MPS semanales, Memo Fase fechados) → `tightKey` preserva fechas; Codex cazó sim sobre primeros-4-chunks → fingerprint FULL-doc; `tightKey` borraba años `(2024)` → solo `(\d{1,3})`; +guarda length-ratio; quitado `supersedes_document_id` (semántica survivor→old); +`--revert`; optimistic lock. 508 clusters → revisión humana (financial-versions/translations/sub-umbral). Chunks de los 9 purgados (384) → backup.
+- **B5 (queue-processor.ts):** `content_hash` en el ingest. **Codex CRÍTICO cazó 2:** (1) hasheaba `finalMarkdown` con frontmatter volátil (document_id/generated_at) → hash único inútil → fijado a `computeContentHash([parsed.content])`; (2) `project_id` NUNCA se persistía en `rag_documents` (bug pre-existente) → índice veía `(hash,NULL)`, NULLs no colisionan → dedup muerto → fijado (persiste project_id en NEW docs, sin sobreescribir reused). On 23505 → supersede el re-upload. 22 tests (5 content-hash + 17 ingest), tsc limpio.
+- **B6:** resuelto por decisión (mantener; tradeoff SHA Kelpa monitorizado). **B7:** `rag_term_df` refrescado (302.797 términos).
+- **Out-of-backlog (Codex round-3, chip lanzado):** `source_hash` dedup es GLOBAL no per-project → mismo fichero no puede aparecer en 2 proyectos. Necesita migración `(source_hash,project_id)`. `task_786828a0`.
+- **Integridad post-backlog:** 5.498 docs · **148.757 chunks** · superseded_present 0 · null_fts/emb 0 · orphans 0 · live_retrievable 3.498.
+
+### Tareas de seguimiento (resto, NO en este pase)
 - Near-dups que A2 (byte-exacto) no cogió: `Loan Agreement 130.000 GBP` ×4 formatos, `Acuerdo Marco ATM-MPS` ×3, `Acuerdo de socios Kelpa` ×2. Necesitan dedup semántico/versión (no byte-exacto).
 - Reclasificar anexos de ingeniería mal puestos como `doc_type='legal'` (mediciones, plazos/costes) → capex/engineering.
 - Wire `content_hash` en el ingest (`queue-processor.ts`) para que el índice único `uq_rag_documents_content_hash` guarde de verdad re-ingestas futuras (hoy ingest no escribe content_hash).

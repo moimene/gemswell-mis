@@ -131,6 +131,23 @@ function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex')
 }
 
+/**
+ * content_hash normalizer: sha256 over each input string's whitespace-collapsed, trimmed text + '\n'.
+ * The INGEST caller passes a single element [parsed.content] — the STABLE parsed body, frontmatter-free
+ * (see the call site / Codex CRITICAL on volatile frontmatter). This guards the partial unique index
+ * `uq_rag_documents_content_hash (content_hash, project_id) WHERE lifecycle<>'superseded'` (sql/028)
+ * against re-ingest of identical content that source_hash (byte-identical only) misses.
+ * NOTE: the legacy backfill (scripts/dedup-legacy-corpus.mjs + sql/028 A1) hashed concatenated CHUNK
+ * text instead (no source body was stored for legacy docs, storage_path=0), so legacy and new hashes use
+ * DIFFERENT bases — the index enforces uniqueness within each cohort; cross-cohort (re-upload of a legacy
+ * doc) is best-effort, not guaranteed. (Backlog B5.)
+ */
+export function computeContentHash(parts: string[]): string {
+  const hasher = createHash('sha256')
+  for (const content of parts) hasher.update((content ?? '').replace(/\s+/g, ' ').trim() + '\n')
+  return hasher.digest('hex')
+}
+
 function hasMissingColumnError(error: { message?: string; code?: string } | null): boolean {
   return error?.code === 'PGRST204' ||
     error?.message?.toLowerCase().includes('column') === true ||
@@ -451,10 +468,49 @@ export async function ingestBuffer(
         authority_score: govScore, classification_source: govSource, classification_confidence: govConfidence,
         review_status: govReview, lifecycle: govLifecycle, summary: cls?.result.summary ?? null,
         topics: cls?.result.topics ?? null, currency: cls?.result.currency ?? null, period: cls?.result.period ?? null,
+        // B5/Codex BLOCKER: persist project_id on the doc. It was never written (only chunk metadata had
+        // it), so rag_documents.project_id was NULL for uploads → the partial unique index saw (hash, NULL)
+        // and NULLs never collide, defeating dedup; it also left uploads unscoped for project-filtered chat.
+        // Only set it on a NEW doc — never overwrite a REUSED doc's existing project assignment on a
+        // cross-project re-ingest of the same source_hash (Codex round-3).
+        ...((!reserved.reused && input.projectId) ? { project_id: input.projectId } : {}),
         ...(input.rawStoragePath ? { storage_path: input.rawStoragePath } : {}),
       })
       .eq('id', documentId)
     if (finalUpdateErr) throw new Error(`rag_documents final update failed: ${finalUpdateErr.message}`)
+
+    // B5: content_hash dedup key — SEPARATE best-effort update AFTER the main one, so a 23505 unique
+    // violation can NEVER undo the status='indexed' write.
+    // Hash the STABLE parsed body (parsed.content), NOT the chunked finalMarkdown: buildMarkdownArtifact
+    // prepends frontmatter carrying per-ingest document_id/source_hash/generated_at, so hashing the chunks
+    // would make every hash unique and the unique index useless (Codex CRITICAL). On a true duplicate
+    // (23505 = same content_hash already live for this project) we SUPERSEDE this re-upload and link it to
+    // the existing copy, so a redundant doc never competes in retrieval (vs leaving an untracked live dup).
+    try {
+      const contentHash = computeContentHash([parsed.content])
+      const { error: hashErr } = await supabase
+        .from('rag_documents').update({ content_hash: contentHash }).eq('id', documentId)
+      if (hashErr) {
+        if ((hashErr as { code?: string }).code === '23505') {
+          // 23505 only fires for a non-null project_id (NULLs don't collide), so an .eq match is valid here.
+          let lookup = supabase.from('rag_documents').select('id')
+            .eq('content_hash', contentHash).neq('lifecycle', 'superseded').neq('id', documentId)
+          lookup = input.projectId ? lookup.eq('project_id', input.projectId) : lookup.is('project_id', null)
+          const { data: existing } = await lookup.limit(1).maybeSingle()
+          log(`[upload] duplicate content — ${input.fileName} matches existing ${existing?.id ?? '(unknown)'}; superseding the re-upload`)
+          // Set lifecycle only (not supersedes_document_id — that column's semantics are survivor→old, and
+          // setting it on the superseded doc would invert lineage; the canonical id is recorded in the event).
+          await supabase.from('rag_documents').update({
+            lifecycle: 'superseded',
+            review_reason: `duplicate content of ${existing?.id ?? 'an already-indexed doc'} (content_hash) — superseded on re-ingest`,
+          }).eq('id', documentId)
+        } else if (!hasMissingColumnError(hashErr)) {
+          log(`[upload] content_hash update skipped: ${hashErr.message}`)
+        }
+      }
+    } catch (e) {
+      log(`[upload] content_hash compute/update threw (non-fatal): ${errorMessage(e)}`)
+    }
 
     // Best-effort retry bookkeeping: sql/029 may not exist on every environment, so never let this
     // fail an otherwise-successful ingest.
