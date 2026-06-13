@@ -23,6 +23,7 @@ export type ListParams = {
   onlyNeedsReview: boolean
   onlyNoMarkdown: boolean
   includeRetired: boolean
+  onlyErrors: boolean
   // F17: a doc_type that isn't in the allowlist must return ZERO results, not silently drop the
   // filter and return the full list (a wrong-result-not-error compliance hazard).
   docTypeInvalid: boolean
@@ -58,6 +59,7 @@ export function parseListParams(sp: URLSearchParams): ListParams {
     onlyNeedsReview: sp.get('onlyNeedsReview') === 'true',
     onlyNoMarkdown: sp.get('onlyNoMarkdown') === 'true',
     includeRetired: sp.get('includeRetired') === 'true',
+    onlyErrors: sp.get('onlyErrors') === 'true',
     sort: sp.get('sort') === 'review' ? 'review' : 'authority',
   }
 }

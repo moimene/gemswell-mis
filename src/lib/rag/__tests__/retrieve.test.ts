@@ -14,13 +14,24 @@ vi.mock('@/lib/rag/rerank', () => ({
   })),
 }))
 
-import { retrieveDocuments, isRejectedSource, isExcludedFromRetrieval, emptyResultMessage, fusePool, applyRelevanceFloor } from '@/lib/rag/retrieve'
+import {
+  retrieveDocuments,
+  isRejectedSource,
+  isExcludedFromRetrieval,
+  emptyResultMessage,
+  fusePool,
+  applyRelevanceFloor,
+  isAllowedByGroundingMode,
+  RAG_KEYWORD_MATCH_COUNT,
+  RAG_VECTOR_MATCH_COUNT,
+} from '@/lib/rag/retrieve'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
 
 function fakeSupabase(vectorRows: Row[], keywordRows: Row[]) {
   // 2nd param typed so `.mock.calls[i][1]` (the RPC args object) is type-safe in assertions below.
-  const rpc = vi.fn(async (name: string, _params?: Record<string, unknown>) => {
+  const rpc = vi.fn(async (name: string, params?: Record<string, unknown>) => {
+    void params
     if (name === 'match_chunks') return { data: vectorRows, error: null }
     if (name === 'keyword_search_chunks') return { data: keywordRows, error: null }
     return { data: [], error: null }
@@ -93,6 +104,15 @@ describe('retrieveDocuments', () => {
     const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
     expect(matchCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal', match_threshold: 0.18 })
     expect(kwCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal' })
+  })
+
+  it('over-extracts before app-layer strict grounding filters', async () => {
+    const { client, rpc } = fakeSupabase([], [])
+    await retrieveDocuments(client, 'q', { groundingMode: 'official_only' })
+    const matchCall = rpc.mock.calls.find((c) => c[0] === 'match_chunks')
+    const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
+    expect(matchCall?.[1]).toMatchObject({ match_count: Math.min(RAG_VECTOR_MATCH_COUNT * 4, 100) })
+    expect(kwCall?.[1]).toMatchObject({ match_count: Math.min(RAG_KEYWORD_MATCH_COUNT * 4, 80) })
   })
 })
 
@@ -175,6 +195,29 @@ describe('retrieveDocuments — superseded exclusion + degradation diagnostics',
     expect(ranked.map((c) => c.id)).toEqual(['k'])
   })
 
+  it('trusted_only withholds unreviewed chunks before rerank', async () => {
+    const vector: Row[] = [
+      { id: 'nr', document_id: 'd1', content: 'unreviewed', metadata: { review_status: 'needs_review', authority_score: 99 }, similarity: 0.99 },
+      { id: 'ok', document_id: 'd2', content: 'reviewed supporting', metadata: { review_status: 'approved', authority_score: 80, classification_source: 'agent_reviewed' }, similarity: 0.5 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'q', { groundingMode: 'trusted_only' })
+    expect(ranked.map(c => c.id)).toEqual(['ok'])
+    expect(diagnostics.groundingFilteredCount).toBe(1)
+    expect(diagnostics.unreviewedUsed).toBe(0)
+  })
+
+  it('official_only keeps only source-of-record evidence', async () => {
+    const vector: Row[] = [
+      { id: 'supporting', document_id: 'd1', content: 'approved but not official', metadata: { review_status: 'approved', authority_score: 80, classification_source: 'agent_reviewed' }, similarity: 0.99 },
+      { id: 'official', document_id: 'd2', content: 'official', metadata: approved, similarity: 0.5 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'q', { groundingMode: 'official_only' })
+    expect(ranked.map(c => c.id)).toEqual(['official'])
+    expect(diagnostics.groundingFilteredCount).toBe(1)
+  })
+
   it('counts unreviewedUsed = needs_review/pending chunks in the FINAL ranked set', async () => {
     const vector: Row[] = [
       { id: 'ap', document_id: 'd1', content: 'approved', metadata: { review_status: 'approved', authority_score: 80 }, similarity: 0.9 },
@@ -184,6 +227,16 @@ describe('retrieveDocuments — superseded exclusion + degradation diagnostics',
     const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
     expect(ranked.map((c) => c.id)).toEqual(['ap', 'nr']) // approved leads, unreviewed is fallback
     expect(diagnostics.unreviewedUsed).toBe(1)
+  })
+})
+
+describe('isAllowedByGroundingMode', () => {
+  it('maps standard/trusted/official to governance tiers', () => {
+    expect(isAllowedByGroundingMode({ review_status: 'needs_review', authority_score: 100 }, 'standard')).toBe(true)
+    expect(isAllowedByGroundingMode({ review_status: 'needs_review', authority_score: 100 }, 'trusted_only')).toBe(false)
+    expect(isAllowedByGroundingMode({ review_status: 'approved', authority_score: 80, classification_source: 'human' }, 'trusted_only')).toBe(true)
+    expect(isAllowedByGroundingMode({ review_status: 'approved', authority_score: 80, classification_source: 'human' }, 'official_only')).toBe(false)
+    expect(isAllowedByGroundingMode(approved, 'official_only')).toBe(true)
   })
 })
 

@@ -4,6 +4,8 @@ import { reconstructMarkdown } from '@/lib/knowledge/markdown-reconstruct'
 import { computeGovernanceAction, InvalidTransitionError } from '@/lib/knowledge/governance-actions'
 import type { DocGovernanceState, GovernanceAction, ReclassifyFields } from '@/lib/knowledge/contracts'
 
+const ARTIFACT_BUCKET = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+
 // F11: log the real DB error server-side, return a generic message (never leak column/enum/constraint
 // names to the client).
 function internalError(context: string, err: unknown): NextResponse {
@@ -42,16 +44,27 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const fetched = chunks ?? []
     const chunksTruncated = (doc.chunk_count ?? 0) > fetched.length
-    const markdown = reconstructMarkdown(fetched.map(c => ({
+    const reconstructedMarkdown = reconstructMarkdown(fetched.map(c => ({
       chunk_index: c.chunk_index as number, content: c.content as string,
     })))
+    let markdown = reconstructedMarkdown
+    let markdownSource = doc.md_path ? 'artifact_unavailable' : 'reconstructed'
+    if (doc.md_path) {
+      const { data: mdBlob, error: mdErr } = await supabase.storage.from(ARTIFACT_BUCKET).download(doc.md_path as string)
+      if (mdBlob && !mdErr) {
+        markdown = await mdBlob.text()
+        markdownSource = 'artifact_path'
+      } else {
+        console.warn(`[knowledge/documents/:id] markdown artifact unavailable for ${id}:`, mdErr?.message)
+      }
+    }
 
     return NextResponse.json({
       document: doc,
       chunks: fetched,
       chunks_truncated: chunksTruncated,
       events: events ?? [],
-      markdown: { source: doc.md_path ? 'artifact_path' : 'reconstructed', content: markdown },
+      markdown: { source: markdownSource, content: markdown },
     })
   } catch (err: unknown) {
     return internalError('handler', err)

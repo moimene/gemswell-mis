@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { reapStrandedDocuments, ingestBuffer } from './queue-processor'
+import type { SourceChannel } from '@/lib/knowledge/contracts'
 
 // F6 — ingest reaper. Two jobs, run on a Vercel cron (vercel.json → /api/cron/ingest-reaper):
 //  1. flip docs stranded in status='processing' (killed mid-ingest) to 'error' — on a SCHEDULE, not
@@ -28,6 +29,7 @@ export type RecoverableDoc = {
   storage_path: string
   title: string
   project_id: string | null
+  source_channel?: SourceChannel | null
   reingest_attempts: number
 }
 export type ReaperResult = {
@@ -74,7 +76,7 @@ export function defaultReaperDeps(opts: ReaperOptions = {}): ReaperDeps {
     listRecoverable: async (sb, limit, maxAttempts) => {
       const { data, error } = await sb
         .from('rag_documents')
-        .select('id, storage_path, title, project_id, reingest_attempts')
+        .select('id, storage_path, title, project_id, source_channel, reingest_attempts')
         .eq('status', 'error')
         .not('storage_path', 'is', null)
         .neq('review_status', 'rejected')          // never re-process a rejected doc (sticky)
@@ -107,11 +109,13 @@ export function defaultReaperDeps(opts: ReaperOptions = {}): ReaperDeps {
         buffer,
         projectId: doc.project_id,
         rawStoragePath: doc.storage_path,
+        sourceChannel: doc.source_channel ?? undefined,
       })
       return { status: res.status }
     },
     markFailure: async (sb, docId, nextAttempts) => {
-      await sb.from('rag_documents').update({ reingest_attempts: nextAttempts }).eq('id', docId)
+      const { error } = await sb.from('rag_documents').update({ reingest_attempts: nextAttempts }).eq('id', docId)
+      if (error) throw new Error(`rag_documents reingest_attempts update failed: ${error.message}`)
     },
     now: () => Date.now(),
   }
@@ -139,6 +143,17 @@ export async function reapAndRequeue(
   let failed = 0
   let timedOut = false
 
+  async function markFailedAttempt(doc: RecoverableDoc) {
+    try {
+      await deps.markFailure(sb, doc.id, (doc.reingest_attempts ?? 0) + 1)
+    } catch (markErr) {
+      console.error(
+        `[reaper] failed to persist reingest_attempts for ${doc.id}:`,
+        markErr instanceof Error ? markErr.message : markErr
+      )
+    }
+  }
+
   for (const doc of recoverable ?? []) {
     if (deps.now() - start >= budgetMs) {
       timedOut = true
@@ -148,19 +163,19 @@ export async function reapAndRequeue(
     try {
       const buffer = await deps.downloadBytes(sb, doc.storage_path)
       if (!buffer) {
-        await deps.markFailure(sb, doc.id, (doc.reingest_attempts ?? 0) + 1)
+        await markFailedAttempt(doc)
         failed++
         continue
       }
       const res = await deps.reingest(sb, doc, buffer)
       if (res.status === 'error') {
-        await deps.markFailure(sb, doc.id, (doc.reingest_attempts ?? 0) + 1)
+        await markFailedAttempt(doc)
         failed++
       } else {
         reingested++
       }
     } catch (err) {
-      await deps.markFailure(sb, doc.id, (doc.reingest_attempts ?? 0) + 1).catch(() => undefined)
+      await markFailedAttempt(doc)
       failed++
       console.error(`[reaper] re-ingest ${doc.id} failed:`, err instanceof Error ? err.message : err)
     }

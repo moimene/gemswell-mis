@@ -19,6 +19,25 @@ import { classifyForTriage } from '../src/lib/knowledge/classify'
 import { triageNeedsReview } from '../src/lib/knowledge/triage'
 import type { AuthorityTier } from '../src/lib/knowledge/contracts'
 
+type NeedReviewDoc = {
+  id: string
+  title: string | null
+  project_id: string | null
+  doc_type: string | null
+  authority_tier: AuthorityTier | null
+  authority_score: number | null
+  current_version: number | null
+}
+
+type AnalysisRow = {
+  id: string
+  title: string | null
+  project: string | null
+  was: { doc_type: string | null; tier: AuthorityTier | null; score: number | null }
+  now: { doc_type: string; tier: AuthorityTier; score: number; lifecycle: string; confidence: number }
+  decision: string
+}
+
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 const argv = process.argv.slice(2)
@@ -28,10 +47,10 @@ const li = argv.indexOf('--limit'); const LIMIT = li >= 0 ? parseInt(argv[li + 1
 
 async function contentSample(docId: string): Promise<string> {
   const { data } = await sb.from('rag_chunks').select('content').eq('document_id', docId).order('chunk_index', { ascending: true }).limit(6)
-  return (data ?? []).map(r => r.content as string).join('\n').slice(0, 6000)
+  return ((data ?? []) as { content: string | null }[]).map(r => r.content ?? '').join('\n').slice(0, 6000)
 }
-async function pull() {
-  const rows: any[] = []
+async function pull(): Promise<NeedReviewDoc[]> {
+  const rows: NeedReviewDoc[] = []
   let lastId = '00000000-0000-0000-0000-000000000000'
   for (;;) {
     const { data, error } = await sb.from('rag_documents')
@@ -40,12 +59,13 @@ async function pull() {
       .order('id', { ascending: true }).limit(1000)
     if (error) throw new Error(error.message)
     if (!data || !data.length) break
-    rows.push(...data); lastId = data[data.length - 1].id
+    const batch = data as NeedReviewDoc[]
+    rows.push(...batch); lastId = batch[batch.length - 1].id
     if (data.length < 1000) break
   }
   return LIMIT ? rows.slice(0, LIMIT) : rows
 }
-const tallyOf = (arr: any[], f: (x: any) => string) => {
+const tallyOf = <T,>(arr: T[], f: (x: T) => string | null | undefined) => {
   const m: Record<string, number> = {}
   for (const x of arr) { const k = f(x) ?? '(null)'; m[k] = (m[k] || 0) + 1 }
   return Object.fromEntries(Object.entries(m).sort((a, b) => b[1] - a[1]))
@@ -54,26 +74,27 @@ const tallyOf = (arr: any[], f: (x: any) => string) => {
 async function main() {
   const docs = await pull()
   console.error(`classifying ${docs.length} active needs_review docs with ${MODEL}…`)
-  const out: any[] = []
+  const out: AnalysisRow[] = []
   let approve = 0, keep = 0, failed = 0, typeChanged = 0, otherResolved = 0
   let n = 0
   for (const doc of docs) {
     if (++n % 25 === 0) console.error(`  ${n}/${docs.length}`)
     const sample = await contentSample(doc.id)
-    let cls
-    try { cls = await classifyForTriage({ title: doc.title ?? '', sample }, anthropic, MODEL) } catch (e: any) { failed++; continue }
+    let cls: Awaited<ReturnType<typeof classifyForTriage>>
+    try { cls = await classifyForTriage({ title: doc.title ?? '', sample }, anthropic, MODEL) } catch { failed++; continue }
     if (!cls) { failed++; continue }
     const d = triageNeedsReview(
       { doc_type: cls.result.doc_type, authority_tier: cls.result.authority_tier, confidence: cls.result.confidence },
-      { authority_tier: doc.authority_tier as AuthorityTier },
+      { authority_tier: doc.authority_tier ?? 'unverified' },
     )
     const isApprove = d.action === 'approve'
-    isApprove ? approve++ : keep++
+    if (isApprove) approve++
+    else keep++
     if (cls.result.doc_type !== doc.doc_type) typeChanged++
     if (doc.doc_type === 'other' && cls.result.doc_type !== 'other') otherResolved++
     out.push({ id: doc.id, title: doc.title, project: doc.project_id,
       was: { doc_type: doc.doc_type, tier: doc.authority_tier, score: doc.authority_score },
-      now: { doc_type: cls.result.doc_type, tier: cls.result.authority_tier, score: cls.authority_score, lifecycle: (cls.result as any).lifecycle, confidence: cls.result.confidence },
+      now: { doc_type: cls.result.doc_type, tier: cls.result.authority_tier, score: cls.authority_score, lifecycle: cls.result.lifecycle, confidence: cls.result.confidence },
       decision: d.action })
   }
   console.log(JSON.stringify({

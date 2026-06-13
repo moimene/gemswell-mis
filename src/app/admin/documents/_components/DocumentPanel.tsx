@@ -34,6 +34,7 @@ type DocEvent = {
 type Detail = {
   document: DocDetail
   chunks: { chunk_index: number; content: string; metadata: unknown }[]
+  chunks_truncated?: boolean
   events: DocEvent[]
   markdown: { source: string; content: string }
 }
@@ -202,10 +203,17 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
 
         {/* Collapsibles */}
         <Section title="Markdown (reconstruido)" open={open.md} onToggle={() => setOpen(o => ({ ...o, md: !o.md }))}>
-          <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-slate-400">{d.markdown.source === 'reconstructed' ? 'Markdown reconstruido (no es el artefacto original)' : 'Artefacto'}</p>
+          <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-slate-400">
+            {d.markdown.source === 'artifact_path'
+              ? 'Artefacto markdown original'
+              : d.markdown.source === 'artifact_unavailable'
+                ? 'Artifact no disponible; fallback reconstruido desde chunks'
+                : 'Markdown reconstruido (no es el artefacto original)'}
+          </p>
           <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs text-slate-700">{d.markdown.content || 'Sin contenido indexado'}</pre>
         </Section>
         <Section title={`Fragmentos (${d.chunks.length})`} open={open.chunks} onToggle={() => setOpen(o => ({ ...o, chunks: !o.chunks }))}>
+          {d.chunks_truncated && <p className="mb-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">Mostrando solo los primeros fragmentos; el documento completo tiene más chunks indexados.</p>}
           <div className="max-h-80 space-y-2 overflow-auto">{d.chunks.map(c => <div key={c.chunk_index} className="rounded border border-slate-200 p-1.5 text-xs"><span className="font-mono text-slate-400">#{c.chunk_index}</span> <span className="text-slate-700">{c.content.slice(0, 240)}</span></div>)}</div>
         </Section>
         <Section title={`Historial (${d.events.length})`} open={open.history} onToggle={() => setOpen(o => ({ ...o, history: !o.history }))}>

@@ -81,6 +81,25 @@ type Stats = {
   } | null
 }
 
+type ReviewHistoryItem = {
+  id: string
+  kind: 'document' | 'metric'
+  occurred_at: string
+  action: string
+  actor: string
+  title: string
+  subtitle: string
+  detail: string | null
+  reason: string | null
+  href: string
+}
+
+type ReviewHistoryResp = {
+  items: ReviewHistoryItem[]
+  partial: boolean
+  warnings: string[]
+}
+
 type StatusFilter = 'pending_review' | 'auto_accepted' | 'accepted' | 'rejected' | 'validation_failed' | 'all'
 
 type LoadError = false | 'auth' | 'generic'
@@ -389,6 +408,104 @@ function ContradictionsPanel({ contradictions }: { contradictions: Contradiction
   )
 }
 
+function HistoryPanel() {
+  const [items, setItems] = useState<ReviewHistoryItem[]>([])
+  const [partial, setPartial] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<LoadError>(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setErr(false)
+    try {
+      const res = await fetch('/api/intel/review/history?limit=60')
+      if (!res.ok) { setErr(res.status === 401 ? 'auth' : 'generic'); return }
+      const data = await res.json() as ReviewHistoryResp
+      setItems(data.items ?? [])
+      setPartial(Boolean(data.partial))
+    } catch (e) {
+      console.error(e)
+      setErr('generic')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (loading) {
+    return (
+      <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+        <p className="font-mono text-xs text-slate-400">Cargando historial…</p>
+      </div>
+    )
+  }
+
+  if (err) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        No se pudo cargar el historial{err === 'auth' ? ' — la sesión pudo expirar.' : '.'}{' '}
+        <button onClick={load} className="font-medium underline">Reintentar</button>
+      </div>
+    )
+  }
+
+  const partialNotice = partial ? (
+    <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      Historial parcial: una de las fuentes de auditoría no respondió.
+    </div>
+  ) : null
+
+  if (!items.length) {
+    return (
+      <div className="space-y-3">
+        {partialNotice}
+        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white">
+          <History className="h-8 w-8 text-slate-300" />
+          <p className="text-sm text-slate-500">
+            {partial ? 'No hay registros disponibles en las fuentes que respondieron.' : 'Aún no hay decisiones registradas.'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {partialNotice}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <ul className="divide-y divide-slate-100">
+          {items.map(item => (
+            <li key={item.id} className="flex items-start gap-3 px-4 py-3">
+              <span className={cn(
+                'mt-0.5 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide',
+                item.kind === 'document' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
+              )}>
+                {item.kind === 'document' ? 'Doc' : 'Métrica'}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <a href={item.href} className="truncate text-sm font-medium text-slate-900 hover:underline">{item.title}</a>
+                  <span className="font-mono text-[10px] uppercase tracking-wide text-slate-400">{item.action}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-500">{item.subtitle}</p>
+                {item.detail && <p className="mt-1 text-xs text-slate-700">{item.detail}</p>}
+                {item.reason && <p className="mt-1 text-xs text-slate-500">Motivo: {item.reason}</p>}
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-mono text-[10px] text-slate-400">{new Date(item.occurred_at).toLocaleString()}</p>
+                <p className="mt-1 max-w-32 truncate text-xs text-slate-500">{item.actor}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
@@ -596,13 +713,7 @@ export default function ReviewPage() {
 
       {tab === 'documentos' && <DocumentReviewQueue />}
 
-      {tab === 'historial' && (
-        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white">
-          <History className="h-8 w-8 text-slate-300" />
-          <p className="text-sm text-slate-500">El historial de revisión aún no está disponible.</p>
-          <p className="font-mono text-[10px] text-slate-400">fecha · usuario · acción · documento/métrica · impacto en Tower/Chat</p>
-        </div>
-      )}
+      {tab === 'historial' && <HistoryPanel />}
 
       {tab === 'contradicciones' && (
         stats?.contradictions?.length ? (

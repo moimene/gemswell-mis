@@ -25,8 +25,10 @@ export async function GET(request: NextRequest) {
       .from('rag_documents')
       .select(LIST_COLUMNS, { count: 'exact' })
 
-    // F7: retired docs hidden by default; includeRetired means indexed-OR-retired (not all statuses)
-    query = p.includeRetired
+    // F7: retired/error docs hidden by default; explicit filters opt into each operational state.
+    query = p.onlyErrors
+      ? query.eq('status', 'error')
+      : p.includeRetired
       ? query.in('status', ['indexed', 'retired'])
       : query.eq('status', 'indexed')
     if (p.status) query = query.eq('review_status', p.status)

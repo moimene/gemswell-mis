@@ -22,6 +22,14 @@ const REVIEW_OPTIONS = ['', 'needs_review', 'approved', 'rejected', 'pending']
 const REVIEW_LABELS: Record<string, string> = { needs_review: 'Sin revisar', approved: 'Aprobado', rejected: 'Rechazado', pending: 'Pendiente' }
 const DOCTYPE_OPTIONS = ['', ...DOC_TYPE_OPTIONS]
 const PROJECT_OPTIONS = ['', 'MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP']
+const SOURCE_CHANNEL_OPTIONS = [
+  ['', 'Origen: todos'],
+  ['browser_upload', 'Origen: upload navegador'],
+  ['manual_admin', 'Origen: legacy/manual'],
+  ['local_backfill', 'Origen: backfill local'],
+  ['drive_sync', 'Origen: Drive'],
+  ['gmail_bot', 'Origen: Gmail'],
+] as const
 
 export default function DocumentsPage() {
   const [rows, setRows] = useState<DocRow[]>([])
@@ -33,7 +41,7 @@ export default function DocumentsPage() {
   const [showUpload, setShowUpload] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-  const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', authority_min: '', q: '', sort: 'authority', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false })
+  const [filters, setFilters] = useState({ status: '', doc_type: '', project: '', channel: '', authority_min: '', q: '', sort: 'authority', onlyNeedsReview: false, onlyNoMarkdown: false, includeRetired: false, onlyErrors: false })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -45,12 +53,14 @@ export default function DocumentsPage() {
       if (filters.status) sp.set('status', filters.status)
       if (filters.doc_type) sp.set('doc_type', filters.doc_type)
       if (filters.project) sp.set('project', filters.project)
+      if (filters.channel) sp.set('channel', filters.channel)
       if (filters.authority_min) sp.set('authority_min', filters.authority_min)
       if (filters.q) sp.set('q', filters.q)
       if (filters.sort === 'review') sp.set('sort', 'review')
       if (filters.onlyNeedsReview) sp.set('onlyNeedsReview', 'true')
       if (filters.onlyNoMarkdown) sp.set('onlyNoMarkdown', 'true')
       if (filters.includeRetired) sp.set('includeRetired', 'true')
+      if (filters.onlyErrors) sp.set('onlyErrors', 'true')
       const r = await fetch(`/api/knowledge/documents?${sp.toString()}`)
       if (!r.ok) { setRows([]); setTotal(0); setLoadError(r.status === 401 ? 'auth' : 'error'); return }
       const j: ListResp = await r.json()
@@ -139,6 +149,9 @@ export default function DocumentsPage() {
           <select value={filters.project} onChange={e => { setPage(1); setFilters(f => ({ ...f, project: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700">
             {PROJECT_OPTIONS.map(o => <option key={o} value={o}>{o || 'Proyecto: todos'}</option>)}
           </select>
+          <select value={filters.channel} onChange={e => { setPage(1); setFilters(f => ({ ...f, channel: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700">
+            {SOURCE_CHANNEL_OPTIONS.map(([value, label]) => <option key={value || 'all'} value={value}>{label}</option>)}
+          </select>
           <input value={filters.authority_min} onChange={e => { setPage(1); setFilters(f => ({ ...f, authority_min: e.target.value })) }}
             placeholder="Auth ≥" className="w-20 rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700 placeholder:text-slate-400" />
           <select value={filters.sort} onChange={e => { setPage(1); setFilters(f => ({ ...f, sort: e.target.value })) }} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm text-slate-700" title="Orden">
@@ -148,6 +161,7 @@ export default function DocumentsPage() {
           <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNeedsReview} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNeedsReview: e.target.checked })) }} /> Solo sin revisar</label>
           <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyNoMarkdown} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyNoMarkdown: e.target.checked })) }} /> Sin markdown</label>
           <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.includeRetired} onChange={e => { setPage(1); setFilters(f => ({ ...f, includeRetired: e.target.checked })) }} /> Incluir retirados</label>
+          <label className="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" checked={filters.onlyErrors} onChange={e => { setPage(1); setFilters(f => ({ ...f, onlyErrors: e.target.checked })) }} /> Solo errores</label>
         </div>
 
         {/* F18: bulk governance action bar (appears when rows are selected) */}
@@ -191,7 +205,11 @@ export default function DocumentsPage() {
                   <td className="px-3 py-2.5 text-slate-600">{d.project_id ?? '—'}</td>
                   <td className="px-3 py-2.5 text-slate-600">{d.doc_type ?? '—'}</td>
                   <td className="px-3 py-2.5"><AuthorityBadge score={d.authority_score} tier={d.authority_tier} /></td>
-                  <td className="px-3 py-2.5"><ReviewBadge status={d.review_status} /></td>
+                  <td className="px-3 py-2.5">
+                    {d.status === 'error'
+                      ? <span className="rounded bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-rose-700">Error ingesta</span>
+                      : <ReviewBadge status={d.review_status} />}
+                  </td>
                   <td className="px-3 py-2.5"><VerificationBadge score={d.authority_score} review={d.review_status} source={d.classification_source} /></td>
                   <td className="px-3 py-2.5 text-right font-mono tabular-nums text-slate-600">{d.chunk_count ?? 0}</td>
                 </tr>

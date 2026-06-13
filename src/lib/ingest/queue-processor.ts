@@ -41,6 +41,8 @@ type ReservedDocument = {
   id: string
   reused: boolean
   rejected?: boolean
+  skipReingest?: boolean
+  existingChunks?: number | null
 }
 
 let _anthropicClient: Anthropic | null = null
@@ -138,7 +140,8 @@ function hasMissingColumnError(error: { message?: string; code?: string } | null
 async function reserveRagDocument(
   supabase: SupabaseClient,
   item: IngestQueueRow,
-  sourceHash: string
+  sourceHash: string,
+  sourceChannel: SourceChannel
 ): Promise<ReservedDocument> {
   const sourceType = item.file_ext.replace('.', '') || item.file_ext
   const baseRow = {
@@ -151,7 +154,7 @@ async function reserveRagDocument(
   const governedRow = {
     ...baseRow,
     source_hash: sourceHash,
-    source_channel: DEFAULT_SOURCE_CHANNEL,
+    source_channel: sourceChannel,
     classification_source: DEFAULT_CLASSIFICATION_SOURCE,
     review_status: DEFAULT_REVIEW_STATUS,
     lifecycle: DEFAULT_LIFECYCLE,
@@ -171,24 +174,39 @@ async function reserveRagDocument(
   if (error && (error as { code?: string }).code === '23505') {
     const { data: existing, error: existingError } = await supabase
       .from('rag_documents')
-      .select('id, review_status, classification_source')
+      .select('id, review_status, classification_source, status, chunk_count')
       .eq('source_hash', sourceHash)
       .maybeSingle()
 
     if (existingError) throw new Error(`rag_documents source_hash lookup failed: ${existingError.message}`)
     if (existing) {
-      const document = existing as RagDocumentInsert & { review_status?: string; classification_source?: string }
+      const document = existing as RagDocumentInsert & {
+        review_status?: string
+        classification_source?: string
+        status?: string
+        chunk_count?: number | null
+      }
       // CX-3: defense-in-depth — agent_rejected is the second rejection signal the chat RPCs
       // already exclude, so a re-ingest of an agent-rejected doc must also be sticky (else
       // governance can be silently overwritten).
       if (document.review_status === 'rejected' || document.classification_source === 'agent_rejected') {
         return { id: document.id, reused: true, rejected: true }
       }
-      await supabase.from('rag_chunks').delete().eq('document_id', document.id)
-      await supabase
+      if (document.status === 'indexed' && (document.chunk_count ?? 0) > 0) {
+        return {
+          id: document.id,
+          reused: true,
+          skipReingest: true,
+          existingChunks: document.chunk_count ?? 0,
+        }
+      }
+      const deleted = await supabase.from('rag_chunks').delete().eq('document_id', document.id)
+      if (deleted.error) throw new Error(`rag_chunks cleanup failed: ${deleted.error.message}`)
+      const processing = await supabase
         .from('rag_documents')
-        .update({ status: 'processing', chunk_count: 0 })
+        .update({ status: 'processing', chunk_count: 0, source_channel: sourceChannel })
         .eq('id', document.id)
+      if (processing.error) throw new Error(`rag_documents reuse update failed: ${processing.error.message}`)
       return { id: document.id, reused: true }
     }
   }
@@ -283,6 +301,7 @@ export type UploadIngestInput = {
   projectId?: string | null
   docTypeHint?: string | null  // optional doc_type/category hint (classifier may override)
   rawStoragePath?: string | null  // F3: where the original file was uploaded in Storage (for citation artifacts)
+  sourceChannel?: SourceChannel
 }
 
 /**
@@ -301,6 +320,8 @@ export async function ingestBuffer(
   const embeddingBatchSize = options?.embeddingBatchSize ?? DEFAULT_EMBEDDING_BATCH_SIZE
   const retryDelayMs = options?.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
   const artifactBucket = options?.artifactBucket ?? process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+  const sourceChannel = input.sourceChannel ??
+    (input.rawStoragePath?.startsWith('uploads/') ? 'browser_upload' : DEFAULT_SOURCE_CHANNEL)
   // Reuse the queue row shape so we can call the shared helpers unchanged.
   const item: IngestQueueRow = {
     id: '', rel_path: input.fileName, file_name: input.fileName, file_ext: input.fileExt,
@@ -322,12 +343,33 @@ export async function ingestBuffer(
       .neq('status', 'error')
     duplicateTitleCount = titleMatches ?? 0
 
-    const reserved = await reserveRagDocument(supabase, item, sourceHash)
+    const reserved = await reserveRagDocument(supabase, item, sourceHash, sourceChannel)
     documentId = reserved.id
     if (reserved.rejected) {
       return { file: input.fileName, status: 'done', chunks: 0, documentId, reused: true, duplicateTitleCount }
     }
+    if (reserved.skipReingest) {
+      log(`[upload] existing source_hash already indexed — skipping re-ingest for document ${documentId}`)
+      return {
+        file: input.fileName,
+        status: 'done',
+        chunks: reserved.existingChunks ?? 0,
+        documentId,
+        reused: true,
+        duplicateTitleCount,
+      }
+    }
     if (reserved.reused) log(`[upload] existing source_hash — re-ingesting document ${documentId}`)
+
+    // Persist original bytes location BEFORE parsing/embedding. If a large upload fails mid-pipeline,
+    // the reaper can recover it from Storage instead of leaving an unretryable status='error' row.
+    if (input.rawStoragePath) {
+      const earlyArtifact = await supabase
+        .from('rag_documents')
+        .update({ storage_path: input.rawStoragePath, source_channel: sourceChannel })
+        .eq('id', documentId)
+      if (earlyArtifact.error) log(`[upload] early storage_path update skipped: ${earlyArtifact.error.message}`)
+    }
 
     const parsed = await parseDocument(input.fileName, buffer, input.fileName, getMimeType(input.fileExt))
     if (!parsed.content || parsed.content.trim().length < 50) {
@@ -357,7 +399,7 @@ export async function ingestBuffer(
     const govSource: ClassificationSource = cls ? 'agent_auto' : 'rule'
 
     const mdFrontmatter: MarkdownFrontmatter = {
-      document_id: documentId, source_channel: DEFAULT_SOURCE_CHANNEL, source_hash: sourceHash,
+      document_id: documentId, source_channel: sourceChannel, source_hash: sourceHash,
       file_name: input.fileName, mime_type: getMimeType(input.fileExt), business_line_id: null,
       project_id: input.projectId || null, doc_type: govDocType, lifecycle: govLifecycle,
       authority_tier: govTier, authority_score: govScore, classification_source: govSource,
@@ -370,7 +412,7 @@ export async function ingestBuffer(
     const baseMetadata: ChunkMetadata = {
       project_id: input.projectId || undefined, doc_type: govDocType ?? undefined,
       source_file: input.fileName, document_id: documentId, source_hash: sourceHash,
-      source_channel: DEFAULT_SOURCE_CHANNEL, review_status: govReview, classification_source: govSource,
+      source_channel: sourceChannel, review_status: govReview, classification_source: govSource,
       lifecycle: govLifecycle, authority_tier: govTier, authority_score: govScore,
       parser_used: parsed.parser, ocr_used: parsed.ocr_used ?? false,
       embedding_model: EMBEDDING_MODEL, ...(mdPath ? { md_path: mdPath } : {}),
@@ -414,6 +456,18 @@ export async function ingestBuffer(
       .eq('id', documentId)
     if (finalUpdateErr) throw new Error(`rag_documents final update failed: ${finalUpdateErr.message}`)
 
+    // Best-effort retry bookkeeping: sql/029 may not exist on every environment, so never let this
+    // fail an otherwise-successful ingest.
+    try {
+      const { error: retryResetErr } = await supabase
+        .from('rag_documents')
+        .update({ reingest_attempts: 0 })
+        .eq('id', documentId)
+      if (retryResetErr) log(`[upload] reingest_attempts reset skipped: ${retryResetErr.message}`)
+    } catch (e) {
+      log(`[upload] reingest_attempts reset threw (non-fatal): ${errorMessage(e)}`)
+    }
+
     // A4: keep the keyword-selectivity oracle (rag_term_df) fresh now that the corpus changed, so the
     // keyword lane can't silently time out on a stale df after a bulk ingest. Best-effort — a refresh
     // failure must NOT fail an otherwise-successful ingest (the oracle degrades gracefully: an unknown
@@ -445,9 +499,13 @@ export async function ingestBuffer(
     log(`[upload] Failed: ${input.fileName}: ${message}`)
     if (documentId) {
       await supabase.from('rag_chunks').delete().eq('document_id', documentId)
-      await supabase.from('rag_documents').update({ status: 'error', chunk_count: 0 }).eq('id', documentId)
+      await supabase.from('rag_documents').update({
+        status: 'error',
+        chunk_count: 0,
+        review_reason: message.slice(0, 500),
+        ...(input.rawStoragePath ? { storage_path: input.rawStoragePath } : {}),
+      }).eq('id', documentId)
     }
     return { file: input.fileName, status: 'error', error: message, documentId: documentId ?? undefined }
   }
 }
-

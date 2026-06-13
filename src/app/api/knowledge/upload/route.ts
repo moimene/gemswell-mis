@@ -89,7 +89,15 @@ export async function POST(request: NextRequest) {
     }
     const projectId = projectRaw && PROJECTS.has(projectRaw) ? projectRaw : null
 
-    const result = await ingestBuffer(supabase, { fileName, fileExt, buffer, projectId, docTypeHint, rawStoragePath })
+    const result = await ingestBuffer(supabase, {
+      fileName,
+      fileExt,
+      buffer,
+      projectId,
+      docTypeHint,
+      rawStoragePath,
+      sourceChannel: 'browser_upload',
+    })
 
     if (result.status === 'error') {
       // CX-6: only surface curated, user-safe messages; log the rest and return a generic reason so DB/

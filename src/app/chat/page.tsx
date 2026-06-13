@@ -24,6 +24,8 @@ type Source = {
   verification?: 'source_of_record' | 'supporting' | 'context' | 'unverified'
 }
 
+type GroundingMode = 'standard' | 'trusted_only' | 'official_only'
+
 type Message = {
   role: 'user' | 'assistant'
   content: string
@@ -37,6 +39,7 @@ type Message = {
   verified?: boolean
   retrievalIncomplete?: boolean
   unreviewedUsed?: number
+  groundingMode?: GroundingMode
 }
 
 type Progress = { stage: string; detail?: string; elapsedMs: number }
@@ -65,6 +68,12 @@ const VERIFICATION_LABELS = {
   context: 'contexto',
   unverified: 'sin verificar',
 } as const
+
+const GROUNDING_OPTIONS: Array<{ value: GroundingMode; label: string }> = [
+  { value: 'standard', label: 'Todas' },
+  { value: 'trusted_only', label: 'Revisadas' },
+  { value: 'official_only', label: 'Oficiales' },
+]
 
 // Client abort if no SSE event arrives for this long (heartbeat is every 5s server-side, so a 90s
 // silence means the stream is genuinely dead). Reset on every chunk — the old fixed 270s wall is gone.
@@ -98,6 +107,7 @@ export default function ChatPage() {
   const [collapsedSources, setCollapsedSources] = useState<Set<number>>(new Set())
   const [progress, setProgress] = useState<Progress | null>(null)
   const [stats, setStats] = useState<CorpusStat[]>([])               // #2 live corpus stats strip
+  const [groundingMode, setGroundingMode] = useState<GroundingMode>('standard')
   const [viewer, setViewer] = useState<{ documentId: string; page?: number; label: string } | null>(null) // #4 inline PDF
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -161,6 +171,7 @@ export default function ChatPage() {
         body: JSON.stringify({
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
           conversationId,
+          groundingMode,
         }),
         signal: controller.signal,
       })
@@ -226,6 +237,7 @@ export default function ChatPage() {
               verified: payload.verified !== false,
               retrievalIncomplete: Boolean(payload.retrievalIncomplete),
               unreviewedUsed: Number(payload.unreviewedUsed) || 0,
+              groundingMode: (payload.groundingMode as GroundingMode) ?? groundingMode,
             }])
           }
         }
@@ -276,6 +288,20 @@ export default function ChatPage() {
               Nueva conversación
             </button>
           )}
+          <div className="ml-4 flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
+            {GROUNDING_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setGroundingMode(opt.value)}
+                disabled={loading}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                  groundingMode === opt.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -367,8 +393,13 @@ export default function ChatPage() {
               )}
 
               {/* Answer-level advisories (degraded / injection / truncated / not-persisted / retrieval-incomplete / unreviewed) */}
-              {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false || msg.verified === false || msg.retrievalIncomplete || (msg.unreviewedUsed ?? 0) > 0) && (
+              {msg.role === 'assistant' && (msg.degraded || msg.injectionFlagged || msg.truncated || msg.persisted === false || msg.verified === false || msg.retrievalIncomplete || (msg.unreviewedUsed ?? 0) > 0 || (msg.groundingMode && msg.groundingMode !== 'standard')) && (
                 <div className="mt-2 ml-11 flex flex-wrap gap-1.5">
+                  {msg.groundingMode && msg.groundingMode !== 'standard' && (
+                    <span className="inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 border border-sky-100">
+                      Modo {msg.groundingMode === 'official_only' ? 'fuentes oficiales' : 'fuentes revisadas'}
+                    </span>
+                  )}
                   {msg.verified === false && (
                     <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-100">
                       Respuesta sin verificar (verificador no disponible)

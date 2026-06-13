@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient, requireUser } from '@/lib/supabase-server'
 import {
   SYSTEM_PROMPT,
+  systemPromptForGrounding,
   runAgentLoop,
   verifyAnswer,
   chooseChatModel,
@@ -12,10 +13,12 @@ import {
   type Source,
   type ToolCallAudit,
 } from '@/lib/chat/agent'
+import type { GroundingMode } from '@/lib/rag/retrieve'
 
 export const maxDuration = 800
 
 type Message = { role: 'user' | 'assistant'; content: string }
+const GROUNDING_MODES = new Set<GroundingMode>(['standard', 'trusted_only', 'official_only'])
 
 // ─── Persistence (ownership-checked, F7) ─────────────────────────────
 async function persistConversation(
@@ -91,13 +94,14 @@ export async function POST(request: NextRequest) {
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  let body: { messages?: Message[]; conversationId?: string }
+  let body: { messages?: Message[]; conversationId?: string; groundingMode?: GroundingMode }
   try {
     body = (await request.json()) as { messages?: Message[]; conversationId?: string }
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
   const { messages, conversationId } = body
+  const groundingMode = GROUNDING_MODES.has(body.groundingMode as GroundingMode) ? body.groundingMode as GroundingMode : 'standard'
   if (!messages?.length) {
     return NextResponse.json({ error: 'No messages provided' }, { status: 400 })
   }
@@ -143,10 +147,10 @@ export async function POST(request: NextRequest) {
 
       try {
         send('progress', { stage: 'searching', elapsedMs: 0 })
-        const loop = await runAgentLoop(historyMessages, SYSTEM_PROMPT, anthropic, chatModel, setStage, abort.signal)
+        const loop = await runAgentLoop(historyMessages, systemPromptForGrounding(groundingMode, SYSTEM_PROMPT), anthropic, chatModel, setStage, abort.signal, { groundingMode })
         const { text: answer, verified } = await verifyAnswer(
           anthropic,
-          { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence },
+          { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence, groundingMode },
           setStage,
           abort.signal
         )
@@ -164,6 +168,7 @@ export async function POST(request: NextRequest) {
           entities,
           model: chatModel,
           verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
+          groundingMode,
           verified,
           degraded: loop.degraded,
           injectionFlagged: loop.injectionFlagged,

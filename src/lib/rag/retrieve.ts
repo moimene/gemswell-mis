@@ -39,6 +39,10 @@ export type RetrievalDiagnostics = {
   keywordFailed: boolean
   /** Count of FINAL ranked chunks whose parent is needs_review/pending (the chat leaned on ungoverned evidence). */
   unreviewedUsed: number
+  /** Active evidence policy applied after governance/lifecycle exclusion. */
+  groundingMode: GroundingMode
+  /** Chunks dropped because the active grounding mode requires stronger governance. */
+  groundingFilteredCount: number
 }
 
 export type RetrievalResult = {
@@ -50,7 +54,10 @@ export type RetrievalResult = {
 export type RetrieveOptions = {
   projectFilter?: string | null
   docTypeFilter?: string | null
+  groundingMode?: GroundingMode
 }
+
+export type GroundingMode = 'standard' | 'trusted_only' | 'official_only'
 
 // Defaults preserved verbatim from the original route.ts so extraction is behavior-preserving.
 // Deliberately permissive vector floor (recall-first): precision is handled downstream by the Cohere
@@ -59,6 +66,9 @@ export const RAG_MATCH_THRESHOLD = Number(process.env.RAG_MATCH_THRESHOLD || '0.
 export const RAG_VECTOR_MATCH_COUNT = Number(process.env.RAG_VECTOR_MATCH_COUNT || '25')
 export const RAG_KEYWORD_MATCH_COUNT = Number(process.env.RAG_KEYWORD_MATCH_COUNT || '15')
 export const RAG_FINAL_TOP_K = Number(process.env.RAG_FINAL_TOP_K || '10')
+const STRICT_GROUNDING_EXTRACTION_MULTIPLIER = 4
+const STRICT_GROUNDING_VECTOR_CAP = 100
+const STRICT_GROUNDING_KEYWORD_CAP = 80
 
 // Fase 2 (WS1) — hybrid fusion + precision floor. Defaults reproduce the CURRENT behavior
 // (vector_first dedup, no floor), so landing this is a no-op until the env flags are flipped — the
@@ -96,6 +106,15 @@ export function isExcludedFromRetrieval(metadata: Record<string, unknown> | unde
 function isUnreviewedSource(metadata: Record<string, unknown> | undefined): boolean {
   const rs = metadataString(metadata, 'review_status')
   return rs === 'needs_review' || rs === 'pending'
+}
+
+export function isAllowedByGroundingMode(
+  metadata: Record<string, unknown> | undefined,
+  mode: GroundingMode
+): boolean {
+  if (mode === 'standard') return true
+  const tier = trustTier(metadata)
+  return mode === 'official_only' ? tier >= 3 : tier >= 2
 }
 
 export type FusionConfig = { mode: 'rrf' | 'vector_first'; k: number; wVector: number; wKeyword: number }
@@ -162,7 +181,7 @@ export function applyRelevanceFloor<T extends { relevanceScore?: number }>(
  * (a lane threw — Gemini 429 / RPC timeout) from a genuine no-match, and never blames governance
  * for an infrastructure failure (the old message wrongly claimed "excluded because rejected").
  */
-export function emptyResultMessage(diagnostics: Pick<RetrievalDiagnostics, 'vectorFailed' | 'keywordFailed'>): string {
+export function emptyResultMessage(diagnostics: Pick<RetrievalDiagnostics, 'vectorFailed' | 'keywordFailed'> & Partial<Pick<RetrievalDiagnostics, 'groundingMode' | 'groundingFilteredCount'>>): string {
   if (diagnostics.vectorFailed || diagnostics.keywordFailed) {
     const which = diagnostics.vectorFailed && diagnostics.keywordFailed
       ? 'Both the semantic and keyword retrieval lanes'
@@ -170,6 +189,12 @@ export function emptyResultMessage(diagnostics: Pick<RetrievalDiagnostics, 'vect
         ? 'The semantic (vector) retrieval lane'
         : 'The keyword retrieval lane'
     return `Document retrieval is temporarily degraded: ${which} did not respond, so no documentary evidence could be retrieved for this query. This is a transient retrieval failure, NOT an absence of relevant documents — do not conclude the corpus lacks an answer. Say the documentary search was unavailable and suggest retrying.`
+  }
+  if (diagnostics.groundingMode === 'official_only' && (diagnostics.groundingFilteredCount ?? 0) > 0) {
+    return 'No official/source-of-record documents matched after applying strict grounding. Relevant lower-governance chunks existed, but were withheld by official_only mode; abstain or switch to standard mode if exploratory context is acceptable.'
+  }
+  if (diagnostics.groundingMode === 'trusted_only' && (diagnostics.groundingFilteredCount ?? 0) > 0) {
+    return 'No trusted reviewed documents matched after applying strict grounding. Relevant lower-governance chunks existed, but were withheld by trusted_only mode; abstain or switch to standard mode if unreviewed context is acceptable.'
   }
   return 'No relevant documents were found in the indexed corpus for this query.'
 }
@@ -186,6 +211,14 @@ export async function retrieveDocuments(
 ): Promise<RetrievalResult> {
   const projectFilter = opts.projectFilter ?? null
   const docTypeFilter = opts.docTypeFilter ?? null
+  const groundingMode = opts.groundingMode ?? 'standard'
+  const strictGrounding = groundingMode !== 'standard'
+  const vectorMatchCount = strictGrounding
+    ? Math.min(RAG_VECTOR_MATCH_COUNT * STRICT_GROUNDING_EXTRACTION_MULTIPLIER, STRICT_GROUNDING_VECTOR_CAP)
+    : RAG_VECTOR_MATCH_COUNT
+  const keywordMatchCount = strictGrounding
+    ? Math.min(RAG_KEYWORD_MATCH_COUNT * STRICT_GROUNDING_EXTRACTION_MULTIPLIER, STRICT_GROUNDING_KEYWORD_CAP)
+    : RAG_KEYWORD_MATCH_COUNT
 
   // Parallel: vector search + keyword search. Each lane reports whether it THREW (outage) vs returned
   // empty (no matches) — a distinction the old `catch { return [] }` erased, hiding the exact silent
@@ -196,7 +229,7 @@ export async function retrieveDocuments(
         const embedding = await embedText(query, { lane: 'interactive' })
         const { data, error } = await supabase.rpc('match_chunks', {
           query_embedding: embedding,
-          match_count: RAG_VECTOR_MATCH_COUNT,
+          match_count: vectorMatchCount,
           filter_project: projectFilter,
           filter_doc_type: docTypeFilter,
           match_threshold: RAG_MATCH_THRESHOLD,
@@ -224,7 +257,7 @@ export async function retrieveDocuments(
         const { data, error } = await supabase.rpc('keyword_search_chunks', {
           query_text: query,
           filter_project: projectFilter,
-          match_count: RAG_KEYWORD_MATCH_COUNT,
+          match_count: keywordMatchCount,
           filter_doc_type: docTypeFilter,
         })
         // PostgREST errors come back in `error` (no throw) — treat as a lane failure, not a clean miss.
@@ -270,13 +303,35 @@ export async function retrieveDocuments(
         vectorFailed: vector.failed,
         keywordFailed: keyword.failed,
         unreviewedUsed: 0,
+        groundingMode,
+        groundingFilteredCount: 0,
+      },
+    }
+  }
+
+  const groundedPool = pool.filter(c => isAllowedByGroundingMode(c.metadata, groundingMode))
+  const groundingFilteredCount = pool.length - groundedPool.length
+  if (groundedPool.length === 0) {
+    return {
+      ranked: [],
+      diagnostics: {
+        vectorCount: vectorResults.length,
+        keywordCount: keywordResults.length,
+        poolCount: 0,
+        overlapCount,
+        degraded: false,
+        vectorFailed: vector.failed,
+        keywordFailed: keyword.failed,
+        unreviewedUsed: 0,
+        groundingMode,
+        groundingFilteredCount,
       },
     }
   }
 
   // Cohere-rerank the FULL pool (not just top-K) so trust-tier ordering can promote a high-trust chunk
   // Cohere scored modestly — otherwise Cohere's relevance cut would drop it before trust is considered.
-  const { chunks: rerankedRaw, degraded } = await rerankChunks(query, pool, pool.length)
+  const { chunks: rerankedRaw, degraded } = await rerankChunks(query, groundedPool, groundedPool.length)
   const reranked = rerankedRaw.filter((c) => !isExcludedFromRetrieval(c.metadata))
   // Precision floor on the Cohere relevance (WS1-T3) — only on the trustworthy (non-degraded) path,
   // since degraded scores are normalised approximations, not Cohere relevance. Trust-aware: never floor
@@ -298,6 +353,8 @@ export async function retrieveDocuments(
       vectorFailed: vector.failed,
       keywordFailed: keyword.failed,
       unreviewedUsed,
+      groundingMode,
+      groundingFilteredCount,
     },
   }
 }

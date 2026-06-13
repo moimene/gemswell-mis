@@ -25,6 +25,10 @@ describe('parseListParams', () => {
     expect(parseListParams(sp({ authority_min: '500' })).authorityMin).toBe(100)
     expect(parseListParams(sp({ q: '  acta  ' })).q).toBe('acta')
   })
+  it('parses explicit operational-state filters', () => {
+    expect(parseListParams(sp({ includeRetired: 'true' })).includeRetired).toBe(true)
+    expect(parseListParams(sp({ onlyErrors: 'true' })).onlyErrors).toBe(true)
+  })
   it('LIST_COLUMNS includes governance + enrichment fields', () => {
     expect(LIST_COLUMNS).toContain('review_status')
     expect(LIST_COLUMNS).toContain('authority_score')

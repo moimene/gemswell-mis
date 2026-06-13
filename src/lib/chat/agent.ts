@@ -7,7 +7,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient } from '@/lib/supabase-server'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
-import { retrieveDocuments, emptyResultMessage } from '@/lib/rag/retrieve'
+import { retrieveDocuments, emptyResultMessage, type GroundingMode } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -206,6 +206,19 @@ So: for legal, shareholder, board, financing, fund or portfolio questions about 
 - Interpret retrieved documents faithfully and carefully: read the actual chunk text before drawing conclusions, quote or closely paraphrase the specific passages you rely on, and do not generalise beyond what the text says. When a document is ambiguous or partial, state that rather than guessing.
 - For complex, analytical or multi-document questions, be thorough rather than terse — walk through the relevant figures, clauses and their implications, and cover material nuances. Do not pad simple questions, but never sacrifice accuracy or completeness for brevity when the question warrants depth.`
 
+export function systemPromptForGrounding(mode: GroundingMode = 'standard', basePrompt = SYSTEM_PROMPT): string {
+  if (mode === 'standard') return basePrompt
+  const label = mode === 'official_only'
+    ? 'official_only: search_documents returns only source-of-record evidence.'
+    : 'trusted_only: search_documents returns only reviewed supporting/source-of-record evidence.'
+  return `${basePrompt}
+
+## Active Grounding Mode
+- ${label}
+- If strict grounding returns no evidence, abstain. Do not answer from lower-governance sources, memory, or assumptions.
+- Structured MIS tools remain allowed evidence, but distinguish them from documentary evidence.`
+}
+
 export function chooseChatModel(query: string): string {
   const q = query.toLowerCase()
   const needsReasoning = [
@@ -380,12 +393,14 @@ async function executeGetPortfolioContext(input: { project_id?: string }): Promi
 
 // ─── Tool Executor: search_documents ────────────────────────────────
 async function executeSearchDocuments(
-  input: { query: string; project_id?: string; doc_type?: string }
+  input: { query: string; project_id?: string; doc_type?: string },
+  groundingMode: GroundingMode = 'standard'
 ): Promise<ToolResult> {
   const supabase = createApiClient()
   const { ranked, diagnostics } = await retrieveDocuments(supabase, input.query, {
     projectFilter: input.project_id || null,
     docTypeFilter: normalizeDocTypeFilter(input.doc_type),
+    groundingMode,
   })
   const degraded = diagnostics.degraded
   const retrievalIncomplete = diagnostics.vectorFailed || diagnostics.keywordFailed
@@ -732,7 +747,11 @@ async function executeGetContradictions(input: { project_id?: string; metric?: s
 // ─── Tool Dispatcher ─────────────────────────────────────────────────
 const ALLOWED_PROJECTS = new Set(['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'])
 
-export async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolResult> {
+export async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  opts: { groundingMode?: GroundingMode } = {}
+): Promise<ToolResult> {
   // Validate project_id scope. search_documents accepts holding entities (KLP/PHILAE/GVF); the
   // structured tools only have MAD/BHX data, so they keep the tighter check.
   const projectId = input.project_id as string | undefined
@@ -748,7 +767,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     case 'get_portfolio_context':
       return executeGetPortfolioContext(input as { project_id?: string })
     case 'search_documents':
-      return executeSearchDocuments(input as { query: string; project_id?: string; doc_type?: string })
+      return executeSearchDocuments(input as { query: string; project_id?: string; doc_type?: string }, opts.groundingMode ?? 'standard')
     case 'get_capex_summary':
       return executeGetCapexSummary(input as { project_id: string })
     case 'get_funding_status':
@@ -791,7 +810,8 @@ export async function runAgentLoop(
   anthropic: Anthropic,
   model: string,
   onProgress?: (stage: string, detail?: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts: { groundingMode?: GroundingMode } = {}
 ): Promise<AgentLoopResult> {
   const allSources = new Map<string, Source>()
   const loopMessages: Anthropic.MessageParam[] = [...messages]
@@ -850,7 +870,11 @@ export async function runAgentLoop(
       const toolResults = await Promise.all(
         toolBlocks.map(async block => {
           try {
-            const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool(block.name, block.input as Record<string, unknown>)
+            const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool(
+              block.name,
+              block.input as Record<string, unknown>,
+              { groundingMode: opts.groundingMode ?? 'standard' }
+            )
             if (d) degraded = true
             if (inj) injectionFlagged = true
             if (ri) retrievalIncomplete = true
@@ -880,7 +904,7 @@ export async function runAgentLoop(
 
 export async function verifyAnswer(
   anthropic: Anthropic,
-  input: { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[]; evidence?: string[] },
+  input: { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[]; evidence?: string[]; groundingMode?: GroundingMode },
   onProgress?: (stage: string, detail?: string) => void,
   signal?: AbortSignal
 ): Promise<{ text: string; verified: boolean }> {
@@ -914,7 +938,10 @@ export async function verifyAnswer(
     'Keep the same language as the user query.',
     'Do not mention this verification step.',
     'Never invent citations or source labels.',
-  ].join('\n')
+    input.groundingMode && input.groundingMode !== 'standard'
+      ? `Active grounding mode is ${input.groundingMode}: preserve abstentions caused by strict grounding and never introduce facts from lower-governance sources.`
+      : '',
+  ].filter(Boolean).join('\n')
 
   try {
     // WS1-T8 + adversarial review F2: cap the evidence and ALWAYS terminate it — a raw 14k slice can cut
@@ -971,14 +998,15 @@ export type ChatTurnResult = {
 export async function runChatTurn(
   anthropic: Anthropic,
   query: string,
-  opts: { history?: Anthropic.MessageParam[]; model?: string; signal?: AbortSignal } = {}
+  opts: { history?: Anthropic.MessageParam[]; model?: string; signal?: AbortSignal; groundingMode?: GroundingMode } = {}
 ): Promise<ChatTurnResult> {
   const model = opts.model ?? chooseChatModel(query)
   const history: Anthropic.MessageParam[] = opts.history ?? [{ role: 'user', content: query }]
-  const loop = await runAgentLoop(history, SYSTEM_PROMPT, anthropic, model, undefined, opts.signal)
+  const groundingMode = opts.groundingMode ?? 'standard'
+  const loop = await runAgentLoop(history, systemPromptForGrounding(groundingMode), anthropic, model, undefined, opts.signal, { groundingMode })
   const { text: answer, verified } = await verifyAnswer(
     anthropic,
-    { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence },
+    { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence, groundingMode },
     undefined,
     opts.signal
   )

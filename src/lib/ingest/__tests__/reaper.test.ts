@@ -83,6 +83,19 @@ describe('reapAndRequeue', () => {
     expect(d.markFailure).toHaveBeenCalledWith(sb, 'a', 2)
   })
 
+  it('logs a failed attempt counter update instead of swallowing it silently', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const d = deps({
+      listRecoverable: vi.fn(async () => [doc('a', 1)]),
+      reingest: vi.fn(async () => ({ status: 'error' as const })),
+      markFailure: vi.fn(async () => { throw new Error('update failed') }),
+    })
+    const r = await reapAndRequeue(sb, {}, d)
+    expect(r.failed).toBe(1)
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('failed to persist reingest_attempts'), 'update failed')
+    err.mockRestore()
+  })
+
   it('stops starting new re-ingests once the time budget is exhausted (time-boxed)', async () => {
     let t = 0
     const d = deps({

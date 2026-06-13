@@ -9,11 +9,12 @@ import { createApiClient, requireUser } from '@/lib/supabase-server'
 
 const ALLOWED_EXT = new Set(['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.pptx'])
 const UPLOAD_BUCKET = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+const MAX_BYTES = 50 * 1024 * 1024
 
 export async function POST(request: NextRequest) {
   if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-  let body: { fileName?: string }
+  let body: { fileName?: string; fileSize?: number }
   try {
     body = (await request.json()) as { fileName?: string }
   } catch {
@@ -21,6 +22,15 @@ export async function POST(request: NextRequest) {
   }
   const fileName = (body.fileName ?? '').trim()
   if (!fileName) return NextResponse.json({ error: 'Falta fileName' }, { status: 400 })
+  if (body.fileSize != null) {
+    const fileSize = Number(body.fileSize)
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      return NextResponse.json({ error: 'El archivo está vacío' }, { status: 400 })
+    }
+    if (fileSize > MAX_BYTES) {
+      return NextResponse.json({ error: `El archivo supera el límite de ${MAX_BYTES / 1024 / 1024} MB` }, { status: 413 })
+    }
+  }
 
   const dot = fileName.lastIndexOf('.')
   const fileExt = dot >= 0 ? fileName.slice(dot).toLowerCase() : ''

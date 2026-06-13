@@ -51,4 +51,10 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/legitimate CONTRACTUAL\/CORPORATE language/i)
     expect(src).toMatch(/supersedes all prior agreements/i)
   })
+
+  it('centralizes strict grounding prompt text for HTTP and eval paths', () => {
+    expect(src).toMatch(/systemPromptForGrounding/)
+    expect(src).toMatch(/official_only: search_documents returns only source-of-record evidence/)
+    expect(src).toMatch(/If strict grounding returns no evidence, abstain/)
+  })
 })

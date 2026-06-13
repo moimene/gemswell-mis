@@ -9,11 +9,17 @@ describe('proxy isPublicPath (security boundary)', () => {
     expect(isPublicPath('/api/cron/ingest-reaper')).toBe(true)
   })
 
+  it('lets the ingest jobs cron route through to its own CRON_SECRET-gated handler', () => {
+    expect(isPublicPath('/api/cron/ingest-jobs')).toBe(true)
+  })
+
   it('does NOT make the cron prefix or unlisted future cron routes public (exact-route allowlist, N1)', () => {
     expect(isPublicPath('/api/cron/')).toBe(false)
     expect(isPublicPath('/api/cron/foo')).toBe(false)            // a new cron route must be opted in explicitly
     expect(isPublicPath('/api/cron/ingest-reaper/x')).toBe(false)
     expect(isPublicPath('/api/cron/ingest-reaperx')).toBe(false) // anchored end, no prefix-collision
+    expect(isPublicPath('/api/cron/ingest-jobs/x')).toBe(false)
+    expect(isPublicPath('/api/cron/ingest-jobsx')).toBe(false)
   })
 
   it('keeps login + auth public (session bootstrap)', () => {
