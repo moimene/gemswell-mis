@@ -25,6 +25,22 @@ Pilot `scripts/rechunk-pilot.ts` (read-only, reconstruye texto de chunks → cor
 - 706 docs legal/board = 57.690 chunks (40% del corpus). Re-embed masivo NO justificado por el eval (golden de 11 Qs demasiado grueso).
 **Conclusión B:** re-chunk clause-aware CURADO de contratos genuinos (no anexos de ingeniería), con strip de overlap, re-embed solo del subset. Blanket = NO.
 
+## EJECUCIÓN — Tranche B CURADO (2026-06-13, en curso)
+`scripts/rechunk-contracts.ts` (DRY-RUN por defecto, `--apply` escribe). Curación = filtro título contrato ∧ no-ingeniería ∧ chunk_count>=5 → **178 contratos genuinos** (ECIJA ContratoObra, Acuerdo de socios Kelpa ×2, Acuerdo Marco ATM-MPS, Acuerdo Inversión, Loan Agreements, NDAs, ISHA…).
+- **Backup completo:** `rag_chunks_rechunk_bak_20260613` = TODOS los legal/board live chunk_count>=5 (**57.293 chunks / 504 docs**, superset) — fuente inmutable de reconstrucción + restore.
+- **Bug propio cazado + fijo:** primera reconstrucción con `deOverlap` colapsaba `\n`→espacio → mataba la detección line-anchored (clause 118). Fix = join `\n\n` newline-preserving (el pilot lo probó). True dry-run: **7.272→11.637 chunks, clause+3.135, page+4.869**.
+- **Crash-safe/resumable:** lee OLD chunks del BACKUP (no rag_chunks), salta docs con evento `rechunk`, delete+insert por doc. fts vía trigger `trig_rag_chunks_fts`, embedding_model vía default de columna, mismo path que `insertChunkBatch`.
+- **Pilot --apply --limit 3 VERIFICADO:** 268 chunks, null_fts=0, null_emb=0, null_model=0, with_page=265, chunk_count consistente. Write-path correcto.
+- **Apply completo (#27 prod):** EN CURSO (~175 docs / ~11.4k chunks, re-embed bulk ~30-35min). Rollback: restore desde `rag_chunks_rechunk_bak_20260613`.
+- Pendiente al terminar: re-eval `run-retrieval.ts`, refresh `rag_term_df` (keyword oracle), verificación integridad, commit.
+
+### Tareas de seguimiento (NO en este pase)
+- Near-dups que A2 (byte-exacto) no cogió: `Loan Agreement 130.000 GBP` ×4 formatos, `Acuerdo Marco ATM-MPS` ×3, `Acuerdo de socios Kelpa` ×2. Necesitan dedup semántico/versión (no byte-exacto).
+- Reclasificar anexos de ingeniería mal puestos como `doc_type='legal'` (mediciones, plazos/costes) → capex/engineering.
+- Wire `content_hash` en el ingest (`queue-processor.ts`) para que el índice único `uq_rag_documents_content_hash` guarde de verdad re-ingestas futuras (hoy ingest no escribe content_hash).
+- `fts` NULL en ingest nuevo: el trigger lo cubre, pero confirmar que `insertChunkBatch` no lo rompe.
+- 12 planos image-only sin texto (storage_path=0 → no OCR posible en legacy); 1 es `audited` (`AM_MPS-Anexo III.pdf`) — revisar manualmente.
+
 ## 0. Diagnóstico (foto live verificada hoy)
 
 | Dimensión | Estado | Lectura |
