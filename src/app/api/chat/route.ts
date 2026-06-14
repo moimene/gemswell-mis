@@ -71,6 +71,7 @@ async function persistConversation(
         label: s.label,
         verification: s.verification,
         metadata: s.metadata,
+        preview: s.preview ?? null, // persist the snippet so a restored conversation shows source previews
       })),
       tool_calls: toolCalls,
     },

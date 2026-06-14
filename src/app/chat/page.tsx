@@ -3,6 +3,10 @@ import { useState, useRef, useEffect } from 'react'
 import { formatToolCall } from '@/lib/chat/tool-call-display'
 import { citationPage, hasStoredOriginal, originalDownloadHref } from '@/lib/chat/citation-link'
 import { formatCorpusStats, type CorpusStat } from '@/lib/chat/corpus-stats'
+import { mapStoredMessage } from '@/lib/chat/history'
+
+type ConversationSummary = { id: string; title: string | null; created_at: string }
+const CONV_LS_KEY = 'gemswell_chat_active_conv'
 
 // Mirror of ToolCallAudit (kept local so this client page never imports server-only agent.ts at runtime).
 type ToolCall = {
@@ -114,6 +118,40 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])  // history sidebar
+  const [loadingConvId, setLoadingConvId] = useState<string | null>(null)
+
+  async function refreshConversations() {
+    try {
+      const r = await fetch('/api/chat/conversations')
+      if (r.ok) setConversations(((await r.json()).conversations ?? []) as ConversationSummary[])
+    } catch { /* best-effort: sidebar stays as-is */ }
+  }
+
+  async function loadConversation(id: string) {
+    setLoadingConvId(id)
+    try {
+      const r = await fetch(`/api/chat/conversations/${id}`)
+      if (!r.ok) { if (r.status === 404) { try { localStorage.removeItem(CONV_LS_KEY) } catch {} } return }
+      const j = await r.json()
+      setMessages(((j.messages ?? []) as unknown[]).map((m) => mapStoredMessage(m as never)) as unknown as Message[])
+      setConversationId(id)
+      setCollapsedSources(new Set())
+      try { localStorage.setItem(CONV_LS_KEY, id) } catch {}
+    } catch { /* ignore */ } finally { setLoadingConvId(null) }
+  }
+
+  function newConversation() {
+    setMessages([]); setConversationId(null); setCollapsedSources(new Set())
+    try { localStorage.removeItem(CONV_LS_KEY) } catch {}
+    inputRef.current?.focus()
+  }
+
+  async function deleteConversation(id: string) {
+    try { await fetch(`/api/chat/conversations/${id}`, { method: 'DELETE' }) } catch { /* ignore */ }
+    setConversations((cs) => cs.filter((c) => c.id !== id))
+    if (id === conversationId) newConversation()
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -130,6 +168,15 @@ export default function ChatPage() {
       .then(h => { if (!cancelled) setStats(formatCorpusStats(h)) })
       .catch(() => undefined)
     return () => { cancelled = true }
+  }, [])
+
+  // History: load the user's conversation list + resume the last active thread on mount (so a page
+  // reload no longer starts blank / orphans the in-progress conversation).
+  useEffect(() => {
+    refreshConversations()
+    let saved: string | null = null
+    try { saved = localStorage.getItem(CONV_LS_KEY) } catch { /* ignore */ }
+    if (saved) loadConversation(saved)
   }, [])
 
   function toggleSources(i: number) {
@@ -225,7 +272,12 @@ export default function ChatPage() {
             throw new Error(String(payload.error || 'stream error'))
           } else if (event === 'final') {
             finalReceived = true
-            if (payload.conversationId) setConversationId(String(payload.conversationId))
+            if (payload.conversationId) {
+              const cid = String(payload.conversationId)
+              setConversationId(cid)
+              try { localStorage.setItem(CONV_LS_KEY, cid) } catch { /* ignore */ }
+              refreshConversations() // surface a brand-new conversation (or refresh its title) in the sidebar
+            }
             setMessages([...newMessages, {
               role: 'assistant',
               content: String(payload.message ?? ''),
@@ -272,7 +324,47 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
+    <div className="flex h-[calc(100vh-4rem)]">
+      {/* History sidebar — list + resume + delete (persistence existed server-side; this surfaces it) */}
+      <aside className="flex-none w-64 border-r border-slate-200 bg-slate-50 flex flex-col">
+        <div className="flex-none p-3 border-b border-slate-200">
+          <button
+            onClick={newConversation}
+            className="w-full rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-700"
+          >
+            + Nueva conversación
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {conversations.length === 0 ? (
+            <p className="px-2 py-6 text-center text-[11px] text-slate-400">Aún no hay conversaciones</p>
+          ) : conversations.map((c) => (
+            <div
+              key={c.id}
+              className={`group flex items-center gap-1 rounded-md px-2 py-1.5 transition-colors ${c.id === conversationId ? 'bg-slate-200' : 'hover:bg-slate-100'}`}
+            >
+              <button onClick={() => loadConversation(c.id)} className="min-w-0 flex-1 text-left" title={c.title ?? ''}>
+                <p className="truncate text-xs font-medium text-slate-700">
+                  {loadingConvId === c.id ? 'Cargando…' : (c.title || 'Sin título')}
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  {new Date(c.created_at).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); if (confirm('¿Eliminar esta conversación?')) deleteConversation(c.id) }}
+                title="Eliminar conversación"
+                className="flex-none rounded px-1 text-sm text-slate-300 opacity-0 transition group-hover:opacity-100 hover:text-red-600"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* Chat column */}
+      <div className="flex flex-col flex-1 min-w-0">
       {/* Header */}
       <div className="flex-none border-b border-slate-200 bg-white px-6 py-4">
         <div className="flex items-center justify-between">
@@ -283,14 +375,6 @@ export default function ChatPage() {
             <h1 className="mt-0.5 text-lg font-bold tracking-tight text-slate-900">Chat con documentos</h1>
             <p className="text-sm text-slate-500">Pregunta al corpus del proyecto y recibe respuestas con fuentes citadas.</p>
           </div>
-          {conversationId && (
-            <button
-              onClick={() => { setMessages([]); setConversationId(null); setCollapsedSources(new Set()) }}
-              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-            >
-              Nueva conversación
-            </button>
-          )}
           <div className="ml-4 flex rounded-md border border-slate-200 bg-slate-50 p-0.5">
             {GROUNDING_OPTIONS.map(opt => (
               <button
@@ -661,6 +745,7 @@ export default function ChatPage() {
 
       {/* #4 — inline PDF viewer modal (over the existing signed-download endpoint) */}
       {viewer && <PdfViewerModal doc={viewer} onClose={() => setViewer(null)} />}
+      </div>
     </div>
   )
 }
