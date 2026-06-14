@@ -4,8 +4,6 @@ import { createApiClient, requireUser } from '@/lib/supabase-server'
 import {
   SYSTEM_PROMPT,
   systemPromptForGrounding,
-  runAgentLoop,
-  verifyAnswer,
   chooseChatModel,
   detectEntities,
   CHAT_VERIFIER_MODEL,
@@ -13,6 +11,7 @@ import {
   type Source,
   type ToolCallAudit,
 } from '@/lib/chat/agent'
+import { runAgentLoopResilient, verifyAnswerResilient } from '@/lib/chat/agent-gemini'
 import type { GroundingMode } from '@/lib/rag/retrieve'
 
 export const maxDuration = 800
@@ -147,10 +146,13 @@ export async function POST(request: NextRequest) {
 
       try {
         send('progress', { stage: 'searching', elapsedMs: 0 })
-        const loop = await runAgentLoop(historyMessages, systemPromptForGrounding(groundingMode, SYSTEM_PROMPT), anthropic, chatModel, setStage, abort.signal, { groundingMode })
-        const { text: answer, verified } = await verifyAnswer(
+        // Resilient: primary = Anthropic; if Anthropic is unavailable (workspace usage/spend cap, 429,
+        // overload, 5xx) the WHOLE turn (tool-use loop + verifier) falls back to Gemini, same tools/prompts.
+        const loop = await runAgentLoopResilient(anthropic, historyMessages, systemPromptForGrounding(groundingMode, SYSTEM_PROMPT), chatModel, setStage, abort.signal, { groundingMode })
+        const { text: answer, verified } = await verifyAnswerResilient(
           anthropic,
           { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence, groundingMode },
+          loop.provider,
           setStage,
           abort.signal
         )
@@ -166,7 +168,9 @@ export async function POST(request: NextRequest) {
           sources: loop.sources,
           toolCalls: loop.toolCalls,
           entities,
-          model: chatModel,
+          model: loop.provider === 'gemini' ? (process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-pro') : chatModel,
+          provider: loop.provider,
+          fallback: loop.provider === 'gemini',
           verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
           groundingMode,
           verified,

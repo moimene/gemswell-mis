@@ -107,7 +107,7 @@ export const CHAT_FAST_MODEL = process.env.CHAT_FAST_MODEL || DEFAULT_CHAT_MODEL
 export const CHAT_REASONING_MODEL = process.env.CHAT_REASONING_MODEL || 'claude-opus-4-8'
 export const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASONING_MODEL
 // Generous output budget so long analytical answers aren't truncated (user-requested ~15k tokens).
-const CHAT_MAX_TOKENS = Number(process.env.CHAT_MAX_TOKENS || '16000')
+export const CHAT_MAX_TOKENS = Number(process.env.CHAT_MAX_TOKENS || '16000')
 export const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
 
 const DOC_TYPE_ALIASES: Record<string, string> = {
@@ -804,6 +804,36 @@ export type AgentLoopResult = {
   searchEvidence: string[]
 }
 
+/** Provider-agnostic accumulators a tool-use loop fills as it runs. */
+export type AgentAccumulators = {
+  allSources: Map<string, Source>
+  toolCalls: ToolCallAudit[]
+  degraded: boolean
+  injectionFlagged: boolean
+  retrievalIncomplete: boolean
+  searchEvidence: string[]
+}
+
+/** Build the final AgentLoopResult from the accumulated audit signals. Shared by the Anthropic loop
+ *  (runAgentLoop) and the Gemini fallback loop (agent-gemini.ts) so both emit identical telemetry. */
+export function buildAgentResult(message: string, truncated: boolean, acc: AgentAccumulators): AgentLoopResult {
+  const sources = Array.from(acc.allSources.values())
+  return {
+    message,
+    sources,
+    toolCalls: acc.toolCalls,
+    degraded: acc.degraded,
+    injectionFlagged: acc.injectionFlagged,
+    truncated,
+    retrievalIncomplete: acc.retrievalIncomplete,
+    unreviewedUsed: sources.filter((s) => {
+      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
+      return rs === 'needs_review' || rs === 'pending'
+    }).length,
+    searchEvidence: acc.searchEvidence,
+  }
+}
+
 export async function runAgentLoop(
   messages: Anthropic.MessageParam[],
   systemPrompt: string,
@@ -821,22 +851,10 @@ export async function runAgentLoop(
   let retrievalIncomplete = false
   const searchEvidence: string[] = []
 
-  // Single exit builder so every return path carries the full audit signal set, incl. the
-  // deduped count of unreviewed sources the answer actually leaned on (audit 2026-06-07 C1 disclosure).
-  const finish = (message: string, truncated: boolean): AgentLoopResult => ({
-    message,
-    sources: Array.from(allSources.values()),
-    toolCalls,
-    degraded,
-    injectionFlagged,
-    truncated,
-    retrievalIncomplete,
-    unreviewedUsed: Array.from(allSources.values()).filter((s) => {
-      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-      return rs === 'needs_review' || rs === 'pending'
-    }).length,
-    searchEvidence,
-  })
+  // Single exit builder so every return path carries the full audit signal set. Delegates to the shared
+  // buildAgentResult so the Gemini fallback loop (agent-gemini.ts) produces an IDENTICAL result shape.
+  const finish = (message: string, truncated: boolean): AgentLoopResult =>
+    buildAgentResult(message, truncated, { allSources, toolCalls, degraded, injectionFlagged, retrievalIncomplete, searchEvidence })
 
   for (let iteration = 0; iteration < 5; iteration++) {
     onProgress?.('drafting')
@@ -902,27 +920,12 @@ export async function runAgentLoop(
   return finish('Maximum tool iterations reached. Please rephrase your question or ask about a specific aspect.', false)
 }
 
-export async function verifyAnswer(
-  anthropic: Anthropic,
-  input: { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[]; evidence?: string[]; groundingMode?: GroundingMode },
-  onProgress?: (stage: string, detail?: string) => void,
-  signal?: AbortSignal
-): Promise<{ text: string; verified: boolean }> {
-  // CX-1: signal whether the answer was actually verified.
-  if (!CHAT_VERIFIER_ENABLED) return { text: input.draft, verified: false }
+export type VerifierInput = { query: string; draft: string; sources: Source[]; toolCalls: ToolCallAudit[]; evidence?: string[]; groundingMode?: GroundingMode }
 
-  onProgress?.('verifying')
-
-  const sourceSummary = input.sources.slice(0, 12).map((source, index) => ({
-    index: index + 1,
-    label: source.label,
-    verification: source.verification,
-    review_status: source.metadata.review_status,
-    authority_score: source.metadata.authority_score,
-    preview: wrapUntrustedContent(String(source.preview ?? '')),
-  }))
-
-  const verifierPrompt = [
+/** Verifier SYSTEM prompt — shared by the Anthropic verifier (verifyAnswer) and the Gemini fallback
+ *  verifier (agent-gemini.ts) so both enforce identical grounding rules. */
+export function buildVerifierSystemPrompt(groundingMode?: GroundingMode): string {
+  return [
     'You are a strict verifier for a financial/documentary RAG assistant.',
     'OUTPUT CONTRACT: return ONLY the final user-facing answer text, verbatim as the reader should see it. Never emit any preamble, meta-commentary, or reasoning about your review — no "the draft", "well-grounded", "I\'ll preserve", "returning the draft as-is", "one check", or similar. Your entire response IS the answer.',
     'Your job is to remove or qualify UNSUPPORTED claims, not to add new facts and not to dilute well-grounded ones.',
@@ -938,36 +941,55 @@ export async function verifyAnswer(
     'Keep the same language as the user query.',
     'Do not mention this verification step.',
     'Never invent citations or source labels.',
-    input.groundingMode && input.groundingMode !== 'standard'
-      ? `Active grounding mode is ${input.groundingMode}: preserve abstentions caused by strict grounding and never introduce facts from lower-governance sources.`
+    groundingMode && groundingMode !== 'standard'
+      ? `Active grounding mode is ${groundingMode}: preserve abstentions caused by strict grounding and never introduce facts from lower-governance sources.`
       : '',
   ].filter(Boolean).join('\n')
+}
 
+/** Verifier USER message — the draft, tool calls, full evidence (always terminated so a mid-chunk cut
+ *  can't swallow the source cards) and source cards. Shared by both providers. */
+export function buildVerifierUserContent(input: VerifierInput): string {
+  const sourceSummary = input.sources.slice(0, 12).map((source, index) => ({
+    index: index + 1,
+    label: source.label,
+    verification: source.verification,
+    review_status: source.metadata.review_status,
+    authority_score: source.metadata.authority_score,
+    preview: wrapUntrustedContent(String(source.preview ?? '')),
+  }))
+  const evidence = input.evidence ?? []
+  const evidenceBlock = evidence.length
+    ? evidence.join('\n\n---\n\n').slice(0, 14000) + '\n</document_content>\n[END OF FULL RETRIEVED EVIDENCE]'
+    : '(no documentary evidence retrieved)'
+  return [
+    `USER QUERY:\n${input.query}`,
+    `DRAFT ANSWER:\n${input.draft}`,
+    `TOOL CALLS:\n${JSON.stringify(input.toolCalls.map(call => ({ name: call.name, input: call.input, is_error: call.is_error, source_count: call.source_count, result_preview: call.result_preview })), null, 2)}`,
+    `FULL RETRIEVED EVIDENCE (exact document chunks the assistant read — confirm claims against THIS, not the truncated previews):\n${evidenceBlock}`,
+    `SOURCE CARDS:\n${JSON.stringify(sourceSummary, null, 2)}`,
+    'Return only the final user-facing answer.',
+  ].join('\n\n---\n\n')
+}
+
+export async function verifyAnswer(
+  anthropic: Anthropic,
+  input: VerifierInput,
+  onProgress?: (stage: string, detail?: string) => void,
+  signal?: AbortSignal
+): Promise<{ text: string; verified: boolean }> {
+  // CX-1: signal whether the answer was actually verified.
+  if (!CHAT_VERIFIER_ENABLED) return { text: input.draft, verified: false }
+
+  onProgress?.('verifying')
+
+  const verifierPrompt = buildVerifierSystemPrompt(input.groundingMode)
   try {
-    // WS1-T8 + adversarial review F2: cap the evidence and ALWAYS terminate it — a raw 14k slice can cut
-    // mid-chunk, leaving a dangling <document_content> open tag that would swallow the SOURCE CARDS that
-    // follow. Append an explicit close + end-marker so the boundary is always well-formed.
-    const evidence = input.evidence ?? []
-    const evidenceBlock = evidence.length
-      ? evidence.join('\n\n---\n\n').slice(0, 14000) + '\n</document_content>\n[END OF FULL RETRIEVED EVIDENCE]'
-      : '(no documentary evidence retrieved)'
     const response = await anthropic.messages.create({
       model: CHAT_VERIFIER_MODEL,
       max_tokens: CHAT_MAX_TOKENS,
       system: verifierPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            `USER QUERY:\n${input.query}`,
-            `DRAFT ANSWER:\n${input.draft}`,
-            `TOOL CALLS:\n${JSON.stringify(input.toolCalls.map(call => ({ name: call.name, input: call.input, is_error: call.is_error, source_count: call.source_count, result_preview: call.result_preview })), null, 2)}`,
-            `FULL RETRIEVED EVIDENCE (exact document chunks the assistant read — confirm claims against THIS, not the truncated previews):\n${evidenceBlock}`,
-            `SOURCE CARDS:\n${JSON.stringify(sourceSummary, null, 2)}`,
-            'Return only the final user-facing answer.',
-          ].join('\n\n---\n\n'),
-        },
-      ],
+      messages: [{ role: 'user', content: buildVerifierUserContent(input) }],
     }, { signal })
 
     const verifiedText = response.content.find(block => block.type === 'text')?.text?.trim()
