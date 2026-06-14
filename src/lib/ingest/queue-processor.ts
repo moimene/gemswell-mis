@@ -154,19 +154,27 @@ function hasMissingColumnError(error: { message?: string; code?: string } | null
     error?.message?.toLowerCase().includes('schema cache') === true
 }
 
-async function reserveRagDocument(
+export async function reserveRagDocument(
   supabase: SupabaseClient,
   item: IngestQueueRow,
   sourceHash: string,
   sourceChannel: SourceChannel
 ): Promise<ReservedDocument> {
   const sourceType = item.file_ext.replace('.', '') || item.file_ext
+  // project_id MUST be written at reserve time (the dedup gate), not deferred to the final indexed
+  // update. The partial unique index is (source_hash, project_id) WHERE source_hash IS NOT NULL, so the
+  // 23505 that drives the reuse path only fires when project_id is already present on the inserted row.
+  // If it stayed NULL here, (source_hash, NULL) would never collide → byte-identical re-uploads under the
+  // SAME project would each create a new doc (and then trip the index on the final project_id write), and
+  // dedup would silently break. project_id is a core column, so it is safe in the fallback baseRow too.
+  const projectId = item.project_id ?? null
   const baseRow = {
     title: item.file_name,
     source_type: sourceType,
     chunk_count: 0,
     status: 'processing',
     mis_document_id: null,
+    project_id: projectId,
   }
   const governedRow = {
     ...baseRow,
@@ -189,11 +197,18 @@ async function reserveRagDocument(
   if (!error && data) return { id: (data as RagDocumentInsert).id, reused: false }
 
   if (error && (error as { code?: string }).code === '23505') {
-    const { data: existing, error: existingError } = await supabase
+    // Scope the reuse lookup to the SAME (source_hash, project_id) that just collided on the partial
+    // unique index — never reuse another project's row. With the global index this was an unscoped
+    // .eq('source_hash') that, post project-aware index, could match rows in other projects (and even
+    // error on .maybeSingle() when the same bytes legitimately live under >1 project). NULLs don't
+    // collide, so a 23505 here always implies a same-(hash, project) row exists to find. Mirrors the
+    // B5 content_hash lookup (uq_rag_documents_content_hash) so both dedup keys are project-scoped.
+    let lookup = supabase
       .from('rag_documents')
       .select('id, review_status, classification_source, status, chunk_count')
       .eq('source_hash', sourceHash)
-      .maybeSingle()
+    lookup = projectId !== null ? lookup.eq('project_id', projectId) : lookup.is('project_id', null)
+    const { data: existing, error: existingError } = await lookup.maybeSingle()
 
     if (existingError) throw new Error(`rag_documents source_hash lookup failed: ${existingError.message}`)
     if (existing) {
