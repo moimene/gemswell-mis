@@ -9,6 +9,7 @@ import { createApiClient } from '@/lib/supabase-server'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
 import { retrieveDocuments, emptyResultMessage, type GroundingMode } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
+import { formatFoundDocuments, significantTokens, tokenScore, deburr, type FoundDocRow } from './find-document'
 
 // ─── Types ──────────────────────────────────────────────────────────
 export type Source = KnowledgeSource
@@ -157,6 +158,7 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 - Use a tool before answering ANY factual question about Gemswell — there is a relevant tool for every Gemswell fact, so never answer such a question from memory or assumption.
 - Evidence discipline OUTRANKS the depth, style and proactivity guidance below: if the evidence is thin, the honest answer is a short one. Never let "lead with the answer" or "be thorough" produce a claim a tool result does not support. Abstaining is a correct, high-quality answer; a confident unsupported answer is a critical failure.
 - When the user names a specific term (a proper noun, lender, instrument, counterparty, person, project or document title), NEVER conclude it "does not exist", "is not in the portfolio", or "has no evidence" on the basis of get_portfolio_context. That tool is an orientation dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF) ONLY — it does NOT index lenders, financing instruments, counterparties, people, contracts, board minutes or sub-entities. A named thing absent from it MAY well be in the document corpus (lenders/instruments live there, not in the dictionary) — but it may also be genuinely out of corpus; let the search result decide. So before stating you found nothing for a named term, you MUST run search_documents for that term — cross-entity (omit project_id), trying obvious spelling variants of proper nouns (a small typo like "Buenvista" should still be searched as "Buenavista") AND bilingual equivalents / known aliases — the keyword lane has no stemming, so the alias is often the only hit: "pacto de socios" ↔ "shareholders agreement", "apoderados" ↔ "powers of attorney", "escrituras" ↔ "deeds", "consejo/junta" ↔ "board/shareholders meeting", and the project/holding name ↔ its code (Madrid Playa Surf↔MAD, Birmingham/Wave Park Holdings↔BHX, Kelpa↔KLP, Philae↔PHILAE, Gemswell Ventures↔GVF). Only abstain AFTER search_documents returns no relevant evidence — and conversely, do NOT manufacture an answer from low-relevance chunks just because a search ran: irrelevant top-k results still mean abstain.
+- For EXISTENCE / "is it uploaded" questions — "is document/file X uploaded?", "do we have Y on file?", "¿está subido el contrato Z?" — use find_document (a TITLE lookup that also reveals uploads whose ingestion FAILED), not search_documents (which is for CONTENT). If find_document returns no match, the file is most likely not uploaded under that name — say so and suggest another fragment of the name.
 - Distinguish structured MIS data from documentary evidence.
 - If a statement comes from structured data, say it is from MIS structured data.
 - If a statement comes from documents, cite the document source cards and respect their review/authority status.
@@ -197,6 +199,7 @@ So: for legal, shareholder, board, financing, fund or portfolio questions about 
 - get_risk_register: structured risk register data.
 - compare_projects: structured cross-project comparison.
 - get_contradictions: open registered data discrepancies (conflicting CapEx/funding totals) awaiting CFO confirmation.
+- find_document: check whether a specific document/file is uploaded/ingested by its TITLE (existence check; includes docs whose ingestion FAILED). Use for "is X uploaded / do we have file Y on file?" — NOT for what a document says (that is search_documents).
 
 ## Response Standard
 - Lead with the answer, then evidence and caveats.
@@ -336,6 +339,18 @@ export const TOOLS: Anthropic.Tool[] = [
         project_id: { type: 'string', enum: ['MAD', 'BHX'], description: 'Optional project filter.' },
         metric: { type: 'string', description: 'Optional substring to match the metric key, e.g. "capex", "funding", "eac".' },
       },
+    },
+  },
+  {
+    name: 'find_document',
+    description: 'Check whether a specific document/file is UPLOADED/INGESTED, by its TITLE or file name — an EXISTENCE check, NOT a content search. Use it for questions like "is the X financing contract uploaded?", "do we have the Kelpa shareholders agreement on file?", "¿está subido el contrato de financiación Y?". It matches the title (case-insensitive substring) across the WHOLE corpus and reports each match WITH its ingest status — including documents that were uploaded but whose INGESTION FAILED (status=error), which search_documents can never surface. Prefer this over search_documents whenever the user asks IF a document exists / is uploaded, rather than what it contains. Returns NO source cards (it is a metadata lookup) — report its findings as MIS structured data. If it returns no match, the file is (most likely) not uploaded under that name; suggest trying another fragment of the name.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        title: { type: 'string', description: 'Part of the document title / file name to look for, e.g. "Contrato de Financiación", "shareholders agreement", "Loan Agreement Kelpa". A substring/fragment of the distinctive part of the name is enough.' },
+        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'], description: 'Optional entity filter. Usually OMIT — legal/financing documents are filed under the holdings (KLP/PHILAE/GVF), so a project filter can hide the real match.' },
+      },
+      required: ['title'],
     },
   },
 ]
@@ -744,6 +759,43 @@ async function executeGetContradictions(input: { project_id?: string; metric?: s
   return { result }
 }
 
+// ─── Tool Executor: find_document (title / existence lookup) ─────────
+async function executeFindDocument(input: { title?: string; project_id?: string }): Promise<ToolResult> {
+  const term = (input.title ?? '').trim()
+  if (!term) return { result: 'find_document requires a non-empty document title / file name to search for.' }
+  const supabase = createApiClient()
+  const esc = (x: string) => x.replace(/[%_\\]/g, m => '\\' + m)
+  // include ALL ingest states (indexed/error/retired) + superseded — unlike the gestor default which hides
+  // errors — so the answer can distinguish "not uploaded" from "uploaded but ingestion failed".
+  const COLS = 'title, project_id, doc_type, review_status, lifecycle, status, chunk_count, created_at'
+
+  // Tier 1: exact title substring of the full phrase (mirrors the gestor "Buscar título…").
+  let q1 = supabase.from('rag_documents').select(COLS).ilike('title', `%${esc(term)}%`)
+  if (input.project_id) q1 = q1.eq('project_id', input.project_id)
+  const r1 = await q1.order('created_at', { ascending: false }).limit(30)
+  if (r1.error) return { result: `Error searching documents by title: ${r1.error.message}` }
+  if ((r1.data ?? []).length > 0) return { result: formatFoundDocuments(r1.data as FoundDocRow[], term) }
+
+  // Tier 2: keyword-token fallback — the model often passes a long natural-language title that won't match
+  // a filename verbatim ("contrato de financiación de Madrid Playa Surf" vs "…Contrato de financiación…").
+  // OR-match the significant words (accent variants included), then rank by how many keywords each hit.
+  const tokens = significantTokens(term)
+  if (tokens.length === 0) return { result: formatFoundDocuments([], term) }
+  const orFilter = tokens.map(t => `title.ilike.%${esc(t)}%`).join(',')
+  let q2 = supabase.from('rag_documents').select(COLS).or(orFilter)
+  if (input.project_id) q2 = q2.eq('project_id', input.project_id)
+  const r2 = await q2.limit(150)
+  if (r2.error) return { result: `Error searching documents by title: ${r2.error.message}` }
+  const keywords = Array.from(new Set(tokens.map(deburr)))
+  const ranked = ((r2.data ?? []) as FoundDocRow[])
+    .map(d => ({ d, score: tokenScore(d.title, keywords) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score || String(b.d.created_at ?? '').localeCompare(String(a.d.created_at ?? '')))
+    .slice(0, 25)
+    .map(x => x.d)
+  return { result: formatFoundDocuments(ranked, term, { partial: true }) } // NO source cards — metadata lookup
+}
+
 // ─── Tool Dispatcher ─────────────────────────────────────────────────
 const ALLOWED_PROJECTS = new Set(['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'])
 
@@ -752,10 +804,10 @@ export async function executeTool(
   input: Record<string, unknown>,
   opts: { groundingMode?: GroundingMode } = {}
 ): Promise<ToolResult> {
-  // Validate project_id scope. search_documents accepts holding entities (KLP/PHILAE/GVF); the
-  // structured tools only have MAD/BHX data, so they keep the tighter check.
+  // Validate project_id scope. search_documents / find_document accept holding entities (KLP/PHILAE/GVF);
+  // the structured tools only have MAD/BHX data, so they keep the tighter check.
   const projectId = input.project_id as string | undefined
-  const structuredTools = name !== 'search_documents' && name !== 'get_portfolio_context'
+  const structuredTools = name !== 'search_documents' && name !== 'get_portfolio_context' && name !== 'find_document'
   if (projectId && structuredTools && projectId !== 'MAD' && projectId !== 'BHX') {
     return { result: `For ${name}, project_id must be MAD or BHX (structured data exists for those projects only). Got: ${projectId}` }
   }
@@ -782,6 +834,8 @@ export async function executeTool(
       return executeCompareProjects(input as { metric: string })
     case 'get_contradictions':
       return executeGetContradictions(input as { project_id?: string; metric?: string })
+    case 'find_document':
+      return executeFindDocument(input as { title?: string; project_id?: string })
     default:
       return { result: `Unknown tool: ${name}` }
   }

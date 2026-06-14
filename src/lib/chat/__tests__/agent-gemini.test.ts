@@ -33,9 +33,10 @@ describe('isAnthropicUnavailable (fallback trigger)', () => {
 
 describe('geminiToolDeclarations (schema translation)', () => {
   const decls = geminiToolDeclarations()
-  it('translates all 9 tools with name/description/parameters', () => {
-    expect(decls).toHaveLength(9)
+  it('translates all 10 tools with name/description/parameters', () => {
+    expect(decls).toHaveLength(10)
     expect(decls.map(d => d.name)).toContain('search_documents')
+    expect(decls.map(d => d.name)).toContain('find_document')
     for (const d of decls) { expect(d.name).toBeTruthy(); expect(d.parameters).toBeTruthy() }
   })
   it('preserves required + enum from input_schema', () => {
