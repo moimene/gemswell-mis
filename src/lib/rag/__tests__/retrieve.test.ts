@@ -6,10 +6,10 @@ vi.mock('@/lib/rag/embeddings', () => ({
   embedText: vi.fn(async () => new Array(768).fill(0.1)),
 }))
 vi.mock('@/lib/rag/rerank', () => ({
-  // Identity reranker: preserves input order, assigns descending relevance so the FIRST input has
-  // the HIGHEST Cohere relevance — lets us prove trust tier can override raw relevance.
-  rerankChunks: vi.fn(async (_q: string, chunks: Array<{ id: string }>) => ({
-    chunks: chunks.map((c, i) => ({ ...c, relevanceScore: 1 - i * 0.01 })),
+  // Deterministic reranker: use supplied similarity when a test needs explicit relevance, otherwise
+  // preserve input order with descending scores.
+  rerankChunks: vi.fn(async (_q: string, chunks: Array<{ id: string; similarity?: number }>) => ({
+    chunks: chunks.map((c, i) => ({ ...c, relevanceScore: typeof c.similarity === 'number' ? c.similarity : 1 - i * 0.01 })),
     degraded: false,
   })),
 }))
@@ -85,16 +85,40 @@ describe('retrieveDocuments', () => {
     expect(diagnostics.keywordFailed).toBe(false)
   })
 
-  it('lets trust tier override raw Cohere relevance', async () => {
-    // 'lowtrust' is first → highest rerank relevance; 'highauth' is second → lower relevance but
-    // source_of_record tier. Trust must win.
+  it('lets trust tier override ordinary/moderate Cohere relevance', async () => {
+    // Standard mode still allows trust to lead when relevance is in the ordinary range.
     const vector: Row[] = [
-      { id: 'lowtrust', document_id: 'd1', content: 'high relevance, no governance', metadata: {}, similarity: 0.99 },
-      { id: 'highauth', document_id: 'd2', content: 'authoritative', metadata: approved, similarity: 0.5 },
+      { id: 'lowtrust', document_id: 'd1', content: 'moderate relevance, no governance', metadata: {}, similarity: 0.49 },
+      { id: 'highauth', document_id: 'd2', content: 'authoritative', metadata: approved, similarity: 0.4 },
     ]
     const { client } = fakeSupabase(vector, [])
     const { ranked } = await retrieveDocuments(client, 'q')
     expect(ranked[0].id).toBe('highauth')
+  })
+
+  it('keeps a high-relevance unreviewed exact match in the final top-k in standard mode', async () => {
+    const trustedNoise: Row[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `trusted-${i}`,
+      document_id: `dt-${i}`,
+      content: `approved but weakly related ${i}`,
+      metadata: approved,
+      similarity: 0.08,
+    }))
+    const vector: Row[] = [
+      ...trustedNoise,
+      {
+        id: 'new-upload',
+        document_id: 'du',
+        content: 'unique beta upload token',
+        metadata: { review_status: 'needs_review', classification_source: 'rule', authority_score: 0 },
+        similarity: 0.91,
+      },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'unique beta upload token')
+    expect(ranked[0].id).toBe('new-upload')
+    expect(ranked.map(c => c.id)).toContain('new-upload')
+    expect(diagnostics.unreviewedUsed).toBe(1)
   })
 
   it('passes filters + threshold to the RPCs', async () => {

@@ -36,3 +36,36 @@ function approvedRank(metadata: Record<string, unknown> | undefined): number {
 export function rankBySourceTrust<T extends RankableChunk>(chunks: T[]): T[] {
   return coreRankBySourceTrust(chunks, trustTier, approvedRank)
 }
+
+/**
+ * Standard grounding is exploratory: it may use needs_review evidence with disclosure. A very strong
+ * lexical/semantic match must therefore not be buried below unrelated approved material solely because
+ * the new upload is not reviewed yet. Strict modes still use rankBySourceTrust after filtering.
+ */
+export function rankForStandardGrounding<T extends RankableChunk>(
+  chunks: T[],
+  highRelevanceThreshold = 0.5
+): T[] {
+  return chunks
+    .map((c, i) => ({
+      c,
+      i,
+      tier: trustTier(c.metadata),
+      appr: approvedRank(c.metadata),
+      high: c.relevanceScore >= highRelevanceThreshold,
+    }))
+    .sort((a, b) => {
+      if (a.high || b.high) {
+        return Number(b.high) - Number(a.high) ||
+          (b.c.relevanceScore - a.c.relevanceScore) ||
+          (b.tier - a.tier) ||
+          (b.appr - a.appr) ||
+          (a.i - b.i)
+      }
+      return (b.tier - a.tier) ||
+        (b.appr - a.appr) ||
+        (b.c.relevanceScore - a.c.relevanceScore) ||
+        (a.i - b.i)
+    })
+    .map(x => x.c)
+}

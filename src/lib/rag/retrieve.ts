@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
-import { rankBySourceTrust, trustTier } from '@/lib/rag/rank'
+import { rankBySourceTrust, rankForStandardGrounding, trustTier } from '@/lib/rag/rank'
 
 // ─── Shared retrieval core ───────────────────────────────────────────
 // Single source of truth for the documentary retrieval pipeline used by /api/chat's
@@ -339,7 +339,10 @@ export async function retrieveDocuments(
   const floored = degraded
     ? reranked
     : applyRelevanceFloor(reranked, RAG_RELEVANCE_FLOOR, (c) => trustTier(c.metadata) >= 2)
-  const ranked = rankBySourceTrust(floored).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
+  const ranked = (groundingMode === 'standard'
+    ? rankForStandardGrounding(floored)
+    : rankBySourceTrust(floored)
+  ).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
   const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 
   return {

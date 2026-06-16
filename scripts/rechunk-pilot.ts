@@ -17,16 +17,19 @@ const SUPA = env('NEXT_PUBLIC_SUPABASE_URL')
 const SRK = env('SUPABASE_SERVICE_ROLE_KEY')
 const H = { apikey: SRK, Authorization: `Bearer ${SRK}`, 'Content-Type': 'application/json' }
 
-async function rest(path: string): Promise<any[]> {
+type ChunkRow = { content: string | null; chunk_index: number }
+type DocumentRow = { id: string; title: string | null; doc_type: string | null; chunk_count: number | null }
+
+async function rest<T extends Record<string, unknown>>(path: string): Promise<T[]> {
   const res = await fetch(`${SUPA}/rest/v1/${path}`, { headers: H })
   if (!res.ok) throw new Error(`GET ${path} -> ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  return res.json() as Promise<any[]>
+  return res.json() as Promise<T[]>
 }
 
 async function reconstruct(docId: string): Promise<string> {
   const parts: string[] = []
   for (let off = 0; ; off += 1000) {
-    const page = await rest(`rag_chunks?select=content,chunk_index&document_id=eq.${docId}&order=chunk_index&limit=1000&offset=${off}`)
+    const page = await rest<ChunkRow>(`rag_chunks?select=content,chunk_index&document_id=eq.${docId}&order=chunk_index&limit=1000&offset=${off}`)
     if (!page.length) break
     for (const c of page) parts.push(c.content ?? '')
     if (page.length < 1000) break
@@ -38,7 +41,7 @@ async function reconstruct(docId: string): Promise<string> {
 async function main() {
   const N = parseInt(process.argv[2] ?? '5', 10)
   // pick live legal/board docs that have clause signals in their text
-  const docs = await rest(
+  const docs = await rest<DocumentRow>(
     `rag_documents?select=id,title,doc_type,chunk_count&doc_type=in.(legal,board)&lifecycle=neq.superseded&order=chunk_count.desc&limit=40`,
   )
   let shown = 0
@@ -46,7 +49,7 @@ async function main() {
     const text = await reconstruct(d.id)
     const hasClauseSignal = /(art[íi]culo|cl[áa]usula|secci[óo]n|clause|article|section)\s+(\d+|[ivxlcdm]+|primer|segund|tercer)/i.test(text)
     if (!hasClauseSignal) continue
-    const re = chunkFinancialContent(text, { doc_type: d.doc_type })
+    const re = chunkFinancialContent(text, { doc_type: d.doc_type ?? undefined })
     const types = re.reduce<Record<string, number>>((a, c) => { const t = c.metadata.chunk_type ?? '?'; a[t] = (a[t] ?? 0) + 1; return a }, {})
     const pages = re.filter((c) => c.metadata.page != null).length
     console.log(`\n■ ${String(d.title).slice(0, 64)}  [${d.doc_type}]`)

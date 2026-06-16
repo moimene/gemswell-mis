@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rankBySourceTrust, trustTier } from '@/lib/rag/rank'
+import { rankBySourceTrust, rankForStandardGrounding, trustTier } from '@/lib/rag/rank'
 
 const md = (o: Record<string, unknown>) => o
 const sor = md({ authority_score: 95, review_status: 'approved', classification_source: 'agent_reviewed' }) // source_of_record
@@ -49,5 +49,23 @@ describe('rankBySourceTrust', () => {
       { metadata: approved40, relevanceScore: 0.30 },
     ])
     expect(ranked[0].metadata).toBe(approved40)
+  })
+})
+
+describe('rankForStandardGrounding', () => {
+  it('rescues a very high-relevance needs_review match above low-relevance approved evidence', () => {
+    const ranked = rankForStandardGrounding([
+      { metadata: sor, relevanceScore: 0.10 },
+      { metadata: needs95, relevanceScore: 0.88 },
+    ])
+    expect(ranked[0].metadata).toBe(needs95)
+  })
+
+  it('keeps trust ordering for ordinary/moderate relevance matches', () => {
+    const ranked = rankForStandardGrounding([
+      { metadata: needs95, relevanceScore: 0.49 },
+      { metadata: sor, relevanceScore: 0.40 },
+    ])
+    expect(ranked[0].metadata).toBe(sor)
   })
 })
