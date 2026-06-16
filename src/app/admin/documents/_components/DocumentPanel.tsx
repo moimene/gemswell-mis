@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ShieldCheck, ChevronDown, ChevronRight, AlertTriangle, Trash2 } from 'lucide-react'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
 import { AUTHORITY_TIER_SCORE, DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
@@ -21,6 +21,8 @@ type DocDetail = {
   authority_tier: string | null
   status: string
   summary: string | null
+  review_reason: string | null
+  storage_path: string | null
 }
 type DocEvent = {
   action: string
@@ -66,6 +68,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [reclass, setReclass] = useState({ doc_type: '', authority_tier: '', project_id: '' })
+  const [errorAction, setErrorAction] = useState<'retry' | 'delete' | null>(null)
 
   const load = useCallback(async () => {
     // Post-action refresh: a transient failure here must NOT replace an already-populated panel
@@ -87,6 +90,40 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
 
   const act = async (body: PatchBody) => { if (await patch(docId, body)) { await load(); onChanged() } }
 
+  async function retryFailedIngest() {
+    if (errorAction) return
+    setErrorAction('retry')
+    try {
+      const r = await fetch(`/api/knowledge/documents/${docId}/retry-ingest`, { method: 'POST' })
+      const j = await r.json().catch(() => ({})) as { error?: string; job?: { id?: string }; alreadyQueued?: boolean }
+      if (!r.ok) { toast.error(j.error ?? 'No se pudo reintentar la ingesta.'); return }
+      toast.success(j.alreadyQueued ? 'La ingesta ya estaba en cola.' : `Reintento encolado${j.job?.id ? ` (${j.job.id.slice(0, 8)})` : ''}.`)
+      onChanged()
+    } catch {
+      toast.error('No se pudo reintentar la ingesta.')
+    } finally {
+      setErrorAction(null)
+    }
+  }
+
+  async function deleteFailedDocument() {
+    if (errorAction) return
+    if (!confirm('¿Borrar este documento fallido? Se eliminará la fila de error y el archivo subido asociado.')) return
+    setErrorAction('delete')
+    try {
+      const r = await fetch(`/api/knowledge/documents/${docId}`, { method: 'DELETE' })
+      const j = await r.json().catch(() => ({})) as { error?: string }
+      if (!r.ok) { toast.error(j.error ?? 'No se pudo borrar el documento fallido.'); return }
+      toast.success('Documento fallido borrado.')
+      onChanged()
+      onClose()
+    } catch {
+      toast.error('No se pudo borrar el documento fallido.')
+    } finally {
+      setErrorAction(null)
+    }
+  }
+
   if (loadErr !== null) return (
     <aside className="w-[460px] border-l border-slate-200 bg-white p-6 text-sm text-slate-600">
       <div className="flex items-center justify-between">
@@ -103,6 +140,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
   )
   const doc = d.document
   const retired = doc.status === 'retired'
+  const failed = doc.status === 'error'
   // Endorse ("fuente oficial") eligibility (audit C2): a live, authoritative doc that is not ALREADY a
   // source of record. Mirrors verificationFromGovernance: authority≥90 ∧ approved ∧ human-validated source.
   const score = doc.authority_score ?? 0
@@ -122,6 +160,7 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
           <ReviewBadge status={doc.review_status} />
           <AuthorityBadge score={doc.authority_score} tier={doc.authority_tier} />
           <VerificationBadge score={doc.authority_score} review={doc.review_status} source={doc.classification_source} />
+          {failed && <span className="rounded-[2px] bg-rose-600 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white">Error ingesta</span>}
           {retired && <span className="rounded-[2px] bg-slate-700 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white">Retirado</span>}
         </div>
         <dl className="grid grid-cols-3 gap-x-2 gap-y-1 text-xs text-slate-600">
@@ -134,21 +173,37 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
           <dt className="font-mono uppercase tracking-wide text-slate-400">Versión</dt><dd className="col-span-2 font-mono tabular-nums">{doc.current_version}</dd>
         </dl>
         {doc.summary && <p className="rounded bg-slate-50 p-2 text-xs text-slate-700">{doc.summary}</p>}
+        {failed && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            <div className="mb-1 flex items-center gap-2 font-medium">
+              <AlertTriangle className="h-4 w-4" /> Ingesta fallida
+            </div>
+            <p className="text-xs text-rose-800">{doc.review_reason || 'No se registró detalle del error.'}</p>
+            <p className="mt-1 truncate font-mono text-[10px] text-rose-700">Storage: {doc.storage_path ?? 'sin archivo original'}</p>
+          </div>
+        )}
 
         {/* Actions */}
-        <div className="grid grid-cols-2 gap-2 pt-2">
-          <button onClick={() => act({ action: 'approve' })} className="flex items-center justify-center gap-1 rounded bg-green-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-green-700"><Check className="h-3.5 w-3.5" /> Aprobar</button>
-          <button onClick={() => setRejectOpen(o => !o)} className="flex items-center justify-center gap-1 rounded bg-red-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-red-700"><Ban className="h-3.5 w-3.5" /> Rechazar</button>
-          <button onClick={() => setOpen(o => ({ ...o, reclass: !o.reclass }))} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><Tag className="h-3.5 w-3.5" /> Reclasificar</button>
-          {retired
-            ? <button onClick={() => act({ action: 'restore' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Restaurar</button>
-            : <button onClick={() => act({ action: 'retire' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><Archive className="h-3.5 w-3.5" /> Retirar</button>}
-          <button disabled={retired || doc.review_status === 'rejected'} title={retired || doc.review_status === 'rejected' ? 'Un documento retirado o rechazado no puede superseder a otro' : undefined} onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
-          {/* C2: one-click "endorse as official source" — only for live, authoritative, not-yet-official docs */}
-          {canEndorse && (
-            <button onClick={() => act({ action: 'endorse' })} title="Marca el documento como fuente oficial (source of record) del chat" className="col-span-2 flex items-center justify-center gap-1 rounded bg-indigo-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Endorsar como fuente oficial</button>
-          )}
-        </div>
+        {failed ? (
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <button disabled={Boolean(errorAction) || !doc.storage_path} onClick={retryFailedIngest} className="flex items-center justify-center gap-1 rounded bg-slate-900 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"><RotateCcw className={`h-3.5 w-3.5 ${errorAction === 'retry' ? 'animate-spin' : ''}`} /> Reintentar ingesta</button>
+            <button disabled={Boolean(errorAction)} onClick={deleteFailedDocument} className="flex items-center justify-center gap-1 rounded border border-rose-200 px-2 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Borrar fallido</button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <button onClick={() => act({ action: 'approve' })} className="flex items-center justify-center gap-1 rounded bg-green-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-green-700"><Check className="h-3.5 w-3.5" /> Aprobar</button>
+            <button onClick={() => setRejectOpen(o => !o)} className="flex items-center justify-center gap-1 rounded bg-red-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-red-700"><Ban className="h-3.5 w-3.5" /> Rechazar</button>
+            <button onClick={() => setOpen(o => ({ ...o, reclass: !o.reclass }))} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><Tag className="h-3.5 w-3.5" /> Reclasificar</button>
+            {retired
+              ? <button onClick={() => act({ action: 'restore' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><RotateCcw className="h-3.5 w-3.5" /> Restaurar</button>
+              : <button onClick={() => act({ action: 'retire' })} className="flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"><Archive className="h-3.5 w-3.5" /> Retirar</button>}
+            <button disabled={retired || doc.review_status === 'rejected'} title={retired || doc.review_status === 'rejected' ? 'Un documento retirado o rechazado no puede superseder a otro' : undefined} onClick={() => setSupersedeOpen(true)} className="col-span-2 flex items-center justify-center gap-1 rounded border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"><GitMerge className="h-3.5 w-3.5" /> Superseder…</button>
+            {/* C2: one-click "endorse as official source" — only for live, authoritative, not-yet-official docs */}
+            {canEndorse && (
+              <button onClick={() => act({ action: 'endorse' })} title="Marca el documento como fuente oficial (source of record) del chat" className="col-span-2 flex items-center justify-center gap-1 rounded bg-indigo-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"><ShieldCheck className="h-3.5 w-3.5" /> Endorsar como fuente oficial</button>
+            )}
+          </div>
+        )}
 
         {/* Reject inline form (F9): reason required; Cancel does NOT dispatch */}
         {rejectOpen && (

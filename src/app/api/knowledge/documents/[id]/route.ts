@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createApiClient, requireUser } from '@/lib/supabase-server'
 import { reconstructMarkdown } from '@/lib/knowledge/markdown-reconstruct'
 import { computeGovernanceAction, InvalidTransitionError } from '@/lib/knowledge/governance-actions'
+import { canDeleteFailedDocument } from '@/lib/knowledge/failed-document-actions'
 import type { DocGovernanceState, GovernanceAction, ReclassifyFields } from '@/lib/knowledge/contracts'
 
 const ARTIFACT_BUCKET = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
@@ -149,5 +150,45 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ ok: true, action: body.action, patch: result.patch, related: result.related ?? null })
   } catch (err: unknown) {
     return internalError('handler', err)
+  }
+}
+
+const DELETE_COLUMNS = 'id, title, status, storage_path, md_path'
+
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const { id } = await params
+    const supabase = createApiClient()
+
+    const { data: doc, error: docErr } = await supabase
+      .from('rag_documents')
+      .select(DELETE_COLUMNS)
+      .eq('id', id)
+      .maybeSingle()
+    if (docErr) return internalError('delete fetch', docErr)
+    if (!doc) return NextResponse.json({ error: 'document not found' }, { status: 404 })
+
+    const allowed = canDeleteFailedDocument(doc)
+    if (!allowed.ok) {
+      return NextResponse.json({ error: allowed.reason }, { status: allowed.reason === 'document not found' ? 404 : 409 })
+    }
+
+    const chunkDelete = await supabase.from('rag_chunks').delete().eq('document_id', id)
+    if (chunkDelete.error) return internalError('delete chunks', chunkDelete.error)
+    const eventDelete = await supabase.from('rag_document_events').delete().eq('document_id', id)
+    if (eventDelete.error) return internalError('delete events', eventDelete.error)
+    const docDelete = await supabase.from('rag_documents').delete().eq('id', id).eq('status', 'error')
+    if (docDelete.error) return internalError('delete document', docDelete.error)
+
+    const paths = [doc.storage_path, doc.md_path].filter((p): p is string => typeof p === 'string' && p.length > 0)
+    if (paths.length > 0) {
+      const removed = await supabase.storage.from(ARTIFACT_BUCKET).remove(paths)
+      if (removed.error) console.warn(`[knowledge/documents/:id] failed document storage cleanup skipped for ${id}:`, removed.error.message)
+    }
+
+    return NextResponse.json({ ok: true, deleted: true })
+  } catch (err: unknown) {
+    return internalError('delete handler', err)
   }
 }
