@@ -8,15 +8,17 @@ Modo de este pase: lectura/verificación; no se ejecutaron mutaciones de Supabas
 
 ### UAT docs
 
-Se actualizaron los documentos UAT para reflejar el flujo real de ingesta durable:
+Se actualizaron los documentos UAT para reflejar el flujo real de ingesta durable y cerrar los gaps de ejecutabilidad:
 
 - `/admin/ingest` y `/admin/documents` suben y encolan con `Subir y encolar`.
 - El worker procesa en segundo plano; no hay botón de "procesar ahora".
 - Los fallos de ingesta son visibles y recuperables desde Biblioteca (`Reintentar ingesta` / `Borrar fallido`).
 - Se corrigieron referencias a `04-limitaciones-conocidas.md`.
 - Se añadió una receta operativa para forzar sesión caducada en pruebas opcionales.
+- Se añadió un criterio transversal para validar errores de carga por recuperabilidad, no por copy literal.
+- Se añadió CP-NAV-04 para pantallas genéricas de error (`error.tsx` / `global-error.tsx`).
 
-Gaps UAT cerrados en `docs/uat/00-cobertura-y-gaps.md`: GAP-1, GAP-3, GAP-4 y GAP-5.
+Gaps UAT cerrados en `docs/uat/00-cobertura-y-gaps.md`: GAP-1, GAP-2, GAP-3, GAP-4, GAP-5 y GAP-6.
 
 ### Near-duplicate review
 
@@ -58,6 +60,17 @@ Resumen:
 - `klp-apoderados`: cross #2.
 
 Lectura: no hay regresión operativa ni timeout en el monitor, pero siguen existiendo misses de calidad en algunas consultas documentales (`bhx-loan-lender`, `bhx-capcall-entity`, `philae-portfolio`, `cross-project-legal`). No conviene marcar el eval documental como "perfecto"; sí queda monitorizado.
+
+### Chat history provider provenance
+
+Se preparó la persistencia de `provider`, `model` y `fallback` en `rag_messages` para que las conversaciones restauradas puedan volver a pintar badges como `Modo contingencia (Gemini)`.
+
+- Código compatible hacia atrás: si la tabla no tiene las columnas, la API reintenta el insert/select legacy sin romper producción.
+- Migración versionada: `sql/035_chat_message_provider.sql`.
+- Rollback versionado: `sql/rollback/035_rollback.sql`.
+- Estado DB: pendiente de aplicar; la CLI linked requiere `SUPABASE_DB_PASSWORD` y no hay RPC SQL expuesto en este proyecto.
+
+Lectura: el rough edge queda preparado de forma segura, pero la mejora visual histórica solo se activa cuando `sql/035` esté aplicado.
 
 ### Backup tables
 
@@ -101,4 +114,3 @@ Lectura: no hay bytes originales en Storage, por tanto no se puede OCR-ar este d
 - Modelo: resolver limitación de billing Anthropic vs seguir con Gemini Pro/Flash.
 - Grounding: decidir si el default debe ser `standard` o `trusted_only`.
 - P3 opcional: re-chunk adicional por otros `doc_type` si se justifica con eval, no por intuición.
-

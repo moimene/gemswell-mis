@@ -30,6 +30,8 @@ Asigna **una** severidad a cada incidencia. Si dudas entre dos, elige la más al
 
 **Si no estás seguro de si es un bug o es así a propósito:** repórtalo igual como **Medio** y escribe en el título "(¿comportamiento esperado?)". Es mejor preguntar que dejarlo pasar.
 
+**Si ves una pantalla genérica de error de aplicación** con texto como `Algo salió mal` o `La aplicación encontró un error inesperado`, repórtala como **Alto** con captura, URL, usuario y hora. Si bloquea login, chat o dashboard principal para todos los testers, súbela a **Crítico**.
+
 > **Antes de reportar, revisa las limitaciones conocidas** (documento `04-limitaciones-conocidas.md`). Algunas cosas **ya sabemos** que funcionan así en esta fase y **no son bugs**, por ejemplo: el chat puede tardar con preguntas complejas; `/admin/ingest` y `/admin/documents` **encolan** archivos y el procesado lo hace el worker en segundo plano; no hay aún pantalla de recuperación de contraseña. Si tu incidencia coincide con una limitación conocida, no hace falta reportarla.
 
 ---

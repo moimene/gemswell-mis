@@ -3,6 +3,11 @@ import { createApiClient, requireUser } from '@/lib/supabase-server'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+function isMissingProviderColumns(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return error.code === 'PGRST204' || /column.*(provider|fallback|model)|(provider|fallback|model).*column/i.test(error.message ?? '')
+}
+
 // GET /api/chat/conversations/:id — the messages of one conversation the caller OWNS (user_id guard,
 // since createApiClient is service-role). Returns 404 for a missing OR not-owned id (no existence leak).
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -19,9 +24,18 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       .eq('id', id).eq('user_id', userKey).maybeSingle()
     if (!conv) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-    const { data: messages, error } = await supabase
-      .from('rag_messages').select('role, content, sources, tool_calls, created_at')
+    const withProvider = await supabase
+      .from('rag_messages').select('role, content, sources, tool_calls, provider, model, fallback, created_at')
       .eq('conversation_id', id).order('created_at', { ascending: true })
+    let messages: unknown[] | null = withProvider.data
+    let error = withProvider.error
+    if (isMissingProviderColumns(error)) {
+      const legacy = await supabase
+        .from('rag_messages').select('role, content, sources, tool_calls, created_at')
+        .eq('conversation_id', id).order('created_at', { ascending: true })
+      messages = legacy.data
+      error = legacy.error
+    }
     if (error) {
       console.error('[chat/conversations/:id] messages failed:', error.message)
       return NextResponse.json({ error: 'No se pudo cargar la conversación.' }, { status: 500 })

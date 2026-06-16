@@ -22,6 +22,16 @@ Cada caso de prueba tiene:
 
 > **Importante:** rellena la columna *Estado* en TODOS los casos. Si marcas **KO**, describe en *Observaciones* qué pasó realmente, con captura si es posible.
 
+### Criterio para estados de error
+
+En los casos de error de carga, no marques KO por una diferencia literal de redacción entre páginas. Lo importante es que la pantalla:
+
+- no quede en blanco;
+- explique que no pudo cargar o que la sesión pudo expirar;
+- ofrezca una acción recuperable como **Reintentar** y, cuando aplique, **Iniciar sesión**.
+
+Si aparece una pantalla genérica de error de la aplicación (`Algo salió mal` o similar), ejecuta CP-NAV-04 y repórtala con captura.
+
 ### Datos de acceso (precondición general para casi todo)
 
 - Toda la aplicación exige sesión iniciada. Sin login, cualquier página redirige a `/login` y cualquier llamada interna (`/api/*`) responde **401**.
@@ -61,7 +71,7 @@ Cada caso de prueba tiene:
 | | Evidence Review | `/admin/review` | CP-REV-01..05 |
 | | Gestor Documental | `/admin/documents` | CP-DOC-01..07 |
 | | Pack Grounding | `/admin/packs` | CP-PACK-01..03 |
-| **Transversal** | Navegación / sesión | (todas) | CP-NAV-01..03 |
+| **Transversal** | Navegación / sesión / error global | (todas) | CP-NAV-01..04 |
 
 ---
 
@@ -408,7 +418,7 @@ Cada caso de prueba tiene:
 **Pasos:**
 1. Con sesión caducada, refresca `/ops-readiness`.
 
-| **Resultado esperado** | Mensaje "No se pudo cargar — la sesión pudo expirar" con opción de reintentar / iniciar sesión. |
+| **Resultado esperado** | Mensaje recuperable de carga o sesión expirada, con opción de reintentar y, si aplica, iniciar sesión. No debe quedar pantalla en blanco. |
 | **Estado** | |
 | **Observaciones** | |
 
@@ -475,7 +485,7 @@ Cada caso de prueba tiene:
 **Pasos:**
 1. Con sesión caducada, refresca `/pricing`.
 
-| **Resultado esperado** | Mensaje "No se pudo cargar" con opción de reintentar / iniciar sesión. |
+| **Resultado esperado** | Mensaje recuperable de carga o sesión expirada, con opción de reintentar y, si aplica, iniciar sesión. No debe quedar pantalla en blanco. |
 | **Estado** | |
 | **Observaciones** | |
 
@@ -1141,11 +1151,30 @@ Cada caso de prueba tiene:
 
 ---
 
+### CP-NAV-04 — Pantalla genérica de error de aplicación
+
+| Campo | Detalle |
+|---|---|
+| **Objetivo** | Si aparece un error global no capturado por una página concreta, el tester sabe cómo clasificarlo. |
+| **Precondiciones** | Solo ejecutar si durante la UAT aparece una pantalla genérica tipo `Algo salió mal` o `La aplicación encontró un error inesperado`. |
+
+**Pasos:**
+1. Haz captura de la pantalla completa.
+2. Copia la URL exacta.
+3. Pulsa **Reintentar** una vez.
+4. Si reaparece, abre incidencia con severidad **Alta**; si bloquea login/chat/dashboard principal para todos, subir a **Crítico**.
+
+| **Resultado esperado** | La pantalla genérica ofrece recuperación y no muestra detalles técnicos sensibles. Cualquier aparición repetible queda reportada con captura, URL, usuario y hora. |
+| **Estado** | |
+| **Observaciones** | |
+
+---
+
 ## 8. Resumen de ejecución
 
 | Métrica | Valor |
 |---|---|
-| Total de casos | 45 (1 escenario E2E + 44 casos por superficie) |
+| Total de casos | 46 (1 escenario E2E + 45 casos por superficie) |
 | Casos OK | |
 | Casos KO | |
 | Casos N.A. | |

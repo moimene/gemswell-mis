@@ -11,13 +11,18 @@ import {
   type Source,
   type ToolCallAudit,
 } from '@/lib/chat/agent'
-import { runAgentLoopResilient, verifyAnswerResilient } from '@/lib/chat/agent-gemini'
+import { runAgentLoopResilient, verifyAnswerResilient, type Provider } from '@/lib/chat/agent-gemini'
 import type { GroundingMode } from '@/lib/rag/retrieve'
 
 export const maxDuration = 800
 
 type Message = { role: 'user' | 'assistant'; content: string }
 const GROUNDING_MODES = new Set<GroundingMode>(['standard', 'trusted_only', 'official_only'])
+
+function isMissingProviderColumns(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return error.code === 'PGRST204' || /column.*(provider|fallback|model)|(provider|fallback|model).*column/i.test(error.message ?? '')
+}
 
 // ─── Persistence (ownership-checked, F7) ─────────────────────────────
 async function persistConversation(
@@ -26,7 +31,8 @@ async function persistConversation(
   query: string,
   answer: string,
   sources: Source[],
-  toolCalls: ToolCallAudit[]
+  toolCalls: ToolCallAudit[],
+  meta: { provider: Provider; model: string; fallback: boolean }
 ): Promise<{ convId?: string; persisted: boolean }> {
   const supabase = createApiClient()
   const userKey = user.email ?? user.id
@@ -58,7 +64,7 @@ async function persistConversation(
     convId = conv.id
   }
 
-  const { error: insErr } = await supabase.from('rag_messages').insert([
+  const legacyRows = [
     { conversation_id: convId, role: 'user', content: query, sources: null },
     {
       conversation_id: convId,
@@ -75,8 +81,33 @@ async function persistConversation(
       })),
       tool_calls: toolCalls,
     },
+  ]
+  const { error: insErr } = await supabase.from('rag_messages').insert([
+    { conversation_id: convId, role: 'user', content: query, sources: null, provider: null, model: null, fallback: null },
+    {
+      conversation_id: convId,
+      role: 'assistant',
+      content: answer,
+      provider: meta.provider,
+      model: meta.model,
+      fallback: meta.fallback,
+      sources: sources.map(s => ({
+        chunk_id: s.id,
+        document_id: s.documentId ?? null,
+        relevance: s.relevance,
+        label: s.label,
+        verification: s.verification,
+        metadata: s.metadata,
+        preview: s.preview ?? null, // persist the snippet so a restored conversation shows source previews
+      })),
+      tool_calls: toolCalls,
+    },
   ])
   if (insErr) {
+    if (isMissingProviderColumns(insErr)) {
+      const retry = await supabase.from('rag_messages').insert(legacyRows)
+      if (!retry.error) return { convId, persisted: true }
+    }
     // The audit trail is load-bearing for financial advice — surface the failure, don't swallow it.
     console.error('[chat] failed to persist messages:', insErr)
     return { convId, persisted: false }
@@ -159,8 +190,16 @@ export async function POST(request: NextRequest) {
         )
 
         setStage('persisting')
+        const responseModel = loop.provider === 'gemini' ? (process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-pro') : chatModel
+        const responseFallback = loop.provider === 'gemini'
         const { convId, persisted } = await persistConversation(
-          user, conversationId, query, answer, loop.sources, loop.toolCalls
+          user,
+          conversationId,
+          query,
+          answer,
+          loop.sources,
+          loop.toolCalls,
+          { provider: loop.provider, model: responseModel, fallback: responseFallback }
         )
 
         send('final', {
@@ -169,9 +208,9 @@ export async function POST(request: NextRequest) {
           sources: loop.sources,
           toolCalls: loop.toolCalls,
           entities,
-          model: loop.provider === 'gemini' ? (process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-pro') : chatModel,
+          model: responseModel,
           provider: loop.provider,
-          fallback: loop.provider === 'gemini',
+          fallback: responseFallback,
           verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
           groundingMode,
           verified,

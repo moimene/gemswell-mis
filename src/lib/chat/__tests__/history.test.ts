@@ -8,9 +8,15 @@ describe('mapStoredMessage (conversation restore)', () => {
       content: 'Los términos son ...',
       sources: [{ chunk_id: 'c1', document_id: 'd1', relevance: 0.42, label: 'Loan Agreement', verification: 'source_of_record', metadata: { review_status: 'approved' }, preview: 'snippet' }],
       tool_calls: [{ name: 'search_documents', input: { query: 'x' } }],
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      fallback: false,
     })
     expect(m.role).toBe('assistant')
     expect(m.persisted).toBe(true)
+    expect(m.provider).toBe('anthropic')
+    expect(m.model).toBe('claude-sonnet-4-6')
+    expect(m.fallback).toBeUndefined()
     expect(m.sources).toHaveLength(1)
     expect(m.sources![0]).toMatchObject({ id: 'c1', documentId: 'd1', relevance: 0.42, label: 'Loan Agreement', verification: 'source_of_record', preview: 'snippet' })
     expect(m.sources![0].metadata).toEqual({ review_status: 'approved' })
@@ -31,6 +37,26 @@ describe('mapStoredMessage (conversation restore)', () => {
     expect(m.sources![0].documentId).toBeUndefined()
     expect(m.sources![0].relevance).toBe(0)
     expect(m.sources![0].metadata).toEqual({})
+    expect(m.provider).toBeUndefined()
+    expect(m.fallback).toBeUndefined()
+  })
+
+  it('restores Gemini fallback metadata so historical messages repaint the badge', () => {
+    const m = mapStoredMessage({
+      role: 'assistant',
+      content: 'respuesta',
+      provider: 'gemini',
+      model: 'gemini-2.5-pro',
+      fallback: true,
+    })
+    expect(m.provider).toBe('gemini')
+    expect(m.model).toBe('gemini-2.5-pro')
+    expect(m.fallback).toBe(true)
+  })
+
+  it('treats provider=gemini as fallback even if the boolean is missing in a partially backfilled row', () => {
+    const m = mapStoredMessage({ role: 'assistant', content: 'respuesta', provider: 'gemini', fallback: null })
+    expect(m.fallback).toBe(true)
   })
 
   it('coerces an unexpected role to user and missing content to empty string', () => {

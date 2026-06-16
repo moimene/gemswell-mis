@@ -17,10 +17,12 @@
 Los gaps de ejecutabilidad detectados en esta revisión se han cerrado en los documentos UAT:
 
 - GAP-1: referencias a limitaciones conocidas corregidas a `04-limitaciones-conocidas.md`.
+- GAP-2: los casos de error de carga ya no dependen de copy literal; el criterio transversal valida recuperación.
 - GAP-3/GAP-4: los casos de ingesta se han actualizado al flujo actual de cola durable (`Subir y encolar`, worker en segundo plano, sin botón de procesar ahora).
 - GAP-5: la guía del tester incluye una receta concreta para forzar sesión caducada en pruebas opcionales.
+- GAP-6: el plan incluye CP-NAV-04 para pantallas genéricas de error de aplicación.
 
-Quedan como notas de producto no bloqueantes: unificar copy de error entre pantallas y documentar cualquier pantalla genérica de error si aparece durante UAT.
+No quedan gaps UAT abiertos. La presentación visual de algunos estados de error puede variar entre páginas, pero el criterio de aceptación queda normalizado por recuperabilidad.
 
 ---
 
@@ -68,7 +70,7 @@ Verificado contra `src/components/layout/Sidebar.tsx`. **Todas** las entradas re
 | Knowledge System | Gestor Documental | `/admin/documents` | CP-DOC-01..07 | ✅ |
 | Knowledge System | Pack Grounding | `/admin/packs` | CP-PACK-01..03 | ✅ |
 | (no en menú) | Detalle de proyecto | `/project/{id}` | CP-PROJ-01 | ✅ |
-| Transversal | Navegación/sesión/logout | (todas) | CP-NAV-01..03 | ✅ |
+| Transversal | Navegación/sesión/logout/error global | (todas) | CP-NAV-01..04 | ✅ |
 
 **Observación positiva:** el plan incluye correctamente `/project/{id}` (CP-PROJ-01) aunque no está en el menú; se accede vía "Ver proyecto →" del dashboard. Buena cobertura de una ruta no obvia.
 
@@ -114,14 +116,11 @@ La versión revisada de `03-plantilla-incidencias.md` remitía a un número de d
 **Acción ejecutada:** referencias corregidas a `04-limitaciones-conocidas.md`.
 **Severidad:** Media (rompe una instrucción explícita al tester).
 
-### GAP-2 — Copy de los estados de error es heterogéneo (y en parte en inglés)
-El plan describe los estados de error con copy en español tipo "No se pudo cargar — la sesión pudo expirar" (CP-COMM-02, CP-FNB-02, CP-OPS-02, etc.). En el código real, varias páginas muestran ese texto en **inglés** y con redacción distinta:
-- `commercial`: "Unable to load commercial data"
-- `risks`: "Could not load risks — your session may have expired."
-- `fnb-readiness`: recuadro ámbar con `AlertTriangle` (sin el texto exacto del plan).
+### GAP-2 — CERRADO 2026-06-16 — Copy de los estados de error era demasiado literal
+La revisión original pedía coincidencia textual en estados de error tipo "No se pudo cargar — la sesión pudo expirar" (CP-COMM-02, CP-FNB-02, CP-OPS-02, etc.). Esa expectativa era demasiado frágil porque las páginas pueden presentar el estado con redacción o composición visual distinta.
 
-Las páginas **sí** tienen recuperación (todas manejan `loadError`), así que no es un fallo de cobertura; pero un tester estricto podría marcar KO por "el texto no coincide".
-**Acción:** en los casos de error (CP-COMM-02, CP-FNB-02, CP-RISK, CP-OPS-02, CP-PRIC-02) añadir la nota "el texto puede aparecer en inglés y variar entre páginas; lo importante es que haya recuperación, no la redacción exacta". Alternativamente, registrar como mejora de producto la unificación del copy de error (ES + consistencia).
+Las páginas **sí** tienen recuperación (manejan `loadError` o equivalente), así que no era un fallo de cobertura; el riesgo era que un tester estricto marcara KO por "el texto no coincide".
+**Acción ejecutada:** `01-plan-de-pruebas-uat.md` incluye un criterio transversal: en estados de error se valida que no haya pantalla en blanco, que exista mensaje recuperable y que haya acción **Reintentar** / **Iniciar sesión** cuando aplique, no la coincidencia literal de copy.
 **Severidad:** Baja.
 
 ### GAP-3 — CERRADO 2026-06-16 — La cita del diálogo de encolado está incompleta
@@ -139,9 +138,9 @@ Varios casos (CP-DASH-03, CP-CRIT-03, CP-OPS-02, CP-PRIC-02, CP-FNB-02, CP-COMM-
 **Acción ejecutada:** `02-guia-tester.md` incluye receta reproducible con dos pestañas y marca el caso como *best-effort* si no se reproduce.
 **Severidad:** Baja (afecta a la ejecutabilidad de ~8 casos de borde, no al camino crítico).
 
-### GAP-6 — No hay caso para `error.tsx` / `global-error.tsx` (frontera de error global)
+### GAP-6 — CERRADO 2026-06-16 — No hay caso para `error.tsx` / `global-error.tsx` (frontera de error global)
 Existen `src/app/error.tsx` y `src/app/global-error.tsx` (boundary de error de React) que se mostrarían ante un fallo de render no capturado. Ningún caso los menciona. Es un modo de fallo poco probable en UAT, pero si aparece, el tester no sabrá si es esperado.
-**Acción (opcional):** una línea en la plantilla de incidencias o en la guía: "si ves una pantalla genérica de error de la aplicación (no un dashboard concreto), repórtala como Alto con captura".
+**Acción ejecutada:** añadido CP-NAV-04 con criterio de severidad, captura, URL, usuario y hora; la plantilla de incidencias también lo menciona.
 **Severidad:** Baja (informativa).
 
 ---
@@ -159,8 +158,7 @@ Existen `src/app/error.tsx` y `src/app/global-error.tsx` (boundary de error de R
 
 **Apto para UAT**. Tras la actualización de 2026-06-16:
 
-- **Cerrados:** GAP-1, GAP-3, GAP-4 y GAP-5.
-- **Pendiente no bloqueante:** GAP-2 (unificación de copy de error entre pantallas).
-- **Opcional/pulido:** GAP-6.
+- **Cerrados:** GAP-1, GAP-2, GAP-3, GAP-4, GAP-5 y GAP-6.
+- **Pendiente no bloqueante:** ninguno en los entregables UAT.
 
 El camino crítico de negocio, todas las superficies del Sidebar y todas las limitaciones diferidas están cubiertos. Los gaps son de pulido y ejecutabilidad, no de cobertura funcional.

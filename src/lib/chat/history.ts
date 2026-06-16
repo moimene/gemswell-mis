@@ -17,6 +17,9 @@ export type RestoredMessage = {
   content: string
   sources?: RestoredSource[]
   toolCalls?: unknown[]
+  provider?: 'anthropic' | 'gemini'
+  model?: string
+  fallback?: boolean
   persisted: true
 }
 
@@ -25,6 +28,9 @@ export type StoredMessageRow = {
   content?: string | null
   sources?: unknown
   tool_calls?: unknown
+  provider?: string | null
+  model?: string | null
+  fallback?: boolean | null
 }
 
 function mapStoredSource(raw: unknown): RestoredSource {
@@ -42,11 +48,15 @@ function mapStoredSource(raw: unknown): RestoredSource {
 
 /** Map one stored row to a UI message. Assistant role iff explicitly 'assistant'; everything else → user. */
 export function mapStoredMessage(row: StoredMessageRow): RestoredMessage {
+  const provider = row.provider === 'anthropic' || row.provider === 'gemini' ? row.provider : undefined
   return {
     role: row.role === 'assistant' ? 'assistant' : 'user',
     content: row.content ?? '',
     sources: Array.isArray(row.sources) ? (row.sources as unknown[]).map(mapStoredSource) : undefined,
     toolCalls: Array.isArray(row.tool_calls) ? (row.tool_calls as unknown[]) : undefined,
+    provider,
+    model: typeof row.model === 'string' && row.model ? row.model : undefined,
+    fallback: row.fallback === true || provider === 'gemini' ? true : undefined,
     persisted: true,
   }
 }
