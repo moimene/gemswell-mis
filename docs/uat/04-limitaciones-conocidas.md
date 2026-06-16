@@ -76,23 +76,24 @@ Si observas algo que **no** aparece aquí y te parece incorrecto, eso sí es can
 
 ---
 
-## 5. La ingesta de documentos solo ENCOLA archivos; el procesado lo hace un operador
+## 5. La ingesta de documentos se procesa en segundo plano
 
-**Dónde:** Document Ingestion (`/admin/ingest`).
+**Dónde:** Document Ingestion (`/admin/ingest`) y Biblioteca documental (`/admin/documents`).
 
 **Qué vas a observar:**
-- Verás la lista de archivos del repositorio documental con su proyecto, categoría, relevancia y versión.
-- Por seguridad, **al entrar no hay nada seleccionado**. Para seleccionar usa "Seleccionar relevantes / Auto-select high" (marca los de relevancia ≥ 75) o marca archivos a mano.
-- Al pulsar "Queue … for Ingestion" te pedirá confirmar y, tras confirmar, los archivos quedan marcados como **`queued` (en cola)**.
-- **Aquí termina lo que hace la pantalla.** El procesado real (leer, trocear e indexar el documento) **NO lo dispara este botón**: lo ejecuta después un operador o un proceso por línea de comandos (el *ingest-worker*).
+- Puedes subir un archivo soportado (PDF, DOCX, XLSX, XLS, CSV, TXT o PPTX) con el botón **Subir y encolar**.
+- La pantalla sube el archivo a Storage y crea un job en la **cola durable**.
+- El procesamiento real (leer, trocear, clasificar, embeber e indexar) lo hace el worker programado en segundo plano. No es instantáneo.
+- En `/admin/ingest` puedes ver la cola reciente: `en cola`, `procesando`, `indexado`, `error` o `cancelado`.
 
-**Por qué es esperado:** la pantalla de ingesta es para **poner archivos en cola**, no para procesarlos en el momento. El procesado es un paso operativo separado.
+**Por qué es esperado:** la ingesta está desacoplada de la pantalla para que los documentos grandes no dependan de mantener abierta la pestaña. La cola y el cron hacen el trabajo de forma asíncrona.
 
 **No es un bug:**
-- que un archivo se quede en estado `queued` y **no aparezca de inmediato** en el chat o en el corpus: aún no se ha procesado.
-- que **no exista un botón** que "procese ahora" desde la interfaz.
+- que un archivo se quede en estado `queued` o `processing` durante unos minutos.
+- que un documento no aparezca de inmediato en el chat: primero debe quedar `indexed`.
+- que **no exista un botón** que "procese ahora" desde la interfaz; usa **Actualizar** para ver el estado.
 
-**Además — OCR no está conectado:** los documentos que sean imágenes o PDFs escaneados (sin texto seleccionable) **no se reconocen por OCR**. No esperes que el sistema extraiga texto de un PDF escaneado.
+**Además — OCR no es una garantía operativa:** si un PDF escaneado o de imagen no deja extraer texto útil, la ingesta puede fallar con error de parser. Eso sí debe quedar visible como `Error ingesta`, con opciones de **Reintentar ingesta** o **Borrar fallido**.
 
 ---
 
@@ -169,7 +170,7 @@ Antes de abrir una incidencia, descarta estos comportamientos **esperados**:
 2. El chat **solo filtra por proyecto** para **MAD y BHX**; KLP/PHILAE/GVF se buscan en todo el corpus sin filtro.
 3. En **BHX** el símbolo de divisa puede ser **£** aunque el dato esté en **€**: trátalo con cautela.
 4. La **divisa es por proyecto**, no por instrumento de financiación.
-5. La pantalla de ingesta **solo encola** archivos (`queued`); el procesado lo hace un operador aparte, y **no hay OCR**.
+5. La ingesta **encola** archivos y los procesa el worker en segundo plano; un escaneado sin texto puede fallar y debe verse como error recuperable.
 6. **No hay restablecimiento de contraseña**: usa **enlace mágico** o pide reseed a un admin.
 7. **Solo admins**, y **todo requiere login**: un 401 o un rebote al login es lo previsto.
 8. **Dashboards y cifras = solo MAD + BHX.** KLP/PHILAE/GVF existen **solo como documentos** (accesibles en el chat).

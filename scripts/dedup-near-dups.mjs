@@ -12,11 +12,13 @@
 //
 // Canonical-survivor + supersede writes rag_document_events action='neardup_supersede' (targeted revert).
 //
-// Usage: node scripts/dedup-near-dups.mjs            # dry-run: print SUPERSEDE decisions + REVIEW clusters
-//        node scripts/dedup-near-dups.mjs --apply    # supersede the auto-safe set (after review)
-//        node scripts/dedup-near-dups.mjs --review   # print ONLY the human-review clusters (financial/ambiguous)
+// Usage: node scripts/dedup-near-dups.mjs                                  # dry-run: print SUPERSEDE decisions + REVIEW clusters
+//        node scripts/dedup-near-dups.mjs --apply                          # supersede the auto-safe set (after review)
+//        node scripts/dedup-near-dups.mjs --review                         # print ONLY the human-review clusters (financial/ambiguous)
+//        node scripts/dedup-near-dups.mjs --review --review-out docs/x.md  # write ALL human-review clusters
 
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
 function env(name) {
   if (process.env[name]) return process.env[name]
   const m = readFileSync(new URL('../.env.local', import.meta.url), 'utf8').match(new RegExp(`^${name}=(.*)$`, 'm'))
@@ -24,8 +26,17 @@ function env(name) {
 }
 const SUPA = env('NEXT_PUBLIC_SUPABASE_URL'), SRK = env('SUPABASE_SERVICE_ROLE_KEY')
 const H = { apikey: SRK, Authorization: `Bearer ${SRK}`, 'Content-Type': 'application/json' }
+function argValue(name) {
+  const eq = process.argv.find((a) => a.startsWith(`${name}=`))
+  if (eq) return eq.slice(name.length + 1)
+  const i = process.argv.indexOf(name)
+  return i >= 0 ? process.argv[i + 1] : null
+}
+
 const APPLY = process.argv.includes('--apply'), REVIEW_ONLY = process.argv.includes('--review')
 const REVERT = process.argv.includes('--revert')
+const REVIEW_OUT = argValue('--review-out')
+const REVIEW_CSV = argValue('--review-csv')
 
 const SIM_THRESHOLD = 0.95
 const FINANCIAL = new Set(['bp_model', 'financial_statements', 'funding', 'monitoring', 'dd', 'cash_flow', 'capex'])
@@ -76,6 +87,12 @@ function tightKey(title) {
     .replace(/[^a-z0-9]/g, '')
 }
 function lcRank(lc) { return ({ signed: 5, executed: 4, filed: 4, working_paper: 3, draft: 2 })[lc] ?? 1 }
+function mdCell(v) { return String(v ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|') }
+function csvCell(v) {
+  const s = String(v ?? '')
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+function shortHash(v) { return v ? String(v).slice(0, 16) : '' }
 
 const trigrams = (s) => {
   const w = s.toLowerCase().replace(/\s+/g, ' ').trim().split(' ')
@@ -104,6 +121,77 @@ async function pullDocs() {
     rows.push(...p); if (p.length < 1000) break
   }
   return rows
+}
+
+function writeReviewArtifacts(review, supersede) {
+  const rows = [...review].sort((a, b) =>
+    String(a.reason).localeCompare(String(b.reason)) ||
+    String(a.k).localeCompare(String(b.k)) ||
+    String(a.members[0]?.title ?? '').localeCompare(String(b.members[0]?.title ?? '')),
+  )
+  const byReason = {}
+  for (const r of rows) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1
+
+  if (REVIEW_OUT) {
+    mkdirSync(dirname(REVIEW_OUT), { recursive: true })
+    const out = []
+    out.push('# Near-Duplicate Human Review Report')
+    out.push('')
+    out.push(`Generated: ${new Date().toISOString()}`)
+    out.push('Mode: read-only review report; no Supabase mutations are performed without --apply.')
+    out.push('')
+    out.push('## Summary')
+    out.push('')
+    out.push(`- Human-review clusters: ${rows.length}`)
+    out.push(`- Auto-supersede candidates visible in this run: ${supersede.length}`)
+    out.push(`- Similarity threshold for auto candidates: ${SIM_THRESHOLD}`)
+    out.push('')
+    out.push('| Reason | Clusters |')
+    out.push('|---|---:|')
+    for (const [reason, count] of Object.entries(byReason).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
+      out.push(`| ${mdCell(reason)} | ${count} |`)
+    }
+    out.push('')
+    out.push('## Review Guidance')
+    out.push('')
+    out.push('- Do not merge financial/versioned packs unless the CFO confirms the files are truly redundant.')
+    out.push('- Treat translations as separate records unless the business wants a single bilingual canonical family.')
+    out.push('- For low-similarity legal pairs, compare economics, parties, dates, schedules, signatures and amendments before superseding anything.')
+    out.push('- This report is an input for human review; it is not an execution plan.')
+    out.push('')
+    out.push('## Clusters')
+
+    rows.forEach((r, i) => {
+      out.push('')
+      out.push(`### ${String(i + 1).padStart(3, '0')} — ${mdCell(r.reason)}`)
+      out.push('')
+      out.push(`Key: \`${String(r.k).replace(/`/g, '\\`')}\``)
+      out.push('')
+      out.push('| # | Title | Project | Type | Lifecycle | Authority | Chunks | Hash | Created | Document ID |')
+      out.push('|---:|---|---|---|---|---:|---:|---|---|---|')
+      r.members.forEach((m, j) => {
+        out.push(`| ${j + 1} | ${mdCell(m.title)} | ${mdCell(m.project_id)} | ${mdCell(m.doc_type)} | ${mdCell(m.lifecycle)} | ${m.authority_score ?? ''} | ${m.chunk_count ?? ''} | ${mdCell(shortHash(m.content_hash))} | ${mdCell(m.created_at)} | \`${m.id}\` |`)
+      })
+    })
+
+    writeFileSync(REVIEW_OUT, `${out.join('\n')}\n`)
+    console.log(`\nWrote full human-review report: ${REVIEW_OUT}`)
+  }
+
+  if (REVIEW_CSV) {
+    mkdirSync(dirname(REVIEW_CSV), { recursive: true })
+    const lines = ['cluster,reason,key,member_count,member_index,document_id,title,project_id,doc_type,lifecycle,authority_score,chunk_count,content_hash,created_at']
+    rows.forEach((r, i) => {
+      r.members.forEach((m, j) => {
+        lines.push([
+          i + 1, r.reason, r.k, r.members.length, j + 1, m.id, m.title, m.project_id, m.doc_type,
+          m.lifecycle, m.authority_score, m.chunk_count, m.content_hash, m.created_at,
+        ].map(csvCell).join(','))
+      })
+    })
+    writeFileSync(REVIEW_CSV, `${lines.join('\n')}\n`)
+    console.log(`Wrote full human-review CSV: ${REVIEW_CSV}`)
+  }
 }
 
 async function main() {
@@ -161,6 +249,7 @@ async function main() {
   const byReason = {}; for (const r of review) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1
   console.log(`  by reason: ${JSON.stringify(byReason)}`)
   for (const r of review.slice(0, 40)) console.log(`  ? [${r.reason}] ${r.members.map(m => m.title.slice(0, 38)).join('  |  ')}`)
+  writeReviewArtifacts(review, supersede)
 
   if (!APPLY) { console.log(`\nDRY-RUN. ${supersede.length} would supersede. Re-run --apply after review.`); return }
   let done = 0, skipped = 0

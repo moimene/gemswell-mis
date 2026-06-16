@@ -12,6 +12,18 @@
 
 ---
 
+## Actualización 2026-06-16
+
+Los gaps de ejecutabilidad detectados en esta revisión se han cerrado en los documentos UAT:
+
+- GAP-1: referencias a limitaciones conocidas corregidas a `04-limitaciones-conocidas.md`.
+- GAP-3/GAP-4: los casos de ingesta se han actualizado al flujo actual de cola durable (`Subir y encolar`, worker en segundo plano, sin botón de procesar ahora).
+- GAP-5: la guía del tester incluye una receta concreta para forzar sesión caducada en pruebas opcionales.
+
+Quedan como notas de producto no bloqueantes: unificar copy de error entre pantallas y documentar cualquier pantalla genérica de error si aparece durante UAT.
+
+---
+
 ## 1. Cobertura del camino crítico de negocio
 
 El camino crítico definido en el encargo (login → preguntar al bot y obtener respuesta con citas → gobernar un documento → revisar un candidato de métrica → leer dashboards) está cubierto **de extremo a extremo** y **dos veces**:
@@ -68,7 +80,7 @@ Contrastado con el código fuente. Coincidencias confirmadas:
 
 - **Login:** mensajes "Tu cuenta no tiene acceso de administrador.", "El enlace de acceso caducó o no es válido. Solicita uno nuevo.", "Te enviamos un enlace de acceso. Revisa tu email.", botones **Entrar** / **Enviar enlace mágico**. `shouldCreateUser: false` confirma que el magic-link NO crea cuentas (CP-LOGIN-05 correcto). ✅
 - **Chat:** `LOADING_STAGES = ['Buscando documentos…', 'Analizando cifras…', 'Verificando fuentes…']`, timeout `120_000` ms, mensaje "La consulta tardó demasiado y se canceló…", botón "Nueva conversación", toggle "Ocultar fuentes (N)" / "Ver N fuentes". Fuentes renderizan: `relevance %`, `project_id`, `doc_type`, etiqueta de verificación (`source of record` / `supporting` / `context` / `unverified`) y `authority N`. **Todo coincide con CP-CHAT-01..05 y la guía.** ✅
-- **Ingesta:** por defecto nada seleccionado, "Auto-select high" (relevancia ≥75 no obsoletos), "Select filtered"/"Deselect filtered", "Queue N for Ingestion", "Queued N files for ingestion", "No manifest found. Run the DMS scanner first.". ✅
+- **Ingesta:** subida directa con `Subir y encolar`, cola durable visible, estados de job (`en cola` / `procesando` / `indexado` / `error` / `cancelado`) y recuperación de fallos desde la Biblioteca. ✅
 - **Sesión:** logout vía `<form action="/auth/signout">`, Sidebar oculto en `/login` y `/auth/*`. CP-NAV correcto. ✅
 - **Detalle de proyecto:** confirma la limitación de divisa — el código fija `ccy = projectId === 'BHX' ? 'GBP' : 'EUR'` literalmente, lo que valida el aviso de "BHX etiquetado GBP pero dato en EUR". ✅
 
@@ -84,8 +96,8 @@ Cada limitación/diferido del encargo aparece en `04-limitaciones-conocidas.md`.
 | Scoping de chat solo MAD/BHX; KLP/GVF/PHILAE no filtrables (sí buscables) | §2 ✅ | CP-CHAT-04 ✅ |
 | BHX en EUR pero etiquetado GBP | §3 ✅ | CP-PORT-02, CP-FUND-03 ✅ |
 | Divisa por proyecto, no por instrumento | §4 ✅ | CP-FUND-03 ✅ |
-| `/admin/ingest` solo encola; procesado = operador/CLI | §5 ✅ | CP-ING-03 ✅ |
-| OCR no conectado | §5 ✅ | CP-ING-03 ✅ |
+| `/admin/ingest` y `/admin/documents` encolan; worker procesa en segundo plano | §5 ✅ | CP-ING-01/02 ✅ |
+| Escaneados sin texto pueden fallar y deben ser visibles/recuperables | §5 ✅ | CP-ING-03 ✅ |
 | Sin pantalla de reset de contraseña | §6 ✅ | sección "Datos de acceso" ✅ |
 | Dashboards/facts solo MAD+BHX | §8 (con tabla por proyecto) ✅ | sección 1 + nota guía ✅ |
 
@@ -97,9 +109,9 @@ Cada limitación/diferido del encargo aparece en `04-limitaciones-conocidas.md`.
 
 Ninguno invalida la UAT. Recomendados para pulir antes de empezar.
 
-### GAP-1 — Referencia cruzada con número de documento equivocado
-Tanto `03-plantilla-incidencias.md` (sección 2 y checklist) como el espíritu de los demás docs remiten a **`05-limitaciones-conocidas.md`**, pero el fichero real es **`04-limitaciones-conocidas.md`**. El tester que siga la referencia no encontrará el archivo.
-**Acción:** corregir `05-` → `04-` en el doc 03 (dos apariciones: rúbrica de severidad y checklist final).
+### GAP-1 — CERRADO 2026-06-16 — Referencia cruzada con número de documento equivocado
+La versión revisada de `03-plantilla-incidencias.md` remitía a un número de documento inexistente, pero el fichero real es **`04-limitaciones-conocidas.md`**. El tester que siguiera esa referencia no encontraría el archivo.
+**Acción ejecutada:** referencias corregidas a `04-limitaciones-conocidas.md`.
 **Severidad:** Media (rompe una instrucción explícita al tester).
 
 ### GAP-2 — Copy de los estados de error es heterogéneo (y en parte en inglés)
@@ -112,19 +124,19 @@ Las páginas **sí** tienen recuperación (todas manejan `loadError`), así que 
 **Acción:** en los casos de error (CP-COMM-02, CP-FNB-02, CP-RISK, CP-OPS-02, CP-PRIC-02) añadir la nota "el texto puede aparecer en inglés y variar entre páginas; lo importante es que haya recuperación, no la redacción exacta". Alternativamente, registrar como mejora de producto la unificación del copy de error (ES + consistencia).
 **Severidad:** Baja.
 
-### GAP-3 — La cita del diálogo de encolado está incompleta
+### GAP-3 — CERRADO 2026-06-16 — La cita del diálogo de encolado está incompleta
 CP-ING-03 cita el diálogo como *"¿Encolar N archivo(s) para ingesta?"*. El texto real es *"¿Encolar N archivo(s) para ingesta? **Esto crea trabajos de procesamiento reales.**"*. La segunda frase es relevante porque refuerza ante el tester que la acción no es inocua.
-**Acción:** completar la cita en CP-ING-03.
+**Acción ejecutada:** la sección de ingesta se actualizó al flujo actual `Subir y encolar` + cola durable; ya no existe ese diálogo legacy en el camino principal.
 **Severidad:** Baja.
 
-### GAP-4 — Existe `/api/ingest/process`, conviene blindar la redacción de la limitación
-El código tiene una ruta real `POST /api/ingest/process` (`processIngestQueueBatch`). La UI de `/admin/ingest` **no** expone ningún botón que la invoque (verificado: no hay referencia a `ingest/process` ni "Procesar" en la página), por lo que la limitación "la app solo ENCOLA; el procesado lo hace un operador/CLI" es **correcta desde la perspectiva del tester**. El gap es solo de cobertura de prueba: no hay caso que verifique explícitamente que **no aparece** un botón de "procesar ahora" en la UI.
-**Acción (opcional):** añadir a CP-ING-03 una comprobación negativa: "Confirma que en la pantalla NO hay ningún botón de 'Procesar ahora'; el único disparador es Queue."
+### GAP-4 — CERRADO 2026-06-16 — Existe `/api/ingest/process`, conviene blindar la redacción de la limitación
+La UI de `/admin/ingest` expone la cola durable y no muestra ningún botón de "procesar ahora". El procesamiento lo hace el worker programado en segundo plano.
+**Acción ejecutada:** CP-ING-01 explicita que no hay botón de "procesar ahora" y que la cola/worker son el camino operativo.
 **Severidad:** Baja (informativa).
 
-### GAP-5 — Modo de prueba de los estados de error de sesión poco operable
+### GAP-5 — CERRADO 2026-06-16 — Modo de prueba de los estados de error de sesión poco operable
 Varios casos (CP-DASH-03, CP-CRIT-03, CP-OPS-02, CP-PRIC-02, CP-FNB-02, CP-COMM-02, CP-DEC-02, CP-PACK-03) piden "forzar sesión caducada" como precondición, pero no explican **cómo** hacerlo de forma fiable para un tester no técnico (cerrar sesión en otra pestaña, borrar cookies, o esperar expiración no es trivial ni rápido).
-**Acción:** añadir en la guía del tester (o en el preámbulo del plan) una receta corta y repetible para forzar el 401, p. ej.: "Abre una segunda pestaña, pulsa Cerrar sesión allí, vuelve a la primera pestaña y refresca". Marcar estos casos como **opcionales/best-effort** si no se logra reproducir.
+**Acción ejecutada:** `02-guia-tester.md` incluye receta reproducible con dos pestañas y marca el caso como *best-effort* si no se reproduce.
 **Severidad:** Baja (afecta a la ejecutabilidad de ~8 casos de borde, no al camino crítico).
 
 ### GAP-6 — No hay caso para `error.tsx` / `global-error.tsx` (frontera de error global)
@@ -145,10 +157,10 @@ Existen `src/app/error.tsx` y `src/app/global-error.tsx` (boundary de error de R
 
 ## 7. Recomendación final
 
-**Apto para UAT** con una corrección recomendada antes de arrancar:
+**Apto para UAT**. Tras la actualización de 2026-06-16:
 
-- **Imprescindible:** GAP-1 (referencia `05-` → `04-`), porque es una instrucción que el tester seguirá literalmente.
-- **Recomendado:** GAP-2 y GAP-5 (notas sobre copy de error en inglés y receta para forzar sesión caducada), para evitar falsos KO en los ~10 casos de borde de error.
-- **Opcional/pulido:** GAP-3, GAP-4, GAP-6.
+- **Cerrados:** GAP-1, GAP-3, GAP-4 y GAP-5.
+- **Pendiente no bloqueante:** GAP-2 (unificación de copy de error entre pantallas).
+- **Opcional/pulido:** GAP-6.
 
 El camino crítico de negocio, todas las superficies del Sidebar y todas las limitaciones diferidas están cubiertos. Los gaps son de pulido y ejecutabilidad, no de cobertura funcional.

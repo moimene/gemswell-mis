@@ -47,6 +47,15 @@ La aplicación es **solo para administradores**. Todas las páginas requieren in
 - **No recuerdas la contraseña** → **Todavía no hay pantalla de "recuperar contraseña".** Usa el **enlace mágico** (Opción B) o pide a un administrador que te reasigne la cuenta.
 - **Te saca a /login en mitad de la navegación** → Tu sesión expiró. Vuelve a entrar; te devolverá donde estabas.
 
+### Cómo forzar una sesión caducada para pruebas opcionales
+Algunos casos del plan piden probar qué pasa si la sesión expira. La forma más simple y repetible es:
+1. Abre la app en dos pestañas del mismo navegador.
+2. En la segunda pestaña pulsa **Cerrar sesión**.
+3. Vuelve a la primera pestaña y refresca o pulsa **Reintentar** en la pantalla que estés probando.
+4. Esperado: la app te devuelve a `/login` o muestra un aviso de sesión expirada recuperable.
+
+Si no consigues reproducirlo, marca ese caso como *best-effort*; no bloquea el camino crítico.
+
 ---
 
 ## 4. Visita guiada: para qué sirve cada sección
@@ -74,7 +83,7 @@ A la izquierda tienes la barra de navegación con dos bloques. (Puedes plegarla 
 | Página | Para qué sirve |
 |---|---|
 | **Document Bot** (`/chat`) | El asistente conversacional. Aquí preguntas y obtienes respuestas con fuentes citadas. **Es la prueba estrella.** |
-| **Document Ingestion** (`/admin/ingest`) | Encolar archivos nuevos para su procesamiento. *Ojo: aquí solo se **encolan**; el procesado real lo hace un operador por separado, no hay botón que lo lance desde la pantalla.* |
+| **Document Ingestion** (`/admin/ingest`) | Subir documentos y dejarlos en la cola durable. El worker programado los procesa en segundo plano; no hay botón de "procesar ahora". |
 | **Evidence Review** (`/admin/review`) | Revisar las **cifras candidatas** que el sistema ha extraído: aceptarlas o rechazarlas antes de que lleguen a los paneles. |
 | **Gestor Documental** (`/admin/documents`) | Gobernar el archivo: buscar documentos, **aprobar / reclasificar / retirar**, ver su autoridad y nivel de verificación. |
 | **Pack Grounding** (`/admin/packs`) | Gestionar los *packs* de reporting (agrupaciones de cifras validadas). |

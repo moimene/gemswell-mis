@@ -763,55 +763,60 @@ Cada caso de prueba tiene:
 
 ---
 
-### CP-ING-01 — Listado del manifiesto de ingesta
+### CP-ING-01 — Estado de cola durable
 
 | Campo | Detalle |
 |---|---|
-| **Objetivo** | La pantalla de ingesta lista los archivos del DMS con sus filtros. |
-| **Precondiciones** | Sesión admin. Manifiesto del DMS disponible. |
+| **Objetivo** | La pantalla de ingesta muestra el estado del corpus y los jobs recientes de la cola durable. |
+| **Precondiciones** | Sesión admin. |
 
 **Pasos:**
 1. Pulsa **Document Ingestion** (`/admin/ingest`).
-2. Observa la cabecera con el resumen (nº de archivos, alta relevancia, grupos de versiones).
-3. Prueba los filtros (proyecto, categoría, relevancia, versión, búsqueda).
+2. Observa el bloque **Estado de ingesta**.
+3. Observa el bloque **Cola durable**.
+4. Pulsa **Actualizar**.
 
-| **Resultado esperado** | Cabecera "Document Ingestion" con conteos. Tabla de archivos con Score, Proyecto, Categoría, Fichero, tamaño y estado. Filtros funcionan y reducen la lista. Por defecto **ningún archivo está seleccionado**. (Si no hay manifiesto, se muestra "No manifest found. Run the DMS scanner first."). |
+| **Resultado esperado** | Se ven conteos de cola/revisión/cobertura y una lista de jobs recientes, o el mensaje "No hay jobs recientes.". Si hay jobs activos, la cola se actualiza automáticamente. No hay botón de "procesar ahora". |
 | **Estado** | |
 | **Observaciones** | |
 
 ---
 
-### CP-ING-02 — Selección de archivos relevantes
+### CP-ING-02 — Subir y encolar documento
 
 | Campo | Detalle |
 |---|---|
-| **Objetivo** | Las herramientas de selección marcan archivos sin encolar nada todavía. |
-| **Precondiciones** | Ingesta cargada con archivos. |
+| **Objetivo** | Subir un archivo al corpus y dejarlo en la cola durable sin bloquear la página. |
+| **Precondiciones** | Sesión admin. Archivo pequeño de prueba soportado (PDF, DOCX, XLSX, XLS, CSV, TXT o PPTX). |
 
 **Pasos:**
-1. Pulsa **Auto-select high** (selecciona relevancia ≥75 no obsoletos).
-2. Observa el contador "N selected (X MB)".
-3. Prueba "Select filtered" y "Deselect filtered".
+1. En `/admin/ingest` o `/admin/documents`, pulsa **Subir documento** si el panel no está abierto.
+2. Selecciona el archivo de prueba.
+3. Opcional: selecciona `Proyecto` y `Tipo`.
+4. Pulsa **Subir y encolar**.
+5. Vuelve a `/admin/ingest` y observa el job en **Cola durable**.
 
-| **Resultado esperado** | La selección actualiza el contador y resalta filas. No se encola nada por seleccionar; solo se prepara la lista. |
+| **Resultado esperado** | Aparece un aviso de documento encolado. El job pasa por `en cola` / `procesando` y termina como `indexado` para documentos válidos. El documento queda en el corpus, normalmente `Sin revisar`, y se puede buscar por título en `/admin/documents`. |
 | **Estado** | |
 | **Observaciones** | |
 
 ---
 
-### CP-ING-03 — Encolar archivos (solo queue, no procesa)
+### CP-ING-03 — Error de ingesta recuperable
 
 | Campo | Detalle |
 |---|---|
-| **Objetivo** | "Queue for Ingestion" encola, con confirmación; el procesamiento real es un paso de operador/CLI. |
-| **Precondiciones** | Al menos un archivo seleccionado. |
+| **Objetivo** | Confirmar que una ingesta fallida queda visible y recuperable sin tocar la base de datos. |
+| **Precondiciones** | Existe un documento con `Error ingesta`, o el responsable de UAT proporciona un archivo de prueba que falle de forma controlada. |
 
 **Pasos:**
-1. Selecciona 1–2 archivos.
-2. Pulsa **Queue N for Ingestion**.
-3. Confirma el diálogo "¿Encolar N archivo(s) para ingesta?".
+1. Ve a `/admin/documents`.
+2. Activa **Solo errores**.
+3. Abre la ficha del documento fallido.
+4. Pulsa **Reintentar ingesta** y confirma que se crea un job nuevo.
+5. Si es un documento de prueba, pulsa **Borrar fallido**.
 
-| **Resultado esperado** | Aparece un aviso "Queued N files for ingestion" y las filas pasan a estado "queued". **Limitación conocida:** la app solo ENCOLA; el procesamiento real lo ejecuta un operador con `ingest-worker` (no es un botón de la UI). **El OCR no está conectado.** |
+| **Resultado esperado** | La ficha muestra `Error ingesta`, motivo del fallo, `Reintentar ingesta` y `Borrar fallido`. Reintentar crea un job en cola. Borrar elimina el documento fallido de la lista de errores. |
 | **Estado** | |
 | **Observaciones** | |
 
@@ -1151,10 +1156,10 @@ Cada caso de prueba tiene:
 
 ### Limitaciones conocidas a tener presentes (no marcar como KO)
 
-- Chat **sin streaming**; respuestas multi-herramienta hasta **~2 min** (timeout 120s).
+- Chat con progreso SSE; respuestas multi-herramienta pueden tardar cerca de **~2 min**.
 - Filtrado por proyecto en chat solo para **MAD/BHX**; KLP/GVF/PHILAE no son filtrables por proyecto (sí localizables).
 - Moneda **BHX**: etiquetada GBP pero posiblemente almacenada en EUR; financiación/pricing/commercial usan moneda **de proyecto**, no por instrumento.
-- Ingesta **solo encola**; el procesamiento real es paso de operador (`ingest-worker`). **OCR no conectado.**
+- Ingesta **encola**; el worker programado procesa en segundo plano. Escaneados sin texto pueden fallar y deben verse como error recuperable.
 - **Sin pantalla de recuperación de contraseña**: usar enlace mágico o reseed por admin.
 - Dashboards y páginas de cifras cubren **solo MAD + BHX**.
 - Contradicción CapEx MAD (~€57M vs ~€65M) **abierta** a propósito, pendiente de CFO.
