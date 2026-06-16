@@ -149,8 +149,8 @@ function retryDelayMs(attempts: number): number {
   return Math.min(15 * 60_000, Math.max(30_000, attempts * attempts * 30_000))
 }
 
-function isNonRetryableJobError(message: string): boolean {
-  return /storagePath inválido|No se encontró el archivo subido|El archivo está vacío|supera el límite|Tipo no soportado|escaneado o sin texto extraíble/i.test(message)
+export function isNonRetryableJobError(message: string): boolean {
+  return /storagePath inválido|No se encontró el archivo subido|El archivo está vacío|supera el límite|Tipo no soportado|escaneado o sin texto extraíble|near-empty result/i.test(message)
 }
 
 export async function createIngestJob(sb: SupabaseClient, input: CreateIngestJobInput): Promise<IngestJob> {

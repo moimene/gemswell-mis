@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_INGEST_JOB_BYTES, validateIngestJobInput } from '../jobs'
+import { isNonRetryableJobError, MAX_INGEST_JOB_BYTES, validateIngestJobInput } from '../jobs'
 
 describe('ingest jobs validation', () => {
   it('accepts a valid Storage upload path and file type', () => {
@@ -26,5 +26,15 @@ describe('ingest jobs validation', () => {
       fileName: 'file.pdf',
       fileSize: MAX_INGEST_JOB_BYTES + 1,
     })).toThrow(/supera el límite/)
+  })
+})
+
+describe('ingest job retry classification', () => {
+  it('treats parser near-empty output as non-retryable', () => {
+    expect(isNonRetryableJobError('LlamaParse returned near-empty result (1 chars) for bad.txt')).toBe(true)
+  })
+
+  it('leaves transient provider failures retryable', () => {
+    expect(isNonRetryableJobError('Gemini 429 rate limit')).toBe(false)
   })
 })
