@@ -108,9 +108,12 @@ Lectura: no hay bytes originales en Storage, por tanto no se puede OCR-ar este d
 
 ## Pendiente de decisión humana
 
+Decision pack operativo: `docs/reports/backlog-decision-pack-2026-06-16.md`.
+
 - Near-dups: revisión CFO del reporte completo antes de cualquier supersede manual.
 - Backups: ventana de confianza y autorización explícita antes de dropear tablas.
 - `AM_MPS-Anexo III.pdf`: recuperar fuente/re-subir, aceptar como no-textual o rebajar autoridad.
+- Chat provider provenance: aplicar `sql/035_chat_message_provider.sql` cuando esté disponible `SUPABASE_DB_PASSWORD`.
 - Modelo: resolver limitación de billing Anthropic vs seguir con Gemini Pro/Flash.
 - Grounding: decidir si el default debe ser `standard` o `trusted_only`.
 - P3 opcional: re-chunk adicional por otros `doc_type` si se justifica con eval, no por intuición.
