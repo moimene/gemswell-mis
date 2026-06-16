@@ -63,7 +63,7 @@ export function UploadPanel({
       const up = await supabase.storage.from(sign.bucket).uploadToSignedUrl(sign.path, sign.token, file)
       if (up.error) { toast.error(`Fallo al subir a Storage: ${up.error.message}`); return }
 
-      // 3) server-side handoff. Ingestion page uses async jobs; Biblioteca keeps the immediate path.
+      // 3) server-side handoff. Beta upload surfaces use async jobs; sync mode is kept for explicit callers.
       setStage(mode === 'async' ? 'Encolando ingesta…' : 'Procesando (parse · clasificación · embeddings)…')
       const endpoint = mode === 'async' ? '/api/knowledge/ingest/jobs' : '/api/knowledge/upload'
       const r = await fetch(endpoint, {

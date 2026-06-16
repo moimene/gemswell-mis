@@ -100,6 +100,8 @@ Deploys and gates:
 P0 for `/admin/documents` and `/chat` is complete:
 
 - New browser uploads are processed by the real async production worker.
+- `/admin/documents` uses the async upload handoff (`Subir y encolar`) so the beta tester's visible
+  library upload path matches the durable worker path.
 - A real uploaded document is searchable in the manager and grounded in chat.
 - High-relevance unreviewed uploads are not hidden by standard-mode trust ordering.
 - Terminal failed ingests appear as failed documents with retry/delete recovery.

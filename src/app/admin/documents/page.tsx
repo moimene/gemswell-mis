@@ -128,7 +128,7 @@ export default function DocumentsPage() {
           }
         />
 
-        {showUpload && <UploadPanel onClose={() => setShowUpload(false)} onUploaded={() => { setPage(1); load() }} />}
+        {showUpload && <UploadPanel mode="async" onClose={() => setShowUpload(false)} onUploaded={() => { setPage(1); load() }} />}
 
         <CorpusHealth />
 
