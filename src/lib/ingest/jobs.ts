@@ -378,7 +378,60 @@ async function requeueJobForRetry(sb: SupabaseClient, job: IngestJob, message: s
   return Boolean(data)
 }
 
+async function recordFailedDocumentForJob(
+  sb: SupabaseClient,
+  job: IngestJob,
+  message: string,
+  documentId: string | null
+): Promise<string | null> {
+  const reviewReason = message.slice(0, 500)
+  const storagePath = isValidUploadStoragePath(job.storage_path) ? job.storage_path : null
+
+  if (documentId) {
+    const { error } = await sb
+      .from('rag_documents')
+      .update({
+        status: 'error',
+        chunk_count: 0,
+        review_reason: reviewReason,
+        ...(storagePath ? { storage_path: storagePath } : {}),
+      })
+      .eq('id', documentId)
+    if (error) console.warn(`[ingest-jobs] failed document update skipped for ${documentId}: ${error.message}`)
+    return documentId
+  }
+
+  const sourceType = (job.file_ext || extOf(job.file_name)).replace(/^\./, '') || 'unknown'
+  const { data, error } = await sb
+    .from('rag_documents')
+    .insert({
+      title: job.file_name,
+      source_type: sourceType,
+      chunk_count: 0,
+      status: 'error',
+      project_id: job.project_id,
+      doc_type: job.doc_type_hint,
+      storage_path: storagePath,
+      source_channel: job.source_channel,
+      review_status: 'needs_review',
+      classification_source: 'rule',
+      lifecycle: 'unknown',
+      authority_tier: 'unverified',
+      authority_score: 0,
+      current_version: 1,
+      review_reason: reviewReason,
+    })
+    .select('id')
+    .single()
+  if (error) {
+    console.warn(`[ingest-jobs] failed document insert skipped for job ${job.id}: ${error.message}`)
+    return null
+  }
+  return typeof data?.id === 'string' ? data.id : null
+}
+
 async function processClaimedJob(sb: SupabaseClient, job: IngestJob): Promise<'done' | 'failed' | 'retried' | 'skipped'> {
+  let failedDocumentId: string | null = job.document_id
   try {
     if (!isValidUploadStoragePath(job.storage_path)) throw new Error('storagePath inválido')
     if (!await updateStage(sb, job, 'downloading')) return 'skipped'
@@ -400,6 +453,7 @@ async function processClaimedJob(sb: SupabaseClient, job: IngestJob): Promise<'d
       rawStoragePath: job.storage_path,
       sourceChannel: job.source_channel,
     })
+    failedDocumentId = result.documentId ?? failedDocumentId
     if (result.status === 'error') throw new Error(result.error ?? 'No se pudo procesar el documento')
     const finished = await finishJob(sb, job, {
       status: 'done',
@@ -420,10 +474,14 @@ async function processClaimedJob(sb: SupabaseClient, job: IngestJob): Promise<'d
       } catch { /* terminal status will be retried by lease recovery if this update fails */ }
       return 'failed'
     }
+    if (!canRetry) {
+      failedDocumentId = await recordFailedDocumentForJob(sb, job, message, failedDocumentId)
+    }
     const finished = await finishJob(sb, job, {
       status: 'error',
       stage: 'error',
       error_message: message,
+      ...(failedDocumentId ? { document_id: failedDocumentId } : {}),
     }).catch(() => undefined)
     return finished === false ? 'skipped' : 'failed'
   }

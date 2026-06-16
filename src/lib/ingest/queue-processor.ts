@@ -236,7 +236,14 @@ export async function reserveRagDocument(
       if (deleted.error) throw new Error(`rag_chunks cleanup failed: ${deleted.error.message}`)
       const processing = await supabase
         .from('rag_documents')
-        .update({ status: 'processing', chunk_count: 0, source_channel: sourceChannel })
+        .update({
+          title: item.file_name,
+          source_type: sourceType,
+          status: 'processing',
+          chunk_count: 0,
+          source_channel: sourceChannel,
+          review_reason: null,
+        })
         .eq('id', document.id)
       if (processing.error) throw new Error(`rag_documents reuse update failed: ${processing.error.message}`)
       return { id: document.id, reused: true }

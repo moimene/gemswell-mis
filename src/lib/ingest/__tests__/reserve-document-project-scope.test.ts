@@ -107,12 +107,13 @@ function makeFakeSupabase(seed: DocRow[] = []) {
   return { client, docs, lookupFilters }
 }
 
-function itemFor(projectId: string | null): IngestQueueRow {
+function itemFor(projectId: string | null, fileName = 'Contrato.pdf'): IngestQueueRow {
+  const dot = fileName.lastIndexOf('.')
   return {
     id: '',
-    rel_path: 'Contrato.pdf',
-    file_name: 'Contrato.pdf',
-    file_ext: '.pdf',
+    rel_path: fileName,
+    file_name: fileName,
+    file_ext: dot >= 0 ? fileName.slice(dot).toLowerCase() : '',
     project_id: projectId,
     category: null,
     relevance: null,
@@ -149,20 +150,30 @@ describe('reserveRagDocument project-scoped source_hash dedup', () => {
   })
 
   it('still reuses the existing document when the same bytes are re-uploaded under the SAME project', async () => {
-    const { client } = makeFakeSupabase([
+    const { client, docs } = makeFakeSupabase([
       {
         id: 'doc-BHX',
+        title: 'Old failed upload.txt',
+        source_type: 'txt',
         source_hash: HASH,
         project_id: 'BHX',
         status: 'error',
         chunk_count: 0,
+        review_reason: 'previous failure',
         review_status: 'needs_review',
         classification_source: 'agent_auto',
       },
     ])
-    const reserved = await reserveRagDocument(client, itemFor('BHX'), HASH, 'browser_upload')
+    const reserved = await reserveRagDocument(client, itemFor('BHX', 'Contrato actualizado.pdf'), HASH, 'browser_upload')
     expect(reserved.reused).toBe(true)
     expect(reserved.id).toBe('doc-BHX')
+    expect(docs.find((d) => d.id === reserved.id)).toMatchObject({
+      title: 'Contrato actualizado.pdf',
+      source_type: 'pdf',
+      status: 'processing',
+      chunk_count: 0,
+      review_reason: null,
+    })
   })
 
   it('scopes the reuse lookup to the uploading project (never reuses another project\'s row)', async () => {
