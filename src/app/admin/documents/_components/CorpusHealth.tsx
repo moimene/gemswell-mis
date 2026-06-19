@@ -5,7 +5,7 @@ type Health = {
   total: number
   governance: { approved: number; needs_review: number; rejected: number; pending: number }
   retired: number; source_of_record: number; avg_authority: number; pct_markdown: number; pct_source_hash: number
-  queue: { total: number; queued: number; processing: number; done: number; error: number }
+  queue: { total: number; queued: number; processing: number; done: number; error: number; canceled?: number }
 }
 const Stat = ({ label, value, hint }: { label: string; value: string | number; hint?: string }) => (
   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm" title={hint}>

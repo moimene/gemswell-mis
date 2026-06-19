@@ -43,6 +43,9 @@ next-env.d.ts
 # supabase local link/cache state
 supabase/.temp/
 
+# local script extraction/cache artifacts
+.tmp/
+
 # serena MCP tool cache (local only)
 .serena/
 

@@ -2,6 +2,8 @@
 
 Fecha de estado: 2026-06-04
 
+Actualizacion principal: 2026-06-19
+
 Repositorio: `moimene/gemswell-mis`
 
 Commits de cierre:
@@ -29,6 +31,84 @@ El proximo bloque no debe ser una reescritura completa. Debe ser una evolucion c
 3. Convertir el chat de MDL/Teras a herramientas explicitas.
 4. Portar a MDL/Teras la verificacion visual de fuentes y el evidence linking.
 5. Portar desde MDL/Teras a Gemswell su harness mas maduro de upload, Drive, Gmail bot, OCR y jobs.
+
+## Actualizacion 2026-06-19 - SharePoint ZIP Corpus Refresh
+
+El refresco documental completo desde SharePoint se ejecuto mediante fallback local de ZIPs exportados/sincronizados por el usuario. No existia conector Graph en el repo y no habia credenciales de Azure AD disponibles, por lo que no se construyo un conector Microsoft Graph en esta pasada.
+
+Runbook detallado:
+
+- `docs/sharepoint-rag-ingestion-runbook-2026-06-19.md`
+
+Memoria rapida nueva:
+
+- `MEMORY.md`
+
+Reportes finales:
+
+- `docs/reports/sharepoint-local-reconcile-final-after-ingest.json`
+- `docs/reports/sharepoint-local-reconcile-final-after-ingest.csv`
+- `docs/reports/sharepoint-local-large-final-errors.json`
+
+Estado final de reconciliacion:
+
+- Inventario SharePoint local: `2120` ficheros.
+- `enqueueable=0`.
+- `already_indexed_hash=1451`.
+- `legacy_title_match=285`.
+- `duplicate_content_superseded=37`.
+- `failed_unextractable=22` rutas / `20` documentos unicos.
+- `unsupported=283`.
+- `duplicate_in_batch=31`.
+- `job_exists=11`.
+
+Estado final de cola:
+
+- `queued=0`.
+- `processing=0`.
+- `done=1366`.
+- `error=24`.
+- `canceled=1`.
+
+Estado final del corpus consultado el 2026-06-19:
+
+- `rag_documents=6895`.
+- `rag_chunks=213438`.
+- `knowledge_corpus_health()` actualizado con `sql/036_corpus_health_knowledge_ingest_jobs.sql`;
+  el dashboard lee `knowledge_ingest_jobs`, no `ingest_queue`.
+- Dashboard/chat: `approved=3477`, `needs_review=1368`, `source_of_record=814`.
+- `rag_documents.status='indexed'`: `6881`.
+- `rag_documents.status='processing'`: `0`.
+- `rag_documents.status='error'`: `12`.
+
+Fallos materiales confirmados:
+
+- `17` documentos sin texto util extraible despues de parse local.
+- `3` PDFs corruptos o con estructura invalida.
+- `2` PDFs cifrados/password.
+- Los dos PDFs gigantes que quedaban fuera del limite normal se registraron como `rag_documents.status='error'` con `source_hash`, de forma que futuras reconciliaciones no vuelvan a marcarlos como pendientes.
+
+Herramientas creadas:
+
+- `npm run sharepoint:reconcile` -> inventario/diff local SharePoint ZIP contra `rag_documents` + subida/cola con `--apply`.
+- `npm run sharepoint:ingest-large` -> ingesta local de PDF/PPTX >50 MB con `sourceHashOverride` y registro de errores terminales.
+- `npm run ingest:jobs-loop` -> worker local de `knowledge_ingest_jobs`.
+- `npm run ingest:jobs-direct` -> recuperacion directa de jobs existentes desde Storage para `processing` vencidos o errores por cuota.
+
+Cambios de pipeline relevantes:
+
+- `src/lib/rag/parse.ts` soporta fallback local con `RAG_LOCAL_PARSE_FALLBACK=force`.
+- Fallback local cubre PDF (`pdftotext`), PPTX/DOCX (`7z` XML), DOC (`textutil`), TXT/CSV y XLS/XLSX.
+- `src/lib/ingest/jobs.ts` acepta `.doc` y usa lease de 2 horas.
+- `src/lib/ingest/queue-processor.ts` permite backfills controlados con `sourceHashOverride`, `parsedContentOverride`, `parserOverride` y `ocrUsedOverride`; no debe usarse para saltarse gobierno.
+
+Reglas operativas nuevas:
+
+- No reingestar `legacy_title_match` por defecto; es proteccion contra duplicados del corpus legacy con `source_hash NULL`.
+- No reintentar `failed_unextractable` sin corregir fuente: OCR, password, o reemplazo por PDF valido.
+- No reingestar `duplicate_content_superseded` salvo cambio deliberado de politica de deduplicacion.
+- Usar `RAG_LOCAL_PARSE_FALLBACK=force` cuando LlamaParse o clasificacion LLM esten sin cuota; la ingesta puede completarse con parser local + gobierno por reglas.
+- No marcar jobs `done` manualmente si `ingestBuffer` no devolvio exito o si no se verifico un documento `indexed` con chunks y hash/proyecto correcto.
 
 ## Frontera Del Sistema
 

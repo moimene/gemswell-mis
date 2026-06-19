@@ -2,7 +2,7 @@ export type CorpusHealthInput = {
   total: number; approved: number; needs_review: number; rejected: number; pending: number
   retired: number; sourceOfRecord: number; authoritySum: number; authorityCount: number
   withMarkdown: number; withSourceHash: number
-  queue: { total: number; queued: number; processing: number; done: number; error: number }
+  queue: { total: number; queued: number; processing: number; done: number; error: number; canceled?: number }
 }
 
 export type CorpusHealth = {

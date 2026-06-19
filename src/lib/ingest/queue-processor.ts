@@ -71,6 +71,7 @@ export function getMimeType(ext: string): string {
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     '.xls': 'application/vnd.ms-excel',
     '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.csv': 'text/csv',
@@ -341,6 +342,12 @@ export type UploadIngestInput = {
   docTypeHint?: string | null  // optional doc_type/category hint (classifier may override)
   rawStoragePath?: string | null  // F3: where the original file was uploaded in Storage (for citation artifacts)
   sourceChannel?: SourceChannel
+  // Controlled batch backfills can provide locally extracted text while keeping source_hash tied to the
+  // original bytes. Browser/API uploads should leave these unset and use the normal parser path.
+  sourceHashOverride?: string | null
+  parsedContentOverride?: string | null
+  parserOverride?: string | null
+  ocrUsedOverride?: boolean
 }
 
 /**
@@ -370,7 +377,7 @@ export async function ingestBuffer(
   let duplicateTitleCount = 0
   try {
     const buffer = input.buffer
-    const sourceHash = sha256(buffer)
+    const sourceHash = input.sourceHashOverride?.trim() || sha256(buffer)
     log(`[upload] ${input.fileName} (${(buffer.length / 1024).toFixed(0)} KB)`)
 
     // F14: source_hash dedup is unreliable for the legacy corpus (5,496/5,498 have NULL source_hash),
@@ -410,7 +417,13 @@ export async function ingestBuffer(
       if (earlyArtifact.error) log(`[upload] early storage_path update skipped: ${earlyArtifact.error.message}`)
     }
 
-    const parsed = await parseDocument(input.fileName, buffer, input.fileName, getMimeType(input.fileExt))
+    const parsed: { content: string; parser: string; ocr_used?: boolean } = input.parsedContentOverride == null
+      ? await parseDocument(input.fileName, buffer, input.fileName, getMimeType(input.fileExt))
+      : {
+          content: input.parsedContentOverride,
+          parser: input.parserOverride?.trim() || 'preparsed-local',
+          ocr_used: input.ocrUsedOverride ?? false,
+        }
     if (!parsed.content || parsed.content.trim().length < 50) {
       // F10: the most common cause of a near-empty parse is a scanned/image-only document the parser
       // (incl. LlamaParse premium OCR) could not extract text from — say so instead of "too short".

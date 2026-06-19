@@ -2,18 +2,18 @@ import { describe, it, expect } from 'vitest'
 import { formatCorpusStats } from '../corpus-stats'
 
 const health = {
-  total: 5498,
-  governance: { approved: 4022, needs_review: 1476, rejected: 0, pending: 0 },
-  source_of_record: 1040,
+  total: 6895,
+  governance: { approved: 3477, needs_review: 1368, rejected: 1, pending: 0 },
+  source_of_record: 814,
 }
 
 describe('formatCorpusStats', () => {
   it('maps health → 3 localized stats (docs / approved / source_of_record)', () => {
     const s = formatCorpusStats(health)
     expect(s).toHaveLength(3)
-    expect(s[0]).toEqual({ label: 'documentos', value: '5.498' })
-    expect(s[1]).toEqual({ label: 'aprobados', value: '4.022' })
-    expect(s[2]).toEqual({ label: 'fuente oficial', value: '1.040' })
+    expect(s[0]).toEqual({ label: 'documentos', value: '6.895' })
+    expect(s[1]).toEqual({ label: 'aprobados', value: '3.477' })
+    expect(s[2]).toEqual({ label: 'fuente oficial', value: '814' })
   })
 
   it('returns [] for missing/malformed health (graceful fallback, no undefined figures)', () => {

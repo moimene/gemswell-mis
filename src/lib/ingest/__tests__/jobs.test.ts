@@ -12,6 +12,16 @@ describe('ingest jobs validation', () => {
     expect(out).toEqual({ fileExt: '.pdf', projectId: 'MAD' })
   })
 
+  it('accepts legacy Word .doc files for the LlamaParse ingest path', () => {
+    const out = validateIngestJobInput({
+      storagePath: 'uploads/00000000-0000-0000-0000-000000000000/old-contract.doc',
+      fileName: 'old-contract.doc',
+      fileSize: 1024,
+      projectId: 'KLP',
+    })
+    expect(out).toEqual({ fileExt: '.doc', projectId: 'KLP' })
+  })
+
   it('rejects arbitrary Storage paths', () => {
     expect(() => validateIngestJobInput({
       storagePath: 'artifacts/doc/v1.md',

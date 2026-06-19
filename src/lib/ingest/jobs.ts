@@ -55,10 +55,10 @@ export type ProcessIngestJobsResult = {
   timedOut: boolean
 }
 
-const ALLOWED_EXT = new Set(['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.pptx'])
+const ALLOWED_EXT = new Set(['.pdf', '.doc', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.pptx'])
 const PROJECTS = new Set(['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'])
 const DEFAULT_BUCKET = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
-const DEFAULT_LEASE_MS = 20 * 60_000
+const DEFAULT_LEASE_MS = 2 * 60 * 60_000
 export const MAX_INGEST_JOB_BYTES = 50 * 1024 * 1024
 
 function extOf(fileName: string): string {

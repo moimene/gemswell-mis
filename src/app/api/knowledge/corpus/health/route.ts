@@ -21,7 +21,7 @@ type HealthRpc = {
     with_markdown: number
     with_source_hash: number
   }
-  queue: { total: number; queued: number; processing: number; done: number; error: number }
+  queue: { total: number; queued: number; processing: number; done: number; error: number; canceled?: number }
 }
 
 export async function GET() {
@@ -29,8 +29,8 @@ export async function GET() {
     if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const sb = createApiClient()
 
-    // F6: single-query corpus health via RPC — replaces 9 head-counts + a full ~5.5k authority
-    // scan + a full ingest_queue scan (perf + count fidelity). source_of_record + governance
+    // F6/F36: single-query corpus health via RPC — replaces 9 head-counts + a full authority
+    // scan + a knowledge_ingest_jobs scan (perf + count fidelity). source_of_record + governance
     // counts are status='indexed'-scoped inside the RPC to match retrieval reality.
     const { data, error } = await sb.rpc('knowledge_corpus_health')
     if (error) throw new Error(error.message)

@@ -1,0 +1,30 @@
+{
+  "at": "2026-06-19T11:18:16.104Z",
+  "apply": true,
+  "total": 2,
+  "summary": {
+    "error": 2
+  },
+  "results": [
+    {
+      "fileName": "AAFF Valla Surf Park 8x3 50.pdf",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/7. Señaletica/VALLA OBRA 8X3/AAFF Valla Surf Park 8x3 50.pdf",
+      "projectId": "GVF",
+      "fileSize": 391995272,
+      "sourceHash": "351908cbd64f0cba472c921f4ec0ca611c4ffb1f954e624b6484e4e5e7c320f4",
+      "status": "error",
+      "documentId": "d00999bb-c0b3-43b8-b3b1-748273d4b02b",
+      "error": "local extraction returned near-empty result (39 chars)"
+    },
+    {
+      "fileName": "240530_Deck Stoneweg.pdf",
+      "relPath": "1. GEMSWELL VENTURES/7. Diseño/7. Tender F&B + Club + Moodboard/240603/Ofertas/8_Sordo Madaleno/Rev0/240530_Deck Stoneweg.pdf",
+      "projectId": "GVF",
+      "fileSize": 329928697,
+      "sourceHash": "65b74e6105f76ee5724bb6475d6a7677de2493f8bd445b6b4d60d75d120f216a",
+      "status": "error",
+      "documentId": "4b2abd47-6cde-4be6-bb8d-6849912e2e9c",
+      "error": "pdftotext failed with code 99: Syntax Error: Invalid XRef entry 2142\nInternal Error: xref num 2142 not found but needed, try to reconstruct\nSyntax Error: Invalid XRef entry 2142\nSyntax Error: Invalid XRef entry 2088\nSyntax Error: Top-level pages object is wrong type (null)\nCommand Line Error: Wrong page range given: the first page (1) can not be after the last page (0)."
+    }
+  ]
+}

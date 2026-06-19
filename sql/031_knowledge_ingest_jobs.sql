@@ -75,7 +75,7 @@ revoke execute on function public.set_knowledge_ingest_jobs_updated_at() from pu
 comment on table public.knowledge_ingest_jobs is
   'Operational ledger for durable browser-upload ingestion. Raw bytes live in Storage; completed jobs link to rag_documents.';
 
-create or replace function public.claim_knowledge_ingest_job(p_lease_seconds integer default 1200)
+create or replace function public.claim_knowledge_ingest_job(p_lease_seconds integer default 7200)
 returns setof public.knowledge_ingest_jobs
 language plpgsql
 security definer

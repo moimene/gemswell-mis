@@ -11,7 +11,11 @@
     "test:watch": "vitest",
     "eval:resolve-ids": "tsx scripts/eval/resolve-ids.ts",
     "eval:retrieval": "tsx scripts/eval/run-retrieval.ts",
-    "eval:answers": "tsx scripts/eval/run-answers.ts"
+    "eval:answers": "tsx scripts/eval/run-answers.ts",
+    "sharepoint:reconcile": "tsx scripts/reconcile-sharepoint-local.ts",
+    "ingest:jobs-loop": "tsx scripts/process-ingest-jobs-loop.ts",
+    "ingest:jobs-direct": "tsx scripts/direct-ingest-jobs.ts",
+    "sharepoint:ingest-large": "tsx scripts/ingest-sharepoint-large-local.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

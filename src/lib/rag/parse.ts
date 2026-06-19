@@ -10,6 +10,10 @@
  * multi-header structures, and currency formatting.
  */
 
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { extractWithMistralOcr, isGarbledText, isOcrSupportedMime } from '@/lib/rag/ocr'
 
 const LLAMA_PARSE_API = 'https://api.cloud.llamaindex.ai/api/v1/parsing'
@@ -23,7 +27,7 @@ type ParseResult = {
   content: string      // Markdown text
   sheets?: string[]    // Sheet names (Excel only)
   pageCount?: number   // PDF page count
-  parser: 'llamaparse' | 'local-xlsx' | 'mistral-ocr'  // Track which parser was used
+  parser: string        // Track which parser was used
   ocr_used?: boolean   // true when Mistral OCR produced the content (audit A2 / WS2-T7)
 }
 
@@ -96,6 +100,14 @@ export async function parseDocument(
   mimeType: string
 ): Promise<ParseResult> {
   const apiKey = process.env.LLAMA_CLOUD_API_KEY
+  const localMode = (process.env.RAG_LOCAL_PARSE_FALLBACK ?? '').toLowerCase()
+  const forceLocal = localMode === 'force'
+
+  if (forceLocal) {
+    const local = await tryLocalParserFallback(fileBuffer, fileName, { throwOnFailure: true })
+    if (local) return local
+    throw new Error(`No local parser available for ${fileName}. Disable RAG_LOCAL_PARSE_FALLBACK=force to use LlamaParse.`)
+  }
 
   if (apiKey) {
     console.log(`[parse] 🚀 Using LlamaParse PREMIUM for: ${fileName} (${(fileBuffer.length / 1024).toFixed(0)}KB)`)
@@ -113,6 +125,11 @@ export async function parseDocument(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown parse error'
       console.error(`[parse] ❌ LlamaParse failed for ${fileName}:`, message)
+      const local = await tryLocalParserFallback(fileBuffer, fileName)
+      if (local) {
+        console.log(`[parse] 🔄 Falling back to local parser for ${fileName}`)
+        return local
+      }
       // For xlsx, fall back to local parser
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         console.log(`[parse] 🔄 Falling back to local xlsx parser for ${fileName}`)
@@ -132,11 +149,159 @@ export async function parseDocument(
     return parseExcelLocal(fileBuffer, fileName)
   }
 
+  const local = await tryLocalParserFallback(fileBuffer, fileName)
+  if (local) return local
+
   // No LlamaParse key: a scanned PDF/image can still be ingested via OCR if enabled.
   const ocr = await tryOcrFallback(fileBuffer, mimeType, fileName)
   if (ocr) return ocr
 
   throw new Error(`No parser available for ${fileName}. Set LLAMA_CLOUD_API_KEY for full format support.`)
+}
+
+async function tryLocalParserFallback(
+  buffer: Buffer,
+  fileName: string,
+  opts: { throwOnFailure?: boolean } = {}
+): Promise<ParseResult | null> {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.txt') || lower.endsWith('.csv')) {
+    return { content: normalizeLocalText(`# ${fileName}\n\n${buffer.toString('utf8')}`), parser: 'local-text' }
+  }
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) return parseExcelLocal(buffer, fileName)
+  if (!lower.endsWith('.pdf') && !lower.endsWith('.pptx') && !lower.endsWith('.docx') && !lower.endsWith('.doc')) return null
+
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'gemswell-local-parse-'))
+  const ext = path.extname(fileName) || '.bin'
+  const filePath = path.join(tmpDir, `source${ext}`)
+  try {
+    await writeFile(filePath, buffer)
+    if (lower.endsWith('.pdf')) {
+      return { content: normalizeLocalText(await extractPdfTextLocal(filePath, fileName)), parser: 'local-pdftotext' }
+    }
+    if (lower.endsWith('.pptx')) {
+      return { content: normalizeLocalText(extractPptxTextLocal(filePath, fileName)), parser: 'local-pptx-xml' }
+    }
+    if (lower.endsWith('.docx')) {
+      return { content: normalizeLocalText(extractDocxTextLocal(filePath, fileName)), parser: 'local-docx-xml' }
+    }
+    return { content: normalizeLocalText(extractDocTextLocal(filePath, fileName)), parser: 'local-textutil-doc' }
+  } catch (err) {
+    console.error(`[parse-local] local fallback failed for ${fileName}:`, err instanceof Error ? err.message : err)
+    if (opts.throwOnFailure) throw err
+    return null
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+}
+
+function normalizeLocalText(text: string): string {
+  return text
+    .replace(/\f/g, '\n\n---\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim()
+}
+
+function extractPdfTextLocal(filePath: string, fileName: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('pdftotext', ['-layout', '-enc', 'UTF-8', filePath, '-'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const chunks: Buffer[] = []
+    let stderr = ''
+    child.stdout.on('data', chunk => chunks.push(Buffer.from(chunk)))
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', chunk => {
+      stderr = `${stderr}${chunk}`.slice(-4000)
+    })
+    child.on('error', reject)
+    child.on('close', code => {
+      if (code !== 0) {
+        reject(new Error(`pdftotext failed for ${fileName} with code ${code}: ${stderr.trim()}`))
+        return
+      }
+      resolve(Buffer.concat(chunks).toString('utf8'))
+    })
+  })
+}
+
+function run7zListLocal(filePath: string): string {
+  return execFileSync('7z', ['l', '-slt', filePath], { encoding: 'utf8', maxBuffer: 200 * 1024 * 1024 })
+}
+
+function list7zPathsLocal(filePath: string): string[] {
+  const paths: string[] = []
+  for (const line of run7zListLocal(filePath).split(/\r?\n/)) {
+    const match = line.match(/^Path = (.+)$/)
+    if (match?.[1] && !match[1].includes(path.basename(filePath))) paths.push(match[1])
+  }
+  return paths
+}
+
+function extract7zTextLocal(filePath: string, entryPath: string): string {
+  return execFileSync('7z', ['x', '-so', filePath, entryPath], {
+    encoding: 'utf8',
+    maxBuffer: 120 * 1024 * 1024,
+  })
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+function slideNumber(name: string): number {
+  const match = name.match(/slide(\d+)\.xml$/)
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
+}
+
+function extractPptxTextLocal(filePath: string, fileName: string): string {
+  const entries = list7zPathsLocal(filePath)
+    .filter(entry => /^ppt\/(slides|notesSlides)\/.+\.xml$/i.test(entry))
+    .sort((a, b) => slideNumber(a) - slideNumber(b) || a.localeCompare(b))
+  const sections: string[] = [`# ${fileName}`]
+  for (const entry of entries) {
+    const xml = extract7zTextLocal(filePath, entry)
+    const texts = Array.from(xml.matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g))
+      .map(match => decodeXmlText(match[1] ?? '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+    if (texts.length === 0) continue
+    const label = entry.includes('/notesSlides/') ? 'Notes' : `Slide ${slideNumber(entry)}`
+    sections.push(`## ${label}\n\n${texts.join('\n')}`)
+  }
+  return sections.join('\n\n')
+}
+
+function extractDocxTextLocal(filePath: string, fileName: string): string {
+  const entries = list7zPathsLocal(filePath)
+    .filter(entry => /^word\/(document|header\d+|footer\d+)\.xml$/i.test(entry))
+    .sort((a, b) => (a === 'word/document.xml' ? -1 : b === 'word/document.xml' ? 1 : a.localeCompare(b)))
+  const sections: string[] = [`# ${fileName}`]
+  for (const entry of entries) {
+    const xml = extract7zTextLocal(filePath, entry)
+    const paragraphs = xml.split(/<\/w:p>/)
+      .map(block => Array.from(block.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g))
+        .map(match => decodeXmlText(match[1] ?? ''))
+        .join('')
+        .trim())
+      .filter(Boolean)
+    const text = paragraphs.join('\n').trim()
+    if (text) sections.push(`## ${entry}\n\n${text}`)
+  }
+  return sections.join('\n\n')
+}
+
+function extractDocTextLocal(filePath: string, fileName: string): string {
+  const text = execFileSync('textutil', ['-convert', 'txt', '-stdout', filePath], {
+    encoding: 'utf8',
+    maxBuffer: 80 * 1024 * 1024,
+  })
+  return `# ${fileName}\n\n${text}`
 }
 
 async function parseLlama(
