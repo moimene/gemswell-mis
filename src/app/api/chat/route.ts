@@ -6,12 +6,18 @@ import {
   systemPromptForGrounding,
   chooseChatModel,
   detectEntities,
-  CHAT_VERIFIER_MODEL,
   CHAT_VERIFIER_ENABLED,
+  enforcePostAnswerGuards,
   type Source,
   type ToolCallAudit,
 } from '@/lib/chat/agent'
-import { runAgentLoopResilient, verifyAnswerResilient, type Provider } from '@/lib/chat/agent-gemini'
+import {
+  modelForProvider,
+  runAgentLoopOpenAIPrimary,
+  verifierModelForProvider,
+  verifyAnswerOpenAIPrimary,
+  type Provider,
+} from '@/lib/chat/agent-openai'
 import type { GroundingMode } from '@/lib/rag/retrieve'
 
 export const maxDuration = 800
@@ -22,6 +28,18 @@ const GROUNDING_MODES = new Set<GroundingMode>(['standard', 'trusted_only', 'off
 function isMissingProviderColumns(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false
   return error.code === 'PGRST204' || /column.*(provider|fallback|model)|(provider|fallback|model).*column/i.test(error.message ?? '')
+}
+
+function isProviderMetadataRejected(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false
+  return error.code === '23514' || /rag_messages_provider_check|provider.*check constraint|violates check constraint/i.test(error.message ?? '')
+}
+
+function unreviewedSourceCount(sources: Source[]): number {
+  return sources.filter((s) => {
+    const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
+    return rs === 'needs_review' || rs === 'pending'
+  }).length
 }
 
 // ─── Persistence (ownership-checked, F7) ─────────────────────────────
@@ -104,7 +122,7 @@ async function persistConversation(
     },
   ])
   if (insErr) {
-    if (isMissingProviderColumns(insErr)) {
+    if (isMissingProviderColumns(insErr) || isProviderMetadataRejected(insErr)) {
       const retry = await supabase.from('rag_messages').insert(legacyRows)
       if (!retry.error) return { convId, persisted: true }
     }
@@ -143,7 +161,7 @@ export async function POST(request: NextRequest) {
 
   const query = lastUserMessage.content
   const entities = detectEntities(query) // for UI entity badges only
-  const chatModel = chooseChatModel(query)
+  const fallbackChatModel = chooseChatModel(query)
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
   const historyMessages: Anthropic.MessageParam[] = messages.slice(-10).map(m => ({
     role: m.role as 'user' | 'assistant',
@@ -178,47 +196,56 @@ export async function POST(request: NextRequest) {
 
       try {
         send('progress', { stage: 'searching', elapsedMs: 0 })
-        // Resilient: primary = Anthropic; if Anthropic is unavailable (workspace usage/spend cap, 429,
-        // overload, 5xx) the WHOLE turn (tool-use loop + verifier) falls back to Gemini, same tools/prompts.
-        const loop = await runAgentLoopResilient(anthropic, historyMessages, systemPromptForGrounding(groundingMode, SYSTEM_PROMPT), chatModel, setStage, abort.signal, { groundingMode })
-        const { text: answer, verified } = await verifyAnswerResilient(
+        // Primary = OpenAI/gpt-5.5; legacy Anthropic/Gemini remain degraded fallbacks.
+        const loop = await runAgentLoopOpenAIPrimary(anthropic, historyMessages, systemPromptForGrounding(groundingMode, SYSTEM_PROMPT), fallbackChatModel, setStage, abort.signal, { groundingMode })
+        const { text: answer, verified } = await verifyAnswerOpenAIPrimary(
           anthropic,
           { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence, groundingMode },
           loop.provider,
           setStage,
           abort.signal
         )
+        const guarded = await enforcePostAnswerGuards({
+          query,
+          answer,
+          sources: loop.sources,
+          toolCalls: loop.toolCalls,
+          degraded: loop.degraded,
+          injectionFlagged: loop.injectionFlagged,
+          retrievalIncomplete: loop.retrievalIncomplete,
+          groundingMode,
+        })
 
         setStage('persisting')
-        const responseModel = loop.provider === 'gemini' ? (process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-pro') : chatModel
-        const responseFallback = loop.provider === 'gemini'
+        const responseModel = modelForProvider(loop.provider, fallbackChatModel)
+        const responseFallback = loop.provider !== 'openai'
         const { convId, persisted } = await persistConversation(
           user,
           conversationId,
           query,
-          answer,
-          loop.sources,
-          loop.toolCalls,
+          guarded.answer,
+          guarded.sources,
+          guarded.toolCalls,
           { provider: loop.provider, model: responseModel, fallback: responseFallback }
         )
 
         send('final', {
-          message: answer,
+          message: guarded.answer,
           conversationId: convId ?? null,
-          sources: loop.sources,
-          toolCalls: loop.toolCalls,
+          sources: guarded.sources,
+          toolCalls: guarded.toolCalls,
           entities,
           model: responseModel,
           provider: loop.provider,
           fallback: responseFallback,
-          verifierModel: CHAT_VERIFIER_ENABLED ? CHAT_VERIFIER_MODEL : null,
+          verifierModel: CHAT_VERIFIER_ENABLED ? verifierModelForProvider(loop.provider) : null,
           groundingMode,
           verified,
-          degraded: loop.degraded,
-          injectionFlagged: loop.injectionFlagged,
+          degraded: guarded.degraded,
+          injectionFlagged: guarded.injectionFlagged,
           truncated: loop.truncated,
-          retrievalIncomplete: loop.retrievalIncomplete,
-          unreviewedUsed: loop.unreviewedUsed,
+          retrievalIncomplete: guarded.retrievalIncomplete,
+          unreviewedUsed: unreviewedSourceCount(guarded.sources),
           persisted,
         })
       } catch (err: unknown) {

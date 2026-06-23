@@ -22,11 +22,14 @@ import {
   fusePool,
   applyRelevanceFloor,
   isAllowedByGroundingMode,
+  expandRetrievalQuery,
+  metadataRelevanceBoost,
   RAG_KEYWORD_MATCH_COUNT,
   RAG_VECTOR_MATCH_COUNT,
 } from '@/lib/rag/retrieve'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
+type DocRow = Record<string, unknown> & { id: string; title?: string; project_id?: string; doc_type?: string }
 
 function fakeSupabase(vectorRows: Row[], keywordRows: Row[]) {
   // 2nd param typed so `.mock.calls[i][1]` (the RPC args object) is type-safe in assertions below.
@@ -37,6 +40,44 @@ function fakeSupabase(vectorRows: Row[], keywordRows: Row[]) {
     return { data: [], error: null }
   })
   return { client: { rpc } as never, rpc }
+}
+
+function fakeSupabaseWithTables(vectorRows: Row[], keywordRows: Row[], docs: DocRow[], chunks: Row[]) {
+  const { rpc } = fakeSupabase(vectorRows, keywordRows)
+  const from = vi.fn((table: string) => {
+    const state = {
+      eq: [] as Array<[string, unknown]>,
+      in: null as [string, unknown[]] | null,
+      ilike: null as [string, string] | null,
+      limit: null as number | null,
+    }
+    const query: Record<string, unknown> = {}
+    query.select = vi.fn(() => query)
+    query.eq = vi.fn((column: string, value: unknown) => { state.eq.push([column, value]); return query })
+    query.in = vi.fn((column: string, values: unknown[]) => { state.in = [column, values]; return query })
+    query.ilike = vi.fn((column: string, pattern: string) => { state.ilike = [column, pattern]; return query })
+    query.or = vi.fn(() => query)
+    query.order = vi.fn(() => query)
+    query.limit = vi.fn((value: number) => { state.limit = value; return query })
+    query.then = (resolve: (value: { data: unknown[]; error: null }) => unknown, reject: (reason: unknown) => unknown) => {
+      let data: unknown[] = table === 'rag_documents' ? docs : chunks
+      for (const [column, value] of state.eq) data = data.filter((row) => (row as Record<string, unknown>)[column] === value)
+      if (state.in) {
+        const [column, values] = state.in
+        const allowed = new Set(values)
+        data = data.filter((row) => allowed.has((row as Record<string, unknown>)[column]))
+      }
+      if (state.ilike) {
+        const [column, pattern] = state.ilike
+        const re = new RegExp(`^${pattern.replace(/%/g, '.*')}$`, 'i')
+        data = data.filter((row) => re.test(String((row as Record<string, unknown>)[column] ?? '')))
+      }
+      if (state.limit != null) data = data.slice(0, state.limit)
+      return Promise.resolve({ data, error: null }).then(resolve, reject)
+    }
+    return query
+  })
+  return { client: { rpc, from } as never, rpc, from }
 }
 
 const approved = { authority_score: 95, review_status: 'approved', classification_source: 'human' }
@@ -96,6 +137,79 @@ describe('retrieveDocuments', () => {
     expect(ranked[0].id).toBe('highauth')
   })
 
+  it('boosts exact metadata title/source-file matches after rerank', async () => {
+    const vector: Row[] = [
+      { id: 'decoy', document_id: 'd1', content: 'loan agreement sibling', metadata: { ...approved, project_id: 'KLP', doc_type: 'legal', source_file: 'USCL WPH Signed Loan Agreement.pdf' }, similarity: 0.8 },
+      { id: 'exact', document_id: 'd2', content: 'loan agreement target', metadata: { ...approved, project_id: 'BHX', doc_type: 'funding', source_file: 'Signed Loan Agreement .pdf' }, similarity: 0.74 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked } = await retrieveDocuments(client, 'signed Birmingham Wave Park loan agreement lender borrower')
+    expect(ranked[0].id).toBe('exact')
+  })
+
+  it('promotes WPH SH01 company-number chunks over generic capital-call memos', async () => {
+    const vector: Row[] = [
+      { id: 'memo', document_id: 'd1', content: 'Birmingham phase memo capital call subscription shares Wave Park Holdings', metadata: { ...approved, project_id: 'BHX', doc_type: 'funding', source_file: '20250808_Memo Phase 7_Birmingham.docx' }, similarity: 0.88 },
+      { id: 'sh01', document_id: 'd2', content: 'Company number 1 5 3 2 6 3 3 3 Company name in full WAVE PARK HOLDINGS (WARWICKSHIRE) LTD', metadata: { ...approved, project_id: 'BHX', doc_type: 'funding', source_file: 'SH01 - Phase 6.2 Cap Call - for signature.pdf' }, similarity: 0.62 },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked } = await retrieveDocuments(client, 'capital calls company number', { projectFilter: 'BHX' })
+    expect(ranked[0].id).toBe('sh01')
+  })
+
+  it('promotes the Buenavista participative-credit contract over generic Buenavista funding noise', async () => {
+    const vector: Row[] = [
+      {
+        id: 'disposition',
+        document_id: 'd1',
+        content: 'Solicitud de disposicion para Buenavista Nextgen Urbano con cuadro operativo sin importe maximo contractual.',
+        metadata: { ...approved, project_id: 'MAD', doc_type: 'funding', source_file: 'Solicitud disposicion Buenavista.pdf' },
+        similarity: 0.89,
+      },
+      {
+        id: 'contract',
+        document_id: 'd2',
+        content: 'Contrato de Credito Participativo. Entidad Acreditante: Buenavista Nextgen Urbano. Importe maximo: 15.657.498,18 euros.',
+        metadata: { ...approved, project_id: 'MAD', doc_type: 'funding', source_file: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf' },
+        similarity: 0.52,
+      },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked } = await retrieveDocuments(client, 'Como es la financiacion de Buenvista?')
+    expect(ranked[0].id).toBe('contract')
+  })
+
+  it('preserves storage_path metadata on Buenavista supplemental chunks', async () => {
+    const docs: DocRow[] = [{
+      id: 'doc-bv',
+      title: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+      status: 'indexed',
+      review_status: 'approved',
+      authority_score: 95,
+      storage_path: 'uploads/doc-bv/original.pdf',
+      source_channel: 'upload',
+    }]
+    const chunks: Row[] = [{
+      id: 'chunk-bv',
+      document_id: 'doc-bv',
+      content: 'Contrato de Credito Participativo. Entidad Acreditante: Buenavista Nextgen Urbano. Importe maximo: 15.657.498,18 euros.',
+      metadata: {},
+    }]
+    const { client } = fakeSupabaseWithTables([], [], docs, chunks)
+    const { ranked } = await retrieveDocuments(client, 'Como es la financiacion de Buenvista?')
+    expect(ranked[0].metadata.storage_path).toBe('uploads/doc-bv/original.pdf')
+    expect(ranked[0].metadata.source_channel).toBe('upload')
+  })
+
+  it('does not add Buenavista supplemental chunks under an incompatible explicit project filter', async () => {
+    const { client, from } = fakeSupabaseWithTables([], [], [], [])
+    const { ranked } = await retrieveDocuments(client, 'Como es la financiacion de Buenvista?', { projectFilter: 'BHX' })
+    expect(ranked).toEqual([])
+    expect(from).not.toHaveBeenCalled()
+  })
+
   it('keeps a high-relevance unreviewed exact match in the final top-k in standard mode', async () => {
     const trustedNoise: Row[] = Array.from({ length: 12 }, (_, i) => ({
       id: `trusted-${i}`,
@@ -130,6 +244,15 @@ describe('retrieveDocuments', () => {
     expect(kwCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal' })
   })
 
+  it('expands high-value document aliases before calling vector and keyword RPCs', async () => {
+    const { client, rpc } = fakeSupabase([], [])
+    await retrieveDocuments(client, '¿Cuál es el total activo del balance de Madrid Playa Surf a cierre de 2025?')
+    const matchCall = rpc.mock.calls.find((c) => c[0] === 'match_chunks')
+    const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
+    expect(String(kwCall?.[1]?.query_text)).toContain('MPSCIERREDEF-2025')
+    expect(matchCall?.[1]?.query_embedding).toHaveLength(768)
+  })
+
   it('over-extracts before app-layer strict grounding filters', async () => {
     const { client, rpc } = fakeSupabase([], [])
     await retrieveDocuments(client, 'q', { groundingMode: 'official_only' })
@@ -137,6 +260,85 @@ describe('retrieveDocuments', () => {
     const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
     expect(matchCall?.[1]).toMatchObject({ match_count: Math.min(RAG_VECTOR_MATCH_COUNT * 4, 100) })
     expect(kwCall?.[1]).toMatchObject({ match_count: Math.min(RAG_KEYWORD_MATCH_COUNT * 4, 80) })
+  })
+})
+
+describe('expandRetrievalQuery', () => {
+  it('adds Madrid 2025 closing-account aliases for balance questions', () => {
+    expect(expandRetrievalQuery('total activo del balance de Madrid Playa Surf a cierre de 2025')).toContain('MPSCIERREDEF-2025')
+  })
+
+  it('adds Birmingham SH01 aliases for cap-call entity questions', () => {
+    expect(expandRetrievalQuery('Which legal entity issues the Birmingham cap calls and what is its company number?')).toContain('SH01')
+  })
+
+  it('uses project scope to add Birmingham aliases when the query is terse', () => {
+    const expanded = expandRetrievalQuery('capital calls company number', { projectFilter: 'BHX' })
+    expect(expanded).toContain('SH01')
+    expect(expanded).toContain('Wave Park Holdings Warwickshire')
+  })
+
+  it('adds Birmingham signed-loan aliases for lender/borrower questions', () => {
+    const expanded = expandRetrievalQuery('Who is the lender and borrower in the Birmingham loan agreement?')
+    expect(expanded).toContain('Signed Loan Agreement')
+    expect(expanded).toContain('Varia Structured Opportunities')
+  })
+
+  it('adds Madrid quincenal aliases even when the question omits Madrid', () => {
+    expect(expandRetrievalQuery('capital call de diciembre de 2024 en la reunión quincenal')).toContain('13-12-2024')
+  })
+
+  it('adds exact legal-document aliases for shareholders agreements and powers of attorney', () => {
+    const expanded = expandRetrievalQuery('¿Dónde están documentados el pacto de socios y las personas apoderadas?')
+    expect(expanded).toContain('29.06.2023 Escritura elevacion a publico Pacto de Socios MPS')
+    expect(expanded).toContain('PERSONAS APODERADAS.docx')
+  })
+
+  it('adds Buenavista participative-credit aliases for misspelled financing questions', () => {
+    const expanded = expandRetrievalQuery('Como es la financiacion de Buenvista?')
+    expect(expanded).toContain('Buenavista Nextgen Urbano')
+    expect(expanded).toContain('credito participativo')
+  })
+
+  it('leaves unrelated queries unchanged', () => {
+    expect(expandRetrievalQuery('resumen operativo semanal')).toBe('resumen operativo semanal')
+  })
+})
+
+describe('metadataRelevanceBoost', () => {
+  it('boosts exact source_file aliases and project/type hints', () => {
+    const boost = metadataRelevanceBoost('signed Birmingham Wave Park loan agreement lender borrower', {
+      source_file: 'Signed Loan Agreement .pdf',
+      project_id: 'BHX',
+      doc_type: 'funding',
+    })
+    expect(boost).toBeGreaterThanOrEqual(0.18)
+
+    const decoyBoost = metadataRelevanceBoost('signed Birmingham Wave Park loan agreement lender borrower', {
+      source_file: 'USCL WPH Signed Loan Agreement.pdf',
+      project_id: 'KLP',
+      doc_type: 'legal',
+    })
+    expect(decoyBoost).toBeLessThan(boost)
+  })
+
+  it('strongly boosts exact Buenavista participative-credit contract metadata', () => {
+    const boost = metadataRelevanceBoost('Como es la financiacion de Buenvista?', {
+      source_file: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+    })
+    const decoyBoost = metadataRelevanceBoost('Como es la financiacion de Buenvista?', {
+      source_file: 'Solicitud disposicion Buenavista.pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+    })
+    expect(boost).toBeGreaterThanOrEqual(0.6)
+    expect(decoyBoost).toBeLessThan(boost)
+  })
+
+  it('does not boost unrelated metadata', () => {
+    expect(metadataRelevanceBoost('resumen operativo semanal', { source_file: 'Anything.pdf', project_id: 'MAD' })).toBe(0)
   })
 })
 

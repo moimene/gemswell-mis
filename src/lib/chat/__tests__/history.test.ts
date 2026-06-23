@@ -54,6 +54,19 @@ describe('mapStoredMessage (conversation restore)', () => {
     expect(m.fallback).toBe(true)
   })
 
+  it('restores OpenAI primary provider metadata without marking it as fallback', () => {
+    const m = mapStoredMessage({
+      role: 'assistant',
+      content: 'respuesta',
+      provider: 'openai',
+      model: 'gpt-5.5',
+      fallback: false,
+    })
+    expect(m.provider).toBe('openai')
+    expect(m.model).toBe('gpt-5.5')
+    expect(m.fallback).toBeUndefined()
+  })
+
   it('treats provider=gemini as fallback even if the boolean is missing in a partially backfilled row', () => {
     const m = mapStoredMessage({ role: 'assistant', content: 'respuesta', provider: 'gemini', fallback: null })
     expect(m.fallback).toBe(true)

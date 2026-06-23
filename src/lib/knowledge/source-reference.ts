@@ -131,6 +131,7 @@ export function buildKnowledgeSource(input: BuildSourceInput): KnowledgeSource {
 }
 
 export function sourceHeader(metadata: Record<string, unknown>, relevance: number, index: number): string {
+  const displayRelevance = Math.max(0, Math.min(1, relevance))
   const project = inertLabel(stringValue(metadata.project_id)) ?? '?'
   const docType = inertLabel(stringValue(metadata.doc_type)) ?? '?'
   const source = inertLabel(stringValue(metadata.source_file) ?? stringValue(metadata.file_name)) ?? 'unknown'
@@ -141,5 +142,5 @@ export function sourceHeader(metadata: Record<string, unknown>, relevance: numbe
   const authorityLabel = authority == null ? '' : ` | authority ${authority}`
   const periodLabel = period ? ` | ${period}` : ''
   const governanceLabel = ` | review ${reviewStatus} | class ${classificationSource}`
-  return `[Source ${index + 1}] ${project} | ${docType}${periodLabel} | ${source}${authorityLabel}${governanceLabel} (${(relevance * 100).toFixed(0)}%)`
+  return `[Source ${index + 1}] ${project} | ${docType}${periodLabel} | ${source}${authorityLabel}${governanceLabel} (${(displayRelevance * 100).toFixed(0)}%)`
 }

@@ -17,7 +17,7 @@ export type RestoredMessage = {
   content: string
   sources?: RestoredSource[]
   toolCalls?: unknown[]
-  provider?: 'anthropic' | 'gemini'
+  provider?: 'openai' | 'anthropic' | 'gemini'
   model?: string
   fallback?: boolean
   persisted: true
@@ -48,7 +48,7 @@ function mapStoredSource(raw: unknown): RestoredSource {
 
 /** Map one stored row to a UI message. Assistant role iff explicitly 'assistant'; everything else → user. */
 export function mapStoredMessage(row: StoredMessageRow): RestoredMessage {
-  const provider = row.provider === 'anthropic' || row.provider === 'gemini' ? row.provider : undefined
+  const provider = row.provider === 'openai' || row.provider === 'anthropic' || row.provider === 'gemini' ? row.provider : undefined
   return {
     role: row.role === 'assistant' ? 'assistant' : 'user',
     content: row.content ?? '',

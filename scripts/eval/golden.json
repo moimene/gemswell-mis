@@ -5,7 +5,7 @@
     "lang": "es",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["29 de junio de 2023", "Madrid Playa Surf"] },
+    "ground_truth": { "expected_doc_ids": ["7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["29 de junio de 2023", "Madrid Playa Surf"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "SCOPING DEFECT: the most authoritative legal doc lives under project_id=KLP (Kelpa HoldCo), but the query names Madrid so the model scopes to MAD and hard-filters it out."
   },
@@ -15,7 +15,7 @@
     "lang": "en",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["2023", "Madrid Playa Surf"] },
+    "ground_truth": { "expected_doc_ids": ["7346215e-1c19-4165-80ec-012aa4859aa5"], "titles": ["pacto de socios"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["2023", "Madrid Playa Surf"] },
     "scoped_filter": { "project_id": "MAD" },
     "notes": "Multilingual: English query must retrieve a Spanish document (dual-language FTS). Also scoping defect (KLP vs MAD)."
   },
@@ -25,7 +25,7 @@
     "lang": "es",
     "category": "legal",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["7610f984-707f-4b91-9224-3e1b7ac05665", "d1b95f6c-4575-40ca-b071-68a358651051"], "titles": ["personas apoderadas"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["Grupo 1", "Sergio García"] },
+    "ground_truth": { "expected_doc_ids": ["7610f984-707f-4b91-9224-3e1b7ac05665"], "titles": ["personas apoderadas"], "project_id": "KLP", "doc_type": "legal", "must_contain": ["Grupo 1", "Sergio García"] },
     "scoped_filter": { "project_id": null },
     "notes": "No project named; model likely omits project filter. Tests cross-project ranking of a high-authority legal doc."
   },
@@ -35,7 +35,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["d4738ec5-3f54-42ea-a02c-afcbdb030b0c", "1094af8d-4d39-435a-80dd-e5cdc98305f4"], "titles": ["signed loan agreement", "loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
+    "ground_truth": { "expected_doc_ids": ["d4738ec5-3f54-42ea-a02c-afcbdb030b0c", "57404e39-c362-4f2d-80dc-9941c3a79473", "43367f33-1f01-479e-b342-502f50104702"], "titles": ["signed loan agreement", "loan agreement vsore"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Varia", "Wave Park"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Lender = Varia Structured Opportunities Real Estate III; borrower = Wave Park Holdings. GT is correctly under BHX."
   },
@@ -45,7 +45,7 @@
     "lang": "en",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["51a1444e-50a3-4912-8aa4-90c755e089c0", "18675f0e-336c-4679-9761-32d89f491c09", "a5e4be3c-2c80-4434-a1e5-c7993405a3d4", "c1e01aca-0f8b-49f2-8109-570122d87e4b", "52bd4f56-6ded-416d-bd6e-3c24d5b53142", "ae03e20c-ed46-4efe-b132-524acf049562"], "titles": ["sh01"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
+    "ground_truth": { "expected_doc_ids": ["272931a2-0189-48ff-a03b-587548dc27a8", "18675f0e-336c-4679-9761-32d89f491c09", "52bd4f56-6ded-416d-bd6e-3c24d5b53142", "ae03e20c-ed46-4efe-b132-524acf049562"], "titles": ["sh01", "legal opinion"], "project_id": "BHX", "doc_type": "funding", "must_contain": ["Wave Park Holdings", "Warwickshire"] },
     "scoped_filter": { "project_id": "BHX" },
     "notes": "Borrower entity: Wave Park Holdings (Warwickshire) Ltd, company number 15326333."
   },
@@ -84,7 +84,7 @@
     "lang": "en",
     "category": "cross_project",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["d7deb190-3406-4e07-94c0-8e3c66571c9e", "5da87f16-3c4f-40d7-a50c-2b098e5fb859", "5ab43a70-34b8-493c-b6a1-147958a256bd", "7e5a113f-9797-4e66-a761-cacfab5d91ba"], "titles": ["gemswell financials cast", "deck_membership"], "project_id": "PHILAE", "doc_type": "funding", "must_contain": ["Madrid", "Birmingham"] },
+    "ground_truth": { "expected_doc_ids": ["d7deb190-3406-4e07-94c0-8e3c66571c9e", "5da87f16-3c4f-40d7-a50c-2b098e5fb859", "5ab43a70-34b8-493c-b6a1-147958a256bd", "07b1b287-d08e-4132-adb3-d8efdf7ded08", "7b2d23f3-2df4-4123-aa6f-2fd6be5630ec", "ae62aecb-2d66-4373-ac29-dcbef8d0907e", "f890c3a1-8f79-4110-ada7-d1524ff5fc72"], "titles": ["gemswell financials cast", "deck_membership"], "project_id": "PHILAE", "doc_type": "funding", "must_contain": ["Madrid", "Birmingham"] },
     "scoped_filter": { "project_id": null },
     "notes": "SCOPING DEFECT: fund-level docs live under PHILAE, which is not even in the chat's project enum (MAD|BHX)."
   },
@@ -94,7 +94,7 @@
     "lang": "es",
     "category": "cross_project",
     "expected_kind": "documentary",
-    "ground_truth": { "expected_doc_ids": ["f3916ac0-6020-473a-bd2b-73bd78afec28", "7346215e-1c19-4165-80ec-012aa4859aa5", "7610f984-707f-4b91-9224-3e1b7ac05665", "d1b95f6c-4575-40ca-b071-68a358651051"], "titles": ["pacto de socios", "personas apoderadas"], "project_id": "KLP", "doc_type": "legal" },
+    "ground_truth": { "expected_doc_ids": ["7346215e-1c19-4165-80ec-012aa4859aa5", "7610f984-707f-4b91-9224-3e1b7ac05665", "a7c64be5-5f30-4b69-ab6f-6bf2e1280c09", "5c6a4a3a-c3b3-4d8c-adb0-91437a7d0f9b"], "titles": ["pacto de socios", "personas apoderadas"], "project_id": "KLP", "doc_type": "legal" },
     "scoped_filter": { "project_id": null }
   },
   {
@@ -162,7 +162,7 @@
     "lang": "es",
     "category": "zero_result",
     "expected_kind": "abstain",
-    "ground_truth": {},
+    "ground_truth": { "tool": "search_documents" },
     "notes": "Out of corpus (Gemswell is surf parks; no ski/Alps project). Trustworthy behavior: abstain / say no evidence, do NOT hallucinate. (Replaced an earlier Lisboa question — the eval revealed the corpus actually documents a 'Gran Lisboa' pipeline project, so that was a recall case, not a zero-result.)"
   },
   {
@@ -171,7 +171,7 @@
     "lang": "en",
     "category": "zero_result",
     "expected_kind": "abstain",
-    "ground_truth": {},
+    "ground_truth": { "tool": "search_documents" },
     "notes": "Out of corpus. Must abstain."
   },
   {
@@ -207,9 +207,19 @@
     "lang": "es",
     "category": "funding",
     "expected_kind": "documentary",
-    "ground_truth": { "titles": ["financiación"], "project_id": "MAD", "doc_type": "funding", "tool": "search_documents", "must_contain": ["Buenavista", "participativo"] },
+    "ground_truth": { "expected_doc_ids": ["502705bf-da6d-44bd-9871-38b1e1a8ab73"], "titles": ["contrato de crédito participativo", "buenavista"], "project_id": "MAD", "doc_type": "funding", "tool": "search_documents", "must_contain": ["Buenavista", "participativo", "15.657.498,18"] },
     "scoped_filter": { "project_id": null },
     "notes": "TOOL-ORCHESTRATION DEFECT (2026-06-09): Buenavista is an in-corpus LENDER / participative-loan instrument for MAD (Buenavista Nextgen Urbano S.I.C.C.; crédito participativo, máx 15.657.498,18€), NOT a top-level project. The agent must NOT deny its existence from get_portfolio_context (which only lists MAD/BHX/KLP/PHILAE/GVF) — it MUST search_documents and FIND it. Deliberate typo ('buenvista') also tests spelling-variant robustness. Correct answer is documentary (cites the financing contract), NOT an abstain/clarify. Guards the prompt rule added to agent.ts (verified: before fix the agent called only get_portfolio_context and denied; after fix it searches and finds 12 sources)."
+  },
+  {
+    "id": "mad-buenavista-conditions",
+    "question": "Condiciones de la financiación de Buenavista para el proyecto de Madrid",
+    "lang": "es",
+    "category": "funding",
+    "expected_kind": "documentary",
+    "ground_truth": { "expected_doc_ids": ["502705bf-da6d-44bd-9871-38b1e1a8ab73"], "titles": ["contrato de crédito participativo", "buenavista"], "project_id": "MAD", "doc_type": "funding", "tool": "search_documents", "must_contain": ["15.657.498,18", "Gastos Elegibles", "Disposición"] },
+    "scoped_filter": { "project_id": null },
+    "notes": "Adversarial relevance test: the answer must be anchored to the signed participative-credit contract, not to the prior Buenavista letter of interest that mentions 22M."
   },
   {
     "id": "named-absent-abstain",

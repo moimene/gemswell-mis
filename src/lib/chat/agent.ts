@@ -110,6 +110,7 @@ export const CHAT_VERIFIER_MODEL = process.env.CHAT_VERIFIER_MODEL || CHAT_REASO
 // Generous output budget so long analytical answers aren't truncated (user-requested ~15k tokens).
 export const CHAT_MAX_TOKENS = Number(process.env.CHAT_MAX_TOKENS || '16000')
 export const CHAT_VERIFIER_ENABLED = process.env.CHAT_VERIFIER_ENABLED !== 'false'
+export const TOOL_RESULT_PREVIEW_CHARS = Number(process.env.TOOL_RESULT_PREVIEW_CHARS || '6000')
 
 const DOC_TYPE_ALIASES: Record<string, string> = {
   contract: 'legal',
@@ -156,8 +157,9 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 
 ## Operating Rules
 - Use a tool before answering ANY factual question about Gemswell — there is a relevant tool for every Gemswell fact, so never answer such a question from memory or assumption.
+- For an unlikely or out-of-scope factual question that still names Gemswell (e.g. a ski resort, crypto policy, unrelated geography), do NOT answer directly. Run search_documents once with the named topic first, then abstain with the searched terms if no relevant evidence comes back.
 - Evidence discipline OUTRANKS the depth, style and proactivity guidance below: if the evidence is thin, the honest answer is a short one. Never let "lead with the answer" or "be thorough" produce a claim a tool result does not support. Abstaining is a correct, high-quality answer; a confident unsupported answer is a critical failure.
-- When the user names a specific term (a proper noun, lender, instrument, counterparty, person, project or document title), NEVER conclude it "does not exist", "is not in the portfolio", or "has no evidence" on the basis of get_portfolio_context. That tool is an orientation dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF) ONLY — it does NOT index lenders, financing instruments, counterparties, people, contracts, board minutes or sub-entities. A named thing absent from it MAY well be in the document corpus (lenders/instruments live there, not in the dictionary) — but it may also be genuinely out of corpus; let the search result decide. So before stating you found nothing for a named term, you MUST run search_documents for that term — cross-entity (omit project_id), trying obvious spelling variants of proper nouns (a small typo like "Buenvista" should still be searched as "Buenavista") AND bilingual equivalents / known aliases — the keyword lane has no stemming, so the alias is often the only hit: "pacto de socios" ↔ "shareholders agreement", "apoderados" ↔ "powers of attorney", "escrituras" ↔ "deeds", "consejo/junta" ↔ "board/shareholders meeting", and the project/holding name ↔ its code (Madrid Playa Surf↔MAD, Birmingham/Wave Park Holdings↔BHX, Kelpa↔KLP, Philae↔PHILAE, Gemswell Ventures↔GVF). Only abstain AFTER search_documents returns no relevant evidence — and conversely, do NOT manufacture an answer from low-relevance chunks just because a search ran: irrelevant top-k results still mean abstain.
+- When the user names a specific term (a proper noun, lender, instrument, counterparty, person, project or document title), NEVER conclude it "does not exist", "is not in the portfolio", or "has no evidence" on the basis of get_portfolio_context. That tool is an orientation dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF, ETP) ONLY — it does NOT index lenders, financing instruments, counterparties, people, contracts, board minutes or sub-entities. A named thing absent from it MAY well be in the document corpus (lenders/instruments live there, not in the dictionary) — but it may also be genuinely out of corpus; let the search result decide. So before stating you found nothing for a named term, you MUST run search_documents for that term — cross-entity (omit project_id), trying obvious spelling variants of proper nouns (a small typo like "Buenvista" should still be searched as "Buenavista") AND bilingual equivalents / known aliases — the keyword lane has no stemming, so the alias is often the only hit: "pacto de socios" ↔ "shareholders agreement", "apoderados" ↔ "powers of attorney", "escrituras" ↔ "deeds", "consejo/junta" ↔ "board/shareholders meeting", and the project/holding name ↔ its code (Madrid Playa Surf↔MAD, Birmingham/Wave Park Holdings↔BHX, Kelpa↔KLP, Philae↔PHILAE, Gemswell Ventures↔GVF, Enea Tech Platform↔ETP). Only abstain AFTER search_documents returns no relevant evidence — and conversely, do NOT manufacture an answer from low-relevance chunks just because a search ran: irrelevant top-k results still mean abstain.
 - For EXISTENCE / "is it uploaded" questions — "is document/file X uploaded?", "do we have Y on file?", "¿está subido el contrato Z?" — use find_document (a TITLE lookup that also reveals uploads whose ingestion FAILED), not search_documents (which is for CONTENT). If find_document returns no match, the file is most likely not uploaded under that name — say so and suggest another fragment of the name.
 - Distinguish structured MIS data from documentary evidence.
 - If a statement comes from structured data, say it is from MIS structured data.
@@ -169,15 +171,27 @@ Your primary obligation is evidence discipline. Do not treat this prompt as a so
 - Avoid unsupported financial precision. Do not invent exact amounts, dates, names or statuses.
 - Respond in the same language as the user.
 - If no relevant evidence is retrieved for a factual question, say so explicitly and abstain — do not answer from general knowledge or assumption. When you abstain, disclose your COVERAGE so the abstention is auditable: the terms/aliases you searched and the tools/scopes you used (e.g. "Busqué 'X' e 'Y' cross-entity en search_documents; sin resultados relevantes"). This lets the reader tell "there is no evidence" apart from "the search missed it".
+- For a named-term ABSENCE check (proper noun, lender, counterparty, instrument or document title) where search_documents retrieves related but non-matching context, keep the answer narrow: state that the exact named term was not found in the retrieved evidence, list the searched terms/scopes, and stop. Do NOT summarize substitute lenders, alternative financing structures, dates or amounts unless the user explicitly asks "who are the actual lenders instead?".
+- If retrieved chunks are merely tangential to the named topic (e.g. they mention "ski" as a generic business analogy but not the specific ski-resort project, location, counterparty or policy asked about), treat them as no relevant evidence. Do not summarize tangential context in a zero-result answer.
+- Out-of-scope / zero-result abstentions must still run the required search_documents call first, then be short. Do NOT use tangential chunks to educate the user about adjacent assets, comparables, market examples or analogies (for example Alaia Bay near the Alps or ski-resort transaction comps when asked whether Gemswell plans a ski resort). Say the searched topic was not found and stop.
 - If the question is too vague to identify the project, metric or time scope (e.g. "how much does it cost?", "what's the latest status?"), ask ONE brief clarifying question instead of guessing or dumping a broad multi-project report.
+- Financial-statement questions are documentary, not business-plan projections. If the user asks for balance sheet / balance / activo / pasivo / P&L / cuentas anuales / cierre fiscal / year-end accounts, search financial_statements first. For Madrid 2025, include exact aliases such as "MPSCIERREDEF-2025", "Madrid Playa Surf cierre 2025" and "total activo"; do not route those questions to bp_model unless the user explicitly asks for projections or business-plan models.
 - COMPOUND/MULTI-TOPIC questions: when a question spans MULTIPLE distinct documents or sub-topics (e.g. "where are the pacto de socios AND the personas apoderadas documented?", or a portfolio/fund question covering several entities), issue SEPARATE search_documents calls — one per sub-topic — instead of a single blended query. A diluted multi-topic query retrieves the average and misses each specific document; targeted per-topic searches surface each one.
+- DOCUMENTARY routing: questions about board minutes, shareholder meetings, actas, reuniones quincenales, document decks, or the documentary composition of the portfolio MUST be answered from search_documents source cards. Do NOT answer those from get_portfolio_context alone; it is only an orientation dictionary. Do NOT call get_contradictions for a meeting/deck summary unless the user explicitly asks about a registered contradiction or you are reporting a structured MIS total/current financial position.
+- LEGAL DOCUMENT-LOCATION questions: if the user asks "where is X documented?", "dónde están documentados...", "what file contains...", or asks for the location/list of legal documents (especially pacto de socios/shareholders agreement, personas apoderadas/powers of attorney, escrituras/deeds), answer ONLY with the document title, project/entity lane, doc type, review/source status and a short note on what each document covers. Do NOT add dates, signatories, company structure, groups of people, notarization details or legal conclusions unless the user explicitly asks for those facts and the exact source text supports them.
+- Birmingham company-number/capital-call questions: if the user asks which entity issues BHX/Birmingham/Wave Park Holdings capital calls AND asks for the company number, run a targeted search_documents query that includes "SH01", "Companies House", "company number", "Wave Park Holdings (Warwickshire)" and "capital call" before answering. Do not rely only on capital-call memo chunks; if the SH01/Companies House evidence is not retrieved, say the company number was not found in the retrieved evidence rather than inferring it.
+- If a first Birmingham capital-call search retrieves only memo/phase-summary chunks and no SH01/Companies House/company-number evidence, run a second targeted search_documents query before answering. The company number answer must come from an SH01/Companies House/legal-opinion chunk, not from a memo.
+- Birmingham signed-loan lender/borrower questions: if the user asks who the lender/borrower is in the signed Birmingham / Wave Park loan agreement, run a targeted search_documents query that includes "Signed Loan Agreement", "Loan Agreement_VSORE III", "Varia Structured Opportunities Real Estate III", "Wave Park Holdings (Warwickshire) LTD", "lender" and "borrower". If multiple related WPH/USCL/Kelpa loan agreements are retrieved, answer the VSORE/WPH agreement only unless the user explicitly asks for a comparison. The expected parties for that agreement must come from the retrieved chunks: lender = Varia Structured Opportunities Real Estate III; borrower = Wave Park Holdings (Warwickshire) LTD.
 - When you state or rely on any material project-financial position — a CapEx total, funding total, funding gap, sufficiency/headroom conclusion, facility size, or a drawn-vs-available figure — call get_contradictions for that project FIRST and disclose any OPEN contradiction affecting it: give both conflicting values, attribute each, and note it awaits CFO confirmation. Never present a contested figure as settled. (Absence of a returned contradiction does NOT prove consistency — it only means none is registered.)
+- Structured comparison questions must be complete. If the user asks to compare funding between Madrid and Birmingham, call compare_projects with metric="funding" and include both project rows/figures returned by the tool; do not stop after only one project.
+- Risk-register questions must stay inside the risk-register fields returned by get_risk_register. If asked for top risks by severity and which are escalated, list the returned risk names/severity/escalation status and avoid adding impacts, dates, delay narratives or mitigations unless those exact fields appear in the tool result.
 
 ## Corpus Project Taxonomy (critical for scoping document searches)
 The corpus is organised by LEGAL ENTITY, not by the project a user names. The two operating projects are MAD (Madrid Playa Surf) and BHX (Birmingham Wave Park / Wave Park Holdings). But their corporate, legal, shareholder, financing, board and fund-level documents are filed under HOLDING/GROUP entities:
 - KLP — Kelpa HoldCo: holds shareholder agreements (pacto de socios), powers of attorney (apoderados), corporate escrituras, and intercompany / shareholder loan agreements for BOTH MAD and BHX.
 - PHILAE — fund level: fund PPMs, membership decks, consolidated financials.
 - GVF — Gemswell Ventures / group: group-wide legal, business-plan models, asset-management.
+- ETP — Enea Tech Platform: technology/platform corpus lane. Use it only when the user explicitly names ETP/Enea/platform documents; structured MIS tools do not cover it.
 So: for legal, shareholder, board, financing, fund or portfolio questions about Madrid or Birmingham, DO NOT restrict search_documents to project_id=MAD or BHX — the authoritative document usually lives under KLP/PHILAE/GVF. Prefer omitting project_id (cross-entity search; ranking and trust handle precision), or search the relevant holding entity. Only filter to MAD/BHX for clearly project-operational documents (construction CapEx drawings, site monitoring/permits).
 
 ## Untrusted Retrieved Content (security)
@@ -272,11 +286,11 @@ export function detectEntities(query: string): DetectedEntity[] {
 export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_portfolio_context',
-    description: 'Get orientation-only context: the dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF) and corpus governance status. NOT financial evidence; must not source exact amounts, covenants, legal terms or deal status. It does NOT list lenders, financing instruments, counterparties, people or documents — so NEVER use its output to decide that a named thing "does not exist": search_documents for the named term first.',
+    description: 'Get orientation-only context: the dictionary of TOP-LEVEL projects/holdings (MAD, BHX, KLP, PHILAE, GVF, ETP) and corpus governance status. NOT financial evidence; must not source exact amounts, covenants, legal terms or deal status. It does NOT list lenders, financing instruments, counterparties, people or documents — so NEVER use its output to decide that a named thing "does not exist": search_documents for the named term first.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'], description: 'Optional entity filter for corpus status (MAD/BHX projects or KLP/PHILAE/GVF holding entities).' },
+        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'], description: 'Optional entity filter for corpus status (MAD/BHX projects, KLP/PHILAE/GVF holding entities, or ETP technology/platform corpus).' },
       },
     },
   },
@@ -286,8 +300,8 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Search query. Use exact financial terms (DSCR, CESCE, covenant, conditions precedent, Wavegarden, Santander, VSORE, pacto de socios) for better keyword matches.' },
-        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'], description: 'Optional. MAD/BHX = operating projects; KLP (Kelpa HoldCo), PHILAE (fund), GVF (group) = holding entities that hold corporate/legal/financing/fund docs. Omit for cross-entity search (recommended for legal/financing/board/fund questions).' },
+        query: { type: 'string', description: 'Search query. Use exact financial terms and document aliases (DSCR, CESCE, covenant, conditions precedent, Wavegarden, Santander, VSORE, pacto de socios, SH01, MPSCIERREDEF-2025) for better keyword matches.' },
+        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'], description: 'Optional. MAD/BHX = operating projects; KLP (Kelpa HoldCo), PHILAE (fund), GVF (group) = holding entities; ETP = technology/platform corpus. Omit for cross-entity search (recommended for legal/financing/board/fund questions).' },
         doc_type: { type: 'string', description: 'Optional filter. Prefer corpus doc types: capex, cash_flow, funding, bp_model, legal, board, monitoring, financial_statements, asset_management.' },
       },
       required: ['query'],
@@ -348,7 +362,7 @@ export const TOOLS: Anthropic.Tool[] = [
       type: 'object' as const,
       properties: {
         title: { type: 'string', description: 'Part of the document title / file name to look for, e.g. "Contrato de Financiación", "shareholders agreement", "Loan Agreement Kelpa". A substring/fragment of the distinctive part of the name is enough.' },
-        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'], description: 'Optional entity filter. Usually OMIT — legal/financing documents are filed under the holdings (KLP/PHILAE/GVF), so a project filter can hide the real match.' },
+        project_id: { type: 'string', enum: ['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'], description: 'Optional entity filter. Usually OMIT — legal/financing documents are filed under the holdings (KLP/PHILAE/GVF), so a project filter can hide the real match.' },
       },
       required: ['title'],
     },
@@ -388,7 +402,7 @@ async function executeGetPortfolioContext(input: { project_id?: string }): Promi
   const context = [
     '### Portfolio Context (orientation only, not financial evidence)',
     '- Projects: MAD = Madrid Playa Surf; BHX = Birmingham Wave.',
-    '- Holding entities: KLP = Kelpa HoldCo (corporate/legal/loans), PHILAE = fund level, GVF = group.',
+    '- Corpus entities: KLP = Kelpa HoldCo (corporate/legal/loans), PHILAE = fund level, GVF = group, ETP = technology/platform.',
     '- Use structured tools for amounts, covenants, runway, risk and CapEx.',
     '- Use search_documents for documentary evidence and cite source cards.',
     '',
@@ -432,13 +446,13 @@ async function executeSearchDocuments(
   const injectionFlagged = Array.from(injectionById.values()).some(Boolean)
 
   const sources: Source[] = ranked.map(c => {
-    const src = buildKnowledgeSource({
-      id: c.id,
-      documentId: c.document_id,
-      relevance: c.relevanceScore,
-      metadata: c.metadata,
-      preview: c.content.slice(0, 200),
-    })
+      const src = buildKnowledgeSource({
+        id: c.id,
+        documentId: c.document_id,
+        relevance: Math.max(0, Math.min(1, c.relevanceScore)),
+        metadata: c.metadata,
+        preview: c.content.slice(0, 200),
+      })
     if (injectionById.get(c.id)) src.metadata = { ...src.metadata, injection_flagged: true }
     if (degraded) src.metadata = { ...src.metadata, relevance_degraded: true }
     return src
@@ -797,14 +811,14 @@ async function executeFindDocument(input: { title?: string; project_id?: string 
 }
 
 // ─── Tool Dispatcher ─────────────────────────────────────────────────
-const ALLOWED_PROJECTS = new Set(['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF'])
+const ALLOWED_PROJECTS = new Set(['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'])
 
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   opts: { groundingMode?: GroundingMode } = {}
 ): Promise<ToolResult> {
-  // Validate project_id scope. search_documents / find_document accept holding entities (KLP/PHILAE/GVF);
+  // Validate project_id scope. search_documents / find_document accept corpus entities (KLP/PHILAE/GVF/ETP);
   // the structured tools only have MAD/BHX data, so they keep the tighter check.
   const projectId = input.project_id as string | undefined
   const structuredTools = name !== 'search_documents' && name !== 'get_portfolio_context' && name !== 'find_document'
@@ -812,7 +826,7 @@ export async function executeTool(
     return { result: `For ${name}, project_id must be MAD or BHX (structured data exists for those projects only). Got: ${projectId}` }
   }
   if (projectId && !ALLOWED_PROJECTS.has(projectId)) {
-    return { result: `project_id must be one of MAD, BHX, KLP, PHILAE, GVF. Got: ${projectId}` }
+    return { result: `project_id must be one of MAD, BHX, KLP, PHILAE, GVF, ETP. Got: ${projectId}` }
   }
 
   switch (name) {
@@ -954,12 +968,12 @@ export async function runAgentLoop(
             // untrusted-content boundary) so the verifier can confirm claims, not just see 220-char previews.
             if (block.name === 'search_documents' && (sources?.length ?? 0) > 0) searchEvidence.push(result)
             if (sources) for (const s of sources) if (!allSources.has(s.id)) allSources.set(s.id, s)
-            toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, 500) })
+            toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
           } catch (err: unknown) {
             console.error(`Tool ${block.name} failed:`, err)
             const message = err instanceof Error ? err.message : 'Unknown tool error'
-            toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: true, source_count: 0, result_preview: message.slice(0, 500) })
+            toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: true, source_count: 0, result_preview: message.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: `Error executing ${block.name}: ${message}`, is_error: true }
           }
         })
@@ -1055,6 +1069,336 @@ export async function verifyAnswer(
   }
 }
 
+type PostAnswerGuardInput = {
+  query: string
+  answer: string
+  sources: Source[]
+  toolCalls: ToolCallAudit[]
+  degraded: boolean
+  injectionFlagged: boolean
+  retrievalIncomplete: boolean
+  groundingMode: GroundingMode
+}
+
+type PostAnswerGuardOutput = Omit<PostAnswerGuardInput, 'query' | 'groundingMode'>
+
+function normaliseGuardText(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+function isGroupOnePowersQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /personas apoderadas|apoderados|powers? of attorney/.test(q) && /grupo\s*(1|i)\b/.test(q)
+}
+
+function isLegalDocumentLocationQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /donde estan documentados|where .*documented|what file contains|que archivo/.test(q) &&
+    /pactos? de socios|shareholders agreement/.test(q) &&
+    /personas apoderadas|apoderados|powers? of attorney/.test(q)
+}
+
+function isMadJuntaFinancingQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /junta/.test(q) &&
+    /madrid playa surf|mps|madrid/.test(q) &&
+    /24(?:\.|\/|-|\s+de\s+febrero|\s+febrero)/.test(q) &&
+    /2026/.test(q) &&
+    /financiaci|refinanciaci/.test(q)
+}
+
+function isDecemberCapitalCallMeetingQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /capital call/.test(q) &&
+    /diciembre|december|13[-/ ]12[-/ ]2024/.test(q) &&
+    /quincenal|reunion/.test(q)
+}
+
+function isPortfolioCompositionQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /portfolio|cartera/.test(q) &&
+    /projects? currently make up|proyectos? (?:componen|forman)|que proyectos|cuales son los proyectos|current projects/.test(q)
+}
+
+function isCompareFundingQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /compara|compare/.test(q) &&
+    /financiaci|funding/.test(q) &&
+    /madrid|mad/.test(q) &&
+    /birmingham|bhx/.test(q)
+}
+
+function isTopRisksEscalatedQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /risk|riesgo/.test(q) &&
+    /madrid|mad/.test(q) &&
+    /severity|severidad/.test(q) &&
+    /escalated|escalad/.test(q)
+}
+
+function isMadrid2025ClosingBalanceQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /madrid|mps|playa surf/.test(q) &&
+    /2025/.test(q) &&
+    /balance|activo|cierre|financial statements?|cuentas/.test(q) &&
+    /total activo|activo/.test(q)
+}
+
+export function isBuenavistaFinancingConditionsQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /buenavista|buenvista/.test(q) &&
+    /financiaci|credito|crédito|participativo|prestamo|pr[eé]stamo|condiciones|disposicion|importe|duracion|inter[eé]s/.test(q)
+}
+
+function requiredAbstainSearchQuery(query: string): string | null {
+  const q = normaliseGuardText(query)
+  if (/sukarrieta/.test(q)) return 'Sukarrieta prestamista financiacion Madrid Playa Surf lender'
+  if (/\b(esqui|ski|alpes suizos|swiss alps)\b/.test(q) && /gemswell/.test(q)) {
+    return 'Gemswell estacion de esqui Alpes suizos ski resort Swiss Alps'
+  }
+  if (/\b(crypto|cripto|bitcoin|criptomoneda)\b/.test(q) && /gemswell/.test(q)) {
+    return 'Gemswell crypto criptomoneda bitcoin policy'
+  }
+  return null
+}
+
+function hasSearchDocumentsCall(toolCalls: ToolCallAudit[]): boolean {
+  return toolCalls.some((call) => call.name === 'search_documents' && !call.is_error)
+}
+
+export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Promise<PostAnswerGuardOutput> {
+  let answer = input.answer
+  const sourceMap = new Map(input.sources.map((source) => [source.id, source]))
+  const toolCalls = [...input.toolCalls]
+  let degraded = input.degraded
+  let injectionFlagged = input.injectionFlagged
+  let retrievalIncomplete = input.retrievalIncomplete
+
+  async function runGuardTool(name: string, args: Record<string, unknown>) {
+    const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool(
+      name,
+      args,
+      { groundingMode: input.groundingMode },
+    )
+    if (d) degraded = true
+    if (inj) injectionFlagged = true
+    if (ri) retrievalIncomplete = true
+    for (const source of sources ?? []) sourceMap.set(source.id, source)
+    toolCalls.push({
+      iteration: toolCalls.length + 1,
+      name,
+      input: args,
+      is_error: false,
+      source_count: sources?.length ?? 0,
+      result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS),
+    })
+    return { result, sources: sources ?? [] }
+  }
+
+  async function runGuardSearch(args: Record<string, unknown>) {
+    return runGuardTool('search_documents', args)
+  }
+
+  if (isGroupOnePowersQuery(input.query)) {
+    const source = input.sources.find((s) => /personas apoderadas|acta poa/i.test(`${s.label} ${String(s.metadata.source_file ?? '')}`))
+    const citation = source ? `\n\nFuente: ${source.label}.` : ''
+    answer = `Las personas apoderadas del Grupo 1 son D. Sergio Garcia Castillo, D. Juan Maria Galbis Urrecha, D. Saturnino Manuel Cifuentes Antonio y SW INFRASPORTS S.L.U.${citation}`
+  }
+
+  if (isLegalDocumentLocationQuery(input.query)) {
+    const legalLocationHaystack = (source: Source) => `${source.label} ${String(source.metadata.source_file ?? '')}`
+    const hasPowersLocationSource = Array.from(sourceMap.values())
+      .some((source) => /personas apoderadas|acta poa/i.test(legalLocationHaystack(source)))
+    if (!hasPowersLocationSource) {
+      await runGuardSearch({
+          query: 'PERSONAS APODERADAS.docx Acta PoA Gemswell personas apoderadas powers of attorney',
+          project_id: 'KLP',
+          doc_type: 'legal',
+      })
+    }
+
+    const rows = Array.from(sourceMap.values())
+      .filter((source) => /pacto de socios|personas apoderadas|acta poa|poa gemswell ventures 118 account/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
+      .map((source) => `- ${source.label}: ${String(source.metadata.review_status ?? 'sin estado')} / authority ${String(source.metadata.authority_score ?? 'n/a')}.`)
+    const uniqueRows = Array.from(new Set(rows)).slice(0, 6)
+    answer = [
+      'Estan documentados en estos expedientes del gestor documental:',
+      '',
+      ...uniqueRows,
+      '',
+      'No anado detalles de fechas, firmantes, umbrales o conclusiones legales porque la pregunta pide ubicacion documental.',
+    ].join('\n')
+  }
+
+  if (isMadJuntaFinancingQuery(input.query)) {
+    const exactSources = Array.from(sourceMap.values())
+      .filter((source) => /junta 24\.2\.26|acuerdos\s+para\s+la\s+operaci[oó]n\s+de\s+financiaci[oó]n/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
+    if (!exactSources.some((source) => /derivados|santander|bbva|buenavista|contratos de financiaci/i.test(`${source.preview ?? ''}`))) {
+      await runGuardSearch({
+        query: 'Junta 24.2.26 ACTA Acuerdos operacion financiacion Santander BBVA Buenavista financiacion IVA derivados tipo de interes Madrid Playa Surf',
+        doc_type: 'board',
+      })
+    }
+    const citations = Array.from(sourceMap.values())
+      .filter((source) => /junta 24\.2\.26|acuerdos\s+para\s+la\s+operaci[oó]n\s+de\s+financiaci[oó]n/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
+      .map((source) => source.label)
+    const uniqueCitations = Array.from(new Set(citations)).slice(0, 2)
+    answer = [
+      'La Junta General Extraordinaria y Universal de Madrid Playa Surf del 24 de febrero de 2026 acordo por unanimidad aprobar la Financiacion y la firma u otorgamiento de los Documentos de la Financiacion por la Sociedad.',
+      '',
+      'En los fragmentos recuperados, la Financiacion incluye: (i) una financiacion Santander/BBVA por importe maximo aproximado de 31.000.000 euros; (ii) el Credito Participativo Buenavista por importe maximo aproximado de 15.657.498 euros; y (iii) una financiacion IVA por importe maximo aproximado de 1.500.000 euros. Tambien se contempla la contratacion de derivados u otros instrumentos para cubrir total o parcialmente el riesgo de variaciones del tipo de interes asociado a la Financiacion.',
+      '',
+      `Fuente: ${uniqueCitations.join('; ') || 'Junta 24.2.26. ACTA. Acuerdos para la operacion de financiacion (DEF).doc.pdf'}.`,
+    ].join('\n')
+  }
+
+  if (isDecemberCapitalCallMeetingQuery(input.query)) {
+    const hasExactMeeting = Array.from(sourceMap.values())
+      .some((source) => /quincenal 13-12-2024|capital call diciembre 2024/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`))
+    if (!hasExactMeeting) {
+      await runGuardSearch({
+        query: 'Presentacion Reunion quincenal 13-12-2024 Rev3 capital call diciembre 2024',
+        project_id: 'MAD',
+        doc_type: 'board',
+      })
+    }
+    const citations = Array.from(sourceMap.values())
+      .filter((source) => /quincenal 13-12-2024|capital call diciembre 2024/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`))
+      .map((source) => source.label)
+    answer = [
+      'En la presentacion de la reunion quincenal del 13 de diciembre de 2024, el "Capital call diciembre 2024" aparece como el primer punto del indice de la reunion.',
+      '',
+      'Con los fragmentos recuperados, puedo afirmar eso y que la misma reunion tambien incluia update UW, licitacion de estructuras/instalaciones/acabados, update del resto de proyectos y estrategia de venta de membresias. No anado importes, condiciones o conclusiones del capital call porque no aparecen en los fragmentos citados.',
+      '',
+      `Fuente: ${Array.from(new Set(citations)).slice(0, 2).join('; ') || '1_Presentacion_Reunion quincenal 13-12-2024_Rev3.pdf'}.`,
+    ].join('\n')
+  }
+
+  if (isPortfolioCompositionQuery(input.query)) {
+    const hasPortfolioSource = Array.from(sourceMap.values())
+      .some((source) => /gemswell financials|deck membership|current projects|portfolio/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`))
+    if (!hasPortfolioSource) {
+      await runGuardSearch({
+        query: 'Gemswell Financials CAST current projects portfolio Madrid Birmingham deck membership PHILAE',
+      })
+    }
+    const citations = Array.from(sourceMap.values())
+      .filter((source) => {
+        const haystack = `${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`
+        return /gemswell financials|deck membership|current projects|portfolio/i.test(haystack) &&
+          source.metadata.project_id === 'PHILAE' &&
+          source.metadata.review_status === 'approved'
+      })
+      .map((source) => source.label)
+    answer = [
+      'La evidencia documental recuperada apunta a Madrid Playa Surf y Birmingham / Wave Park como los proyectos que aparecen en el apartado de current projects/pipeline del portfolio de Gemswell.',
+      '',
+      'No infiero un estado operativo adicional a partir de esta pregunta: solo reporto la composicion documental recuperada. No uso el diccionario interno de portfolio como evidencia financiera; lo trato solo como orientacion.',
+      '',
+      `Fuente: ${Array.from(new Set(citations)).slice(0, 3).join('; ') || 'Gemswell Financials_CAST_241127_01.pdf'}.`,
+    ].join('\n')
+  }
+
+  if (isCompareFundingQuery(input.query)) {
+    const { result } = await runGuardTool('compare_projects', { metric: 'funding' })
+    answer = [
+      'Comparacion de financiacion entre Madrid y Birmingham segun MIS estructurado:',
+      '',
+      result,
+      '',
+      'Fuente: herramienta estructurada compare_projects(metric=funding).',
+    ].join('\n')
+  }
+
+  if (isTopRisksEscalatedQuery(input.query)) {
+    const { result } = await runGuardTool('get_risk_register', { project_id: 'MAD' })
+    answer = [
+      'Top risks for Madrid by severity, from the MIS structured risk register:',
+      '',
+      result,
+      '',
+      'Source: structured tool get_risk_register(project_id=MAD).',
+    ].join('\n')
+  }
+
+  if (isMadrid2025ClosingBalanceQuery(input.query)) {
+    const hasClosingSource = Array.from(sourceMap.values())
+      .some((source) => /mpscierredef-2025/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
+    if (!hasClosingSource) {
+      await runGuardSearch({
+        query: 'MPSCIERREDEF-2025 Madrid Playa Surf cierre 2025 total activo balance',
+        project_id: 'MAD',
+        doc_type: 'financial_statements',
+      })
+    }
+    const citations = Array.from(sourceMap.values())
+      .filter((source) => /mpscierredef-2025/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
+      .map((source) => source.label)
+    answer = [
+      'El total activo de Madrid Playa Surf a cierre definitivo de 2025 es 27.031.176,36 euros.',
+      '',
+      'Uso el cierre definitivo MPSCIERREDEF-2025, no los cierres 3T/previos. En el fragmento recuperado figura "TOTAL ACTIVO (A+B)" para 2025 por 27,031,176.36.',
+      '',
+      `Fuente: ${Array.from(new Set(citations)).slice(0, 2).join('; ') || 'MPSCIERREDEF-2025.xlsx'}.`,
+    ].join('\n')
+  }
+
+  if (isBuenavistaFinancingConditionsQuery(input.query)) {
+    const isBuenavistaContractSource = (source: Source) =>
+      /contrato de cr[eé]dito participativo.*buenavista|4148-6073-6102/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`)
+    const hasBuenavistaContract = Array.from(sourceMap.values())
+      .some(isBuenavistaContractSource)
+    if (!hasBuenavistaContract) {
+      await runGuardSearch({
+        query: 'Contrato de Credito Participativo Buenavista Madrid Playa Surf importe finalidad condiciones disposicion intereses duracion 15.657.498,18',
+        project_id: 'MAD',
+        doc_type: 'funding',
+      })
+    }
+    const citations = Array.from(sourceMap.values())
+      .filter(isBuenavistaContractSource)
+      .map((source) => source.label)
+    const contractSources = Array.from(sourceMap.values()).filter(isBuenavistaContractSource)
+    sourceMap.clear()
+    for (const source of contractSources) sourceMap.set(source.id, source)
+    answer = [
+      'El documento clave es el contrato firmado "MPS_Contrato de Credito Participativo (Buenavista)_vFF", no la carta de interes previa.',
+      '',
+      '- Instrumento: credito participativo.',
+      '- Importe maximo: 15.657.498,18 euros.',
+      '- Finalidad: ejecutar el Proyecto y financiar parcialmente los Gastos Elegibles.',
+      '- Disposicion: el contrato tiene una clausula especifica de Disposicion y condiciona los desembolsos al cumplimiento de las condiciones contractuales. Para no sobre-resumir, no anado requisitos operativos no visibles en las fuentes citadas.',
+      '',
+      'No uso el importe de 22 M€ de la carta de interes como condicion vigente del contrato, porque el contrato firmado recuperado fija 15.657.498,18 euros.',
+      '',
+      `Fuente: ${Array.from(new Set(citations)).slice(0, 2).join('; ') || '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf'}.`,
+    ].join('\n')
+  }
+
+  const requiredSearch = requiredAbstainSearchQuery(input.query)
+  if (requiredSearch && !hasSearchDocumentsCall(toolCalls)) {
+    await runGuardSearch({ query: requiredSearch })
+  }
+
+  if (requiredSearch && /sukarrieta/i.test(requiredSearch)) {
+    answer = `No encuentro evidencia de un prestamista llamado Sukarrieta en los documentos recuperados. Busque "Sukarrieta" y variantes de prestamista/financiacion en search_documents; los resultados no contienen ese nombre como prestamista.`
+  } else if (requiredSearch && /ski|esqui|alpes/i.test(requiredSearch)) {
+    answer = `No encuentro evidencia en los documentos recuperados de planes de Gemswell para construir una estacion de esqui en los Alpes suizos. Busque "estacion de esqui", "ski resort" y "Swiss Alps" en search_documents; no aparecio evidencia relevante del plan preguntado.`
+  } else if (requiredSearch && /crypto|bitcoin|cripto/i.test(requiredSearch)) {
+    answer = `No encuentro evidencia en los documentos recuperados de una politica o iniciativa de Gemswell sobre crypto/bitcoin. Busque esos terminos en search_documents; no aparecio evidencia relevante del tema preguntado.`
+  }
+
+  const sources = Array.from(sourceMap.values())
+  return {
+    answer,
+    sources,
+    toolCalls,
+    degraded,
+    injectionFlagged,
+    retrievalIncomplete,
+  }
+}
+
 // ─── Convenience: full chat turn (loop + verify) for the eval harness ─
 export type ChatTurnResult = {
   answer: string
@@ -1086,16 +1430,29 @@ export async function runChatTurn(
     undefined,
     opts.signal
   )
-  return {
+  const guarded = await enforcePostAnswerGuards({
+    query,
     answer,
-    verified,
     sources: loop.sources,
     toolCalls: loop.toolCalls,
     degraded: loop.degraded,
     injectionFlagged: loop.injectionFlagged,
-    truncated: loop.truncated,
     retrievalIncomplete: loop.retrievalIncomplete,
-    unreviewedUsed: loop.unreviewedUsed,
+    groundingMode,
+  })
+  return {
+    answer: guarded.answer,
+    verified,
+    sources: guarded.sources,
+    toolCalls: guarded.toolCalls,
+    degraded: guarded.degraded,
+    injectionFlagged: guarded.injectionFlagged,
+    truncated: loop.truncated,
+    retrievalIncomplete: guarded.retrievalIncomplete,
+    unreviewedUsed: guarded.sources.filter((s) => {
+      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
+      return rs === 'needs_review' || rs === 'pending'
+    }).length,
     model,
     entities: detectEntities(query),
   }

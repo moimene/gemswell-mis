@@ -9,7 +9,8 @@ import type { GroundingMode } from '@/lib/rag/retrieve'
 import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
   runAgentLoop, verifyAnswer, CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED,
-  type AgentLoopResult, type AgentAccumulators, type VerifierInput, type Source,
+  systemPromptForGrounding, chooseChatModel, detectEntities, enforcePostAnswerGuards, TOOL_RESULT_PREVIEW_CHARS,
+  type AgentLoopResult, type AgentAccumulators, type VerifierInput, type Source, type ChatTurnResult,
 } from './agent'
 
 // Gemini 2.5-pro/flash support function-calling (2.0-flash / 1.5-pro are retired — verified live 2026-06-14).
@@ -105,12 +106,12 @@ export async function runGeminiAgentLoop(
         if (ri) acc.retrievalIncomplete = true
         if (name === 'search_documents' && (sources?.length ?? 0) > 0) acc.searchEvidence.push(result)
         if (sources) for (const s of sources) if (!acc.allSources.has(s.id)) acc.allSources.set(s.id, s)
-        acc.toolCalls.push({ iteration: iteration + 1, name, input: args, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, 500) })
+        acc.toolCalls.push({ iteration: iteration + 1, name, input: args, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
         return { functionResponse: { name, response: { result } } }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown tool error'
         console.error(`Tool ${name} failed (gemini):`, err)
-        acc.toolCalls.push({ iteration: iteration + 1, name, input: args, is_error: true, source_count: 0, result_preview: message.slice(0, 500) })
+        acc.toolCalls.push({ iteration: iteration + 1, name, input: args, is_error: true, source_count: 0, result_preview: message.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
         return { functionResponse: { name, response: { error: `Error executing ${name}: ${message}` } } }
       }
     }))
@@ -146,15 +147,16 @@ export async function verifyAnswerGemini(
  *  surface). The workspace usage/spend cap surfaces as a 400 invalid_request with a usage-limit message,
  *  so a bare 400 is NOT enough — we match the quota wording explicitly to avoid masking real bugs. */
 export function isAnthropicUnavailable(err: unknown): boolean {
-  const e = err as { status?: number; name?: string; message?: string; error?: { message?: string } }
+  const e = err as { status?: number; name?: string; message?: string; error?: { message?: string }; constructor?: { name?: string } }
   const status = e?.status
+  const name = `${e?.name ?? ''} ${e?.constructor?.name ?? ''}`.toLowerCase()
   const msg = (e?.error?.message || e?.message || '').toLowerCase()
   if (status === 400 && /(usage limit|credit balance|billing|quota|workspace|spend limit|rate.?limit)/.test(msg)) return true
   if (status === 401 && /(credit|billing|quota|usage)/.test(msg)) return true
   if (status === 429 || status === 529) return true
   if (typeof status === 'number' && status >= 500) return true
-  if (e?.name === 'APIConnectionError' || e?.name === 'APIConnectionTimeoutError') return true
-  if (status === undefined && /(timeout|econnreset|socket hang up|fetch failed|network|overloaded|econnrefused)/.test(msg)) return true
+  if (/apiconnectionerror|apiconnectiontimeouterror/.test(name)) return true
+  if (status === undefined && /(timeout|timed out|request timed out|connection error|econnreset|socket hang up|fetch failed|network|overloaded|econnrefused)/.test(msg)) return true
   return false
 }
 
@@ -195,4 +197,61 @@ export async function verifyAnswerResilient(
 ): Promise<{ text: string; verified: boolean }> {
   if (provider === 'gemini') return verifyAnswerGemini(input, { onProgress })
   return verifyAnswer(anthropic, input, onProgress, signal)
+}
+
+export type ResilientChatTurnResult = ChatTurnResult & { provider: Provider; fallback: boolean }
+
+/** Full chat turn over the same resilient provider path used by /api/chat, without SSE/persistence. */
+export async function runChatTurnResilient(
+  anthropic: Anthropic,
+  query: string,
+  opts: { history?: Anthropic.MessageParam[]; model?: string; signal?: AbortSignal; groundingMode?: GroundingMode } = {}
+): Promise<ResilientChatTurnResult> {
+  const model = opts.model ?? chooseChatModel(query)
+  const history: Anthropic.MessageParam[] = opts.history ?? [{ role: 'user', content: query }]
+  const groundingMode = opts.groundingMode ?? 'standard'
+  const loop = await runAgentLoopResilient(
+    anthropic,
+    history,
+    systemPromptForGrounding(groundingMode),
+    model,
+    undefined,
+    opts.signal,
+    { groundingMode }
+  )
+  const { text: answer, verified } = await verifyAnswerResilient(
+    anthropic,
+    { query, draft: loop.message, sources: loop.sources, toolCalls: loop.toolCalls, evidence: loop.searchEvidence, groundingMode },
+    loop.provider,
+    undefined,
+    opts.signal
+  )
+  const guarded = await enforcePostAnswerGuards({
+    query,
+    answer,
+    sources: loop.sources,
+    toolCalls: loop.toolCalls,
+    degraded: loop.degraded,
+    injectionFlagged: loop.injectionFlagged,
+    retrievalIncomplete: loop.retrievalIncomplete,
+    groundingMode,
+  })
+  return {
+    answer: guarded.answer,
+    verified,
+    sources: guarded.sources,
+    toolCalls: guarded.toolCalls,
+    degraded: guarded.degraded,
+    injectionFlagged: guarded.injectionFlagged,
+    truncated: loop.truncated,
+    retrievalIncomplete: guarded.retrievalIncomplete,
+    unreviewedUsed: guarded.sources.filter((s) => {
+      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
+      return rs === 'needs_review' || rs === 'pending'
+    }).length,
+    model: loop.provider === 'gemini' ? GEMINI_CHAT_MODEL : model,
+    entities: detectEntities(query),
+    provider: loop.provider,
+    fallback: loop.provider === 'gemini',
+  }
 }

@@ -1,5 +1,5 @@
 // Fast, deterministic behavioral gate for SYSTEM_PROMPT changes (complements the heavier, judge-based
-// eval:answers). Runs the real chat agent (runChatTurn = loop + verifier) over the cases most sensitive
+// eval:answers). Runs the real chat agent (OpenAI primary loop + verifier) over the cases most sensitive
 // to prompt edits and asserts behavioral signals — does it search? abstain? clarify? mention the key
 // fact? — without the Opus-judge variance. Use it before/after each prompt increment to catch regressions.
 //
@@ -7,7 +7,7 @@
 import { config } from 'dotenv'
 config({ path: '.env.local' })
 import Anthropic from '@anthropic-ai/sdk'
-import { runChatTurn } from '../../src/lib/chat/agent'
+import { runChatTurnOpenAIPrimary } from '../../src/lib/chat/agent-openai'
 
 const ABSTAIN_RE = /(no\s+(?:hay|existe|se\s+(?:han?\s+)?encontr|dispongo|tengo|consta|encuentro)|sin\s+evidencia|not\s+found|no\s+relevant|cannot\s+find|has\s+been\s+found|no\s+he\s+(?:encontrado|hallado)|no\s+.{0,90}(?:exists?|appears?|is\s+(?:found|present)|encontrad\w*)\s+in\s+the\s+.{0,25}corpus|no\s+.{0,30}(?:en\s+el\s+corpus|documental))/i
 const CLARIFY_RE = /(qué\s+proyecto|which\s+project|podrías\s+(?:aclarar|especificar|indicar|concretar)|necesito\s+(?:más|un poco más)|could\s+you\s+(?:clarify|specify)|a\s+qué\s+te\s+refieres|aclarar|especific)/i
@@ -31,7 +31,7 @@ const CASES: Case[] = [
 ]
 
 async function run(c: Case, anthropic: Anthropic) {
-  const r = await runChatTurn(anthropic, c.q)
+  const r = await runChatTurnOpenAIPrimary(anthropic, c.q)
   const tools = r.toolCalls.map(t => t.name)
   const searched = tools.includes('search_documents')
   const abstained = ABSTAIN_RE.test(r.answer)

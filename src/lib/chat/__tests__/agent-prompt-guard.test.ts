@@ -22,6 +22,16 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
   it('preserves abstain — only after an empty search, and not from low-relevance chunks', () => {
     expect(src).toMatch(/Only abstain AFTER search_documents/i)
     expect(src).toMatch(/do NOT manufacture an answer from low-relevance chunks/i)
+    expect(src).toMatch(/named-term ABSENCE check/i)
+    expect(src).toMatch(/Do NOT summarize substitute lenders/i)
+    expect(src).toMatch(/Out-of-scope \/ zero-result abstentions must still run the required search_documents call first/i)
+    expect(src).toMatch(/Do NOT use tangential chunks to educate the user/i)
+  })
+
+  it('pins Birmingham signed-loan lender/borrower answers to the VSORE/WPH agreement', () => {
+    expect(src).toMatch(/Birmingham signed-loan lender\/borrower questions/i)
+    expect(src).toMatch(/Loan Agreement_VSORE III/i)
+    expect(src).toMatch(/lender = Varia Structured Opportunities Real Estate III/i)
   })
 
   // Council safe-subset (2026-06-09, eval-gated 0-regression): evidence-discipline + orchestration rules.
@@ -56,5 +66,43 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/systemPromptForGrounding/)
     expect(src).toMatch(/official_only: search_documents returns only source-of-record evidence/)
     expect(src).toMatch(/If strict grounding returns no evidence, abstain/)
+  })
+
+  it('keeps the ETP corpus lane available to documentary tools', () => {
+    expect(src).toMatch(/MAD, BHX, KLP, PHILAE, GVF, ETP/)
+    expect(src).toMatch(/Enea Tech Platform.*ETP/i)
+    expect(src).toMatch(/ALLOWED_PROJECTS = new Set\(\['MAD', 'BHX', 'KLP', 'PHILAE', 'GVF', 'ETP'\]\)/)
+  })
+
+  it('forces unlikely Gemswell factual questions through retrieval before abstaining', () => {
+    expect(src).toMatch(/out-of-scope factual question that still names Gemswell/i)
+    expect(src).toMatch(/Run search_documents once with the named topic first/i)
+    expect(src).toMatch(/merely tangential to the named topic/i)
+  })
+
+  it('routes financial-statement balance questions away from bp_model', () => {
+    expect(src).toMatch(/Financial-statement questions are documentary/i)
+    expect(src).toMatch(/search financial_statements first/i)
+    expect(src).toMatch(/MPSCIERREDEF-2025/i)
+  })
+
+  it('anchors Buenavista financing conditions to the signed participative-credit contract', () => {
+    expect(src).toMatch(/isBuenavistaFinancingConditionsQuery/)
+    expect(src).toMatch(/contrato firmado "MPS_Contrato de Credito Participativo \(Buenavista\)_vFF"/i)
+    expect(src).toMatch(/No uso el importe de 22 M€/i)
+    expect(src).toMatch(/15\.657\.498,18/)
+  })
+
+  it('keeps legal document-location answers scoped to titles and locations', () => {
+    expect(src).toMatch(/LEGAL DOCUMENT-LOCATION questions/i)
+    expect(src).toMatch(/answer ONLY with the document title, project\/entity lane, doc type/i)
+    expect(src).toMatch(/Do NOT add dates, signatories, company structure/i)
+  })
+
+  it('forces SH01 and Companies House search for BHX company-number cap-call questions', () => {
+    expect(src).toMatch(/Birmingham company-number\/capital-call questions/i)
+    expect(src).toMatch(/SH01.*Companies House.*company number/i)
+    expect(src).toMatch(/Do not rely only on capital-call memo chunks/i)
+    expect(src).toMatch(/run a second targeted search_documents query/i)
   })
 })

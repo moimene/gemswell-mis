@@ -22,6 +22,7 @@ describe('isAnthropicUnavailable (fallback trigger)', () => {
     expect(isAnthropicUnavailable({ status: 500 })).toBe(true)
     expect(isAnthropicUnavailable({ status: 503 })).toBe(true)
     expect(isAnthropicUnavailable({ name: 'APIConnectionError', message: 'fetch failed' })).toBe(true)
+    expect(isAnthropicUnavailable({ constructor: { name: 'APIConnectionTimeoutError' }, message: 'Request timed out.' })).toBe(true)
   })
   it('FALSE for a genuine bad request — must NOT mask real bugs', () => {
     expect(isAnthropicUnavailable({ status: 400, error: { message: 'model: invalid model id "claude-foo"' } })).toBe(false)
