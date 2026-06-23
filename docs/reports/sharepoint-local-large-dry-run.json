@@ -1,0 +1,178 @@
+{
+  "at": "2026-06-19T08:10:59.499Z",
+  "apply": false,
+  "total": 21,
+  "summary": {
+    "error": 21
+  },
+  "results": [
+    {
+      "fileName": "2010-EmergeSurf-Interiors-RIBA3-Report-PRINT.pdf",
+      "relPath": "Documentación/CAPEX/Birmingham/Info general/2010-EmergeSurf-Interiors-RIBA3-Report-PRINT.pdf",
+      "projectId": "BHX",
+      "fileSize": 148072616,
+      "status": "error",
+      "error": "source_hash mismatch: 03d84b127965bada71b379440c2ad74fd8f91dc69001859cbd9d698b8fd35877"
+    },
+    {
+      "fileName": "CP9329-PC-AX02-Geotecnia-D01.pdf",
+      "relPath": "Documentación/CAPEX/Madrid/Informes geotécnicos/CP9329-PC-AX02-Geotecnia-D01.pdf",
+      "projectId": "MAD",
+      "fileSize": 181819759,
+      "status": "error",
+      "error": "source_hash mismatch: 96a3789dc53376c9542b9e58d34b622423c64962f95393caeba044c686ae2a74"
+    },
+    {
+      "fileName": "2024.02.04_SW Wave Parks.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/1. BP/OLD/2024.02.04_SW Wave Parks.pptx",
+      "projectId": "GVF",
+      "fileSize": 70679149,
+      "status": "error",
+      "error": "source_hash mismatch: df0cdb3d57a01e6405971580b140acd4eff3238a3a5c875b53f86e8cb480fc93"
+    },
+    {
+      "fileName": "02_PRESENTACION_CONCEPTUAL_Gemswell_Surf RESTAURANTES Y BRANDING .pdf",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/3. ONBOARDING ULLED/Madrid Playa Surf/02_PRESENTACION_CONCEPTUAL_Gemswell_Surf RESTAURANTES Y BRANDING .pdf",
+      "projectId": "MAD",
+      "fileSize": 62651596,
+      "status": "error",
+      "error": "source_hash mismatch: 09e2236844fcbdb1efd319c4db7e82bd0afd2bb1534387b49d845cc73c7382cb"
+    },
+    {
+      "fileName": "Gemswell_Tudor_280426_ENG.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Marcas/Relojes/TUDOR/Gemswell_Tudor_280426_ENG.pptx",
+      "projectId": "GVF",
+      "fileSize": 54127316,
+      "status": "error",
+      "error": "source_hash mismatch: 19a9baa88ed40d35346ddcb1e35249f159bf0b79d3e69518bd508f79f2b2fa83"
+    },
+    {
+      "fileName": "NSN_Credenciales_EN.pdf",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Partners/NSN/NSN_Credenciales_EN.pdf",
+      "projectId": "GVF",
+      "fileSize": 64141347,
+      "status": "error",
+      "error": "source_hash mismatch: c585e57effca643e1348bbbc0bd407375b6357b10d3242b505b2b3fe2d223db7"
+    },
+    {
+      "fileName": "Propuesta_NSN_ParqueOlasMadrid_30_09_24.pdf",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Partners/NSN/Propuesta_NSN_ParqueOlasMadrid_30_09_24.pdf",
+      "projectId": "MAD",
+      "fileSize": 78513231,
+      "status": "error",
+      "error": "source_hash mismatch: 2c0277dee280f01c9c8436d36f2d501459d26ef42297960c0818d64f3e3d645a"
+    },
+    {
+      "fileName": "Gemswell sales materials_ALLIANZ.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Partners/Wasserman/Contrato y Entregables/2.DELIVERABLES/C) GO-TO-MARKET PLAN/Gemswell sales materials_ALLIANZ.pptx",
+      "projectId": "GVF",
+      "fileSize": 57483198,
+      "status": "error",
+      "error": "source_hash mismatch: 7610cf1a17d9abdbdab13b096f718c5d9dffcd5b474140a9f7f0e1c033ccca04"
+    },
+    {
+      "fileName": "Gemswell sales materials_full_final.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Partners/Wasserman/Contrato y Entregables/2.DELIVERABLES/C) GO-TO-MARKET PLAN/Gemswell sales materials_full_final.pptx",
+      "projectId": "GVF",
+      "fileSize": 66505307,
+      "status": "error",
+      "error": "source_hash mismatch: 3a9dc4d1caefaabf07cc48c2a5d78a44854af4b60f9fc869f97bb91b66cf89ab"
+    },
+    {
+      "fileName": "Gemswell sales materials_full_final.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/13. MARKETING/7. SPONSORSHIPS/Partners/Wasserman/Go to Market/Gemswell sales materials_full_final.pptx",
+      "projectId": "GVF",
+      "fileSize": 66505479,
+      "status": "error",
+      "error": "source_hash mismatch: 95f1dc361f7316ba6d80fbea955f4bcb82e41062bc596f825f5ad8451e436145"
+    },
+    {
+      "fileName": "1_SURF KREFELD PRESENTATION_AUGUST 2024.pptx",
+      "relPath": "1. GEMSWELL VENTURES/03. Ventures/14. M&A/3. Surf Kreffeld/DATA/1_SURF KREFELD PRESENTATION_AUGUST 2024.pptx",
+      "projectId": "GVF",
+      "fileSize": 328998492,
+      "status": "error",
+      "error": "source_hash mismatch: 90b64b564a2f5dcfa3e3a4d259588ec7651a3e47f2f66752ac367f6b6380abf3"
+    },
+    {
+      "fileName": "NSN_Credenciales_EN.pdf",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/16. NSN/NSN_Credenciales_EN.pdf",
+      "projectId": "GVF",
+      "fileSize": 64141347,
+      "status": "error",
+      "error": "source_hash mismatch: c585e57effca643e1348bbbc0bd407375b6357b10d3242b505b2b3fe2d223db7"
+    },
+    {
+      "fileName": "Propuesta_NSN_ParqueOlasMadrid_30_09_24.pdf",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/16. NSN/Propuesta_NSN_ParqueOlasMadrid_30_09_24.pdf",
+      "projectId": "MAD",
+      "fileSize": 78513231,
+      "status": "error",
+      "error": "source_hash mismatch: 2c0277dee280f01c9c8436d36f2d501459d26ef42297960c0818d64f3e3d645a"
+    },
+    {
+      "fileName": "Gemswell sales materials_ALLIANZ.pptx",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/24. WASSERMAN/2.DELIVERABLES/C) GO-TO-MARKET PLAN/Gemswell sales materials_ALLIANZ.pptx",
+      "projectId": "GVF",
+      "fileSize": 57483078,
+      "status": "error",
+      "error": "source_hash mismatch: af9513ebe5e83155bc333d9b407f571e0052ce5de0adafdc4bc59ac421c95a9f"
+    },
+    {
+      "fileName": "Gemswell sales materials_full_final.pptx",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/24. WASSERMAN/2.DELIVERABLES/C) GO-TO-MARKET PLAN/Gemswell sales materials_full_final.pptx",
+      "projectId": "GVF",
+      "fileSize": 66505187,
+      "status": "error",
+      "error": "source_hash mismatch: fe27f1c8405edd948506b6ccd1e5f208e31bfa369a111636bbfa92460b72c50c"
+    },
+    {
+      "fileName": "02_PRESENTACION_CONCEPTUAL_Gemswell_Surf RESTAURANTES Y BRANDING .pdf",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/26. EY/EY_CARMEN/Materiales EY/02_PRESENTACION_CONCEPTUAL_Gemswell_Surf RESTAURANTES Y BRANDING .pdf",
+      "projectId": "GVF",
+      "fileSize": 62651596,
+      "status": "error",
+      "error": "source_hash mismatch: 09e2236844fcbdb1efd319c4db7e82bd0afd2bb1534387b49d845cc73c7382cb"
+    },
+    {
+      "fileName": "AAFF Valla Surf Park 8x3 50.pdf",
+      "relPath": "1. GEMSWELL VENTURES/5. Marketing/7. Señaletica/VALLA OBRA 8X3/AAFF Valla Surf Park 8x3 50.pdf",
+      "projectId": "GVF",
+      "fileSize": 391995272,
+      "status": "error",
+      "error": "source_hash mismatch: 351908cbd64f0cba472c921f4ec0ca611c4ffb1f954e624b6484e4e5e7c320f4"
+    },
+    {
+      "fileName": "MOOD- LOS VIAJES DE MIKE.pdf",
+      "relPath": "1. GEMSWELL VENTURES/7. Diseño/1. Mood boards iniciales/MOOD- LOS VIAJES DE MIKE.pdf",
+      "projectId": "GVF",
+      "fileSize": 242730529,
+      "status": "error",
+      "error": "source_hash mismatch: 9b481e8e74598b86712da8a446e3edc023b16fe0de738b48a09e33b4fc303419"
+    },
+    {
+      "fileName": "Paco Lago_Tender F&B_MPS.pdf",
+      "relPath": "1. GEMSWELL VENTURES/7. Diseño/7. Tender F&B + Club + Moodboard/240603/Ofertas/4_Paco Lago (Picatoste)/Paco Lago_Tender F&B_MPS.pdf",
+      "projectId": "GVF",
+      "fileSize": 225490013,
+      "status": "error",
+      "error": "source_hash mismatch: 124d65a00190c72679948c8077dcaa8aa99ddee3eba7456201dd2fb6839a1d7e"
+    },
+    {
+      "fileName": "Biofit_Creds_2024.pdf",
+      "relPath": "1. GEMSWELL VENTURES/7. Diseño/7. Tender F&B + Club + Moodboard/240603/Ofertas/7_Studio Gronda/240614_GRONDA_GEMSWELL Surf House/240614_GRONDA_GEMSWELL Surf House/Collaborators/Biofit_Creds_2024.pdf",
+      "projectId": "GVF",
+      "fileSize": 55828437,
+      "status": "error",
+      "error": "source_hash mismatch: 0442f6d8c0052486f772e5f10c96932f76b8b2b1461804b2774c0c49eddba737"
+    },
+    {
+      "fileName": "240530_Deck Stoneweg.pdf",
+      "relPath": "1. GEMSWELL VENTURES/7. Diseño/7. Tender F&B + Club + Moodboard/240603/Ofertas/8_Sordo Madaleno/Rev0/240530_Deck Stoneweg.pdf",
+      "projectId": "GVF",
+      "fileSize": 329928697,
+      "status": "error",
+      "error": "pdftotext failed with code 99: Syntax Error: Invalid XRef entry 2142\nInternal Error: xref num 2142 not found but needed, try to reconstruct\nSyntax Error: Invalid XRef entry 2142\nSyntax Error: Invalid XRef entry 2088\nSyntax Error: Top-level pages object is wrong type (null)\nCommand Line Error: Wrong page range given: the first page (1) can not be after the last page (0)."
+    }
+  ]
+}
