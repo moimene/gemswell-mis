@@ -7,7 +7,7 @@ import {
   Banknote, Shield, Utensils, Tag, BarChart3,
   AlertTriangle, FileText, MessageSquare, ChevronLeft, ChevronRight,
   Layers, FolderCheck, LogOut, Home, Upload, ClipboardCheck,
-  ChevronDown,
+  ChevronDown, UserCog,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -32,6 +32,12 @@ const navSections: NavSection[] = [
       { label: 'Ingesta documental', href: '/admin/ingest', icon: Upload },
       { label: 'Centro de revisión', href: '/admin/review', icon: ClipboardCheck },
       { label: 'Biblioteca documental', href: '/admin/documents', icon: FolderCheck },
+    ],
+  },
+  {
+    label: 'Administración',
+    items: [
+      { label: 'Usuarios', href: '/admin/users', icon: UserCog },
     ],
   },
   {
