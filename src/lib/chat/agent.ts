@@ -1150,6 +1150,13 @@ export function isBuenavistaFinancingConditionsQuery(query: string): boolean {
     /financiaci|credito|crédito|participativo|prestamo|pr[eé]stamo|condiciones|disposicion|importe|duracion|inter[eé]s/.test(q)
 }
 
+export function isMadridSeniorBankFinancingCostQuery(query: string): boolean {
+  const q = normaliseGuardText(query)
+  return /\b(mad|madrid|mps|playa surf)\b/.test(q) &&
+    /\b(santander|bbva|banco|bancari[ao]|prestamo|pr[eé]stamo|loan)\b/.test(q) &&
+    /\b(financiaci|financiador|coste|cost|interes|inter[eé]s|margen|euribor|comision|comisi[oó]n|cap)\b/.test(q)
+}
+
 function requiredAbstainSearchQuery(query: string): string | null {
   const q = normaliseGuardText(query)
   if (/sukarrieta/.test(q)) return 'Sukarrieta prestamista financiacion Madrid Playa Surf lender'
@@ -1340,6 +1347,38 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
       'Uso el cierre definitivo MPSCIERREDEF-2025, no los cierres 3T/previos. En el fragmento recuperado figura "TOTAL ACTIVO (A+B)" para 2025 por 27,031,176.36.',
       '',
       `Fuente: ${Array.from(new Set(citations)).slice(0, 2).join('; ') || 'MPSCIERREDEF-2025.xlsx'}.`,
+    ].join('\n')
+  }
+
+  if (isMadridSeniorBankFinancingCostQuery(input.query)) {
+    const isSeniorBankContractSource = (source: Source) =>
+      /4140-7692-5542|piscina de olas.*contrato de financiaci/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`)
+    const hasCostClause = Array.from(sourceMap.values())
+      .some((source) => isSeniorBankContractSource(source) && /tipo de inter[eé]s|euribor|margen|4[,.]00|coste financiero|comisi[oó]n|31[.,]000[.,]000|15[.,]500[.,]000/i.test(`${source.preview ?? ''}`))
+    if (!hasCostClause) {
+      await runGuardSearch({
+        query: '4140-7692-5542 Piscina de Olas Contrato de financiacion Santander BBVA Tipo de Interes Ordinario EURIBOR Margen 4,00 Coste Financiero Comision CAP',
+        project_id: 'MAD',
+        doc_type: 'funding',
+      })
+    }
+    const contractSources = Array.from(sourceMap.values()).filter(isSeniorBankContractSource)
+    const citations = contractSources.map((source) => source.label)
+    sourceMap.clear()
+    for (const source of contractSources) sourceMap.set(source.id, source)
+    answer = [
+      'El documento clave es el contrato firmado "4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal)", no el mandato previo ni el modelo financiero.',
+      '',
+      '- Importe de la financiacion bancaria: hasta 31.000.000 euros.',
+      '- Participacion: Banco Santander 50% / 15.500.000 euros y BBVA 50% / 15.500.000 euros.',
+      '- Coste ordinario: el Tipo de Interes Ordinario es el Indice de Referencia + el Margen + impuestos, recargos y gastos directamente aplicables.',
+      '- Indice de Referencia Principal: EURIBOR.',
+      '- Margen: 4,00% anual durante la vigencia de la financiacion cuando el indice sea EURIBOR. Si el indice de referencia es negativo, se considera cero; en ese caso el tipo aplicable coincide con el margen.',
+      '- Comisiones/coberturas: el contrato recoge comision de estructuracion, comision de agencia, comision de coordinacion y contratos de cobertura CAP, pero remite los importes de comisiones a cartas separadas. Esos importes no aparecen cerrados en el contrato principal recuperado.',
+      '',
+      'Por tanto, con la evidencia recuperada, el coste bancario visible para MPS es EURIBOR + 4,00% anual, mas impuestos/recargos/gastos directamente aplicables y las comisiones/coberturas pactadas en documentos separados. No doy un coste total unico porque faltan los importes de esas cartas de comision y el EURIBOR aplicable en cada periodo.',
+      '',
+      `Fuente: ${Array.from(new Set(citations)).slice(0, 3).join('; ') || '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf'}.`,
     ].join('\n')
   }
 

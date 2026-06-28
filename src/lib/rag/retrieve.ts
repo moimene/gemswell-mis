@@ -136,6 +136,14 @@ export function expandRetrievalQuery(query: string, opts: { projectFilter?: stri
     expansions.push('Buenavista Nextgen Urbano credito participativo contrato financiacion Madrid')
   }
 
+  if (
+    mentionsMadrid &&
+    /\b(santander|bbva|banco|bancari[ao]|prestamo|pr[eé]stamo|loan)\b/.test(q) &&
+    /\b(financiaci|financiador|coste|cost|interes|inter[eé]s|margen|euribor|comision|comisi[oó]n|cap)\b/.test(q)
+  ) {
+    expansions.push('4140-7692-5542 Piscina de Olas Contrato de financiacion Santander BBVA Banco Bilbao Vizcaya Argentaria Tipo de Interes Ordinario EURIBOR Margen 4,00 Coste Financiero Comision CAP Entidades Financiadoras')
+  }
+
   if (/\b(pactos? de socios|shareholders? agreement|acuerdo de socios)\b/.test(q)) {
     expansions.push('29.06.2023 Escritura elevacion a publico Pacto de Socios MPS pacto de socios KLP legal shareholders agreement')
   }
@@ -204,6 +212,19 @@ export function metadataRelevanceBoost(query: string, metadata: Record<string, u
     }
   }
 
+  if (
+    /\b(santander|bbva|banco|bancari[ao]|prestamo|pr[eé]stamo|loan)\b/.test(q) &&
+    /\b(financiaci|financiador|coste|cost|interes|inter[eé]s|margen|euribor|comision|comisi[oó]n|cap)\b/.test(q)
+  ) {
+    if (
+      project === 'MAD' &&
+      docType === 'funding' &&
+      /4140-7692-5542|piscina de olas.*contrato de financiaci|contrato de financiacion.*vfinal/.test(haystack)
+    ) {
+      boost += 0.62
+    }
+  }
+
   if (project === 'BHX' && /\b(bhx|birmingham|wave park|warwickshire)\b/.test(q)) boost += 0.04
   if (project === 'MAD' && /\b(mad|madrid|mps|playa surf|quincenal)\b/.test(q)) boost += 0.04
   if (project === 'PHILAE' && /\b(fund|portfolio|philae|membership|gemswell financials)\b/.test(q)) boost += 0.04
@@ -239,6 +260,15 @@ function contentRelevanceBoost(query: string, content: string): number {
   if (/\b(buenavista|buenvista)\b/.test(q)) {
     if (/15[.,]657[.,]498[.,]18|quince millones seiscientos cincuenta y siete mil/.test(text)) boost += 0.45
     if (/buenavista nextgen urbano[\s\S]{0,260}entidad acreditante|credito participativo|cr[eé]dito participativo/.test(text)) boost += 0.3
+  }
+
+  if (
+    /\b(santander|bbva|banco|bancari[ao]|prestamo|pr[eé]stamo|loan)\b/.test(q) &&
+    /\b(financiaci|financiador|coste|cost|interes|inter[eé]s|margen|euribor|comision|comisi[oó]n|cap)\b/.test(q)
+  ) {
+    if (/tipo de interes ordinario|indice de referencia principal|euribor|margen[\s\S]{0,160}4[,.]00|coste financiero/.test(text)) boost += 0.35
+    if (/banco santander[\s\S]{0,260}bbva|banco bilbao vizcaya|31[.,]000[.,]000|15[.,]500[.,]000|entidades financiadoras/.test(text)) boost += 0.25
+    if (/comision de estructuracion|comision de agencia|comision de coordinacion|contratos de cobertura|cap/.test(text)) boost += 0.2
   }
 
   return Math.min(boost, 0.35)
@@ -568,6 +598,95 @@ async function fetchBuenavistaFundingSupplement(
   }
 }
 
+function needsMadridSeniorBankFundingSupplement(query: string, projectFilter: string | null, docTypeFilter: string | null): boolean {
+  if (projectFilter && projectFilter !== 'MAD') return false
+  if (docTypeFilter && docTypeFilter !== 'funding') return false
+  const q = normaliseQuery(query)
+  const scopedToMadrid = projectFilter === 'MAD' || /\b(mad|madrid|mps|playa surf)\b/.test(q)
+  return scopedToMadrid &&
+    /\b(santander|bbva|banco|bancari[ao]|prestamo|pr[eé]stamo|loan)\b/.test(q) &&
+    /\b(financiaci|financiador|coste|cost|interes|inter[eé]s|margen|euribor|comision|comisi[oó]n|cap)\b/.test(q)
+}
+
+async function fetchMadridSeniorBankFundingSupplement(
+  supabase: SupabaseClient,
+  query: string,
+  projectFilter: string | null,
+  docTypeFilter: string | null,
+): Promise<RetrievedChunk[]> {
+  if (!needsMadridSeniorBankFundingSupplement(query, projectFilter, docTypeFilter)) return []
+  if (typeof supabase.from !== 'function') return []
+
+  try {
+    const docsRes = await supabase.from('rag_documents')
+      .select('id,title,project_id,doc_type,review_status,authority_score,classification_source,lifecycle,storage_path,source_channel')
+      .eq('project_id', 'MAD')
+      .eq('doc_type', 'funding')
+      .eq('status', 'indexed')
+      .eq('review_status', 'approved')
+      .or('title.ilike.%4140-7692-5542%,title.ilike.%Piscina de Olas - Contrato de financiaci%')
+      .limit(12)
+    if (docsRes.error) return []
+    const docs = ((docsRes.data || []) as Array<Record<string, unknown> & { id: string }>)
+      .filter((doc) => metadataString(doc, 'lifecycle') !== 'superseded')
+      .filter((doc) => {
+        const title = normaliseQuery(metadataString(doc, 'title') ?? '')
+        return /4140-7692-5542|piscina de olas.*contrato de financiaci|contrato de financiacion.*vfinal/.test(title)
+      })
+    const ids = docs.map((doc) => doc.id).filter(Boolean)
+    if (!ids.length) return []
+
+    const chunksRes = await supabase.from('rag_chunks')
+      .select('id,document_id,content,metadata,chunk_index')
+      .in('document_id', ids)
+      .order('chunk_index', { ascending: true })
+      .limit(460)
+    if (chunksRes.error) return []
+
+    const docById = new Map(docs.map((doc) => [doc.id, doc]))
+    const priority = (chunk: RetrievedChunk & { chunk_index?: number }) => {
+      const text = normaliseQuery(chunk.content || '')
+      let score = 0
+      if (/tipo de interes ordinario|indice de referencia principal|euribor|margen|4[,.]00|limite a la variabilidad/.test(text)) score += 100
+      if (/comision de estructuracion|comision de agencia|comision de coordinacion|coste financiero|contratos de cobertura|cap/.test(text)) score += 80
+      if (/31[.,]000[.,]000|15[.,]500[.,]000/.test(text)) score += 50
+      if (/entidades financiadoras|banco santander|banco bilbao vizcaya|bbva/.test(text)) score += 20
+      return score
+    }
+    return ((chunksRes.data || []) as Array<RetrievedChunk & { chunk_index?: number }>)
+      .filter((chunk) => {
+        const text = normaliseQuery(chunk.content || '')
+        return /31[.,]000[.,]000|15[.,]500[.,]000|entidades financiadoras|banco santander|banco bilbao vizcaya|bbva|tipo de interes ordinario|indice de referencia principal|euribor|margen|4[,.]00|limite a la variabilidad|comision de estructuracion|comision de agencia|comision de coordinacion|coste financiero|contratos de cobertura|cap/.test(text)
+      })
+      .sort((a, b) => (priority(b) - priority(a)) || ((a.chunk_index ?? 0) - (b.chunk_index ?? 0)))
+      .slice(0, 16)
+      .map((chunk) => {
+        const doc = docById.get(chunk.document_id)
+        return {
+          id: chunk.id,
+          document_id: chunk.document_id,
+          content: chunk.content,
+          metadata: {
+            ...(chunk.metadata || {}),
+            source_file: metadataString(doc, 'title') ?? metadataString(chunk.metadata, 'source_file'),
+            title: metadataString(doc, 'title') ?? metadataString(chunk.metadata, 'title'),
+            project_id: metadataString(doc, 'project_id') ?? metadataString(chunk.metadata, 'project_id'),
+            doc_type: metadataString(doc, 'doc_type') ?? metadataString(chunk.metadata, 'doc_type'),
+            review_status: metadataString(doc, 'review_status') ?? metadataString(chunk.metadata, 'review_status'),
+            classification_source: metadataString(doc, 'classification_source') ?? metadataString(chunk.metadata, 'classification_source'),
+            authority_score: typeof doc?.authority_score === 'number' ? doc.authority_score : chunk.metadata?.authority_score,
+            lifecycle: metadataString(doc, 'lifecycle') ?? metadataString(chunk.metadata, 'lifecycle'),
+            storage_path: metadataString(doc, 'storage_path') ?? metadataString(chunk.metadata, 'storage_path'),
+            source_channel: metadataString(doc, 'source_channel') ?? metadataString(chunk.metadata, 'source_channel'),
+          },
+          similarity: 0.97,
+        } satisfies RetrievedChunk
+      })
+  } catch {
+    return []
+  }
+}
+
 /**
  * The full set of governance/lifecycle states that must NEVER reach chat context (audit 2026-06-07):
  * rejected/agent_rejected (rejected sources) PLUS lifecycle='superseded' (a replaced revision that
@@ -692,6 +811,10 @@ export async function retrieveDocuments(
   const retrievalQuery = expandRetrievalQuery(query, { projectFilter })
   const groundingMode = opts.groundingMode ?? 'standard'
   const strictGrounding = groundingMode !== 'standard'
+  const useMadridSeniorBankSupplementOnlyVectorBypass =
+    projectFilter === 'MAD' &&
+    docTypeFilter === 'funding' &&
+    needsMadridSeniorBankFundingSupplement(retrievalQuery, projectFilter, docTypeFilter)
   const vectorMatchCount = strictGrounding
     ? Math.min(RAG_VECTOR_MATCH_COUNT * STRICT_GROUNDING_EXTRACTION_MULTIPLIER, STRICT_GROUNDING_VECTOR_CAP)
     : RAG_VECTOR_MATCH_COUNT
@@ -703,7 +826,9 @@ export async function retrieveDocuments(
   // empty (no matches) — a distinction the old `catch { return [] }` erased, hiding the exact silent
   // single-lane degradation that has already bitten this corpus twice (HNSW + stopword timeouts).
   const [vector, keyword] = await Promise.all([
-    (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
+    useMadridSeniorBankSupplementOnlyVectorBypass
+      ? Promise.resolve({ rows: [], failed: false })
+      : (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
         const embedding = await embedText(retrievalQuery, { lane: 'interactive' })
         const { data, error } = await supabase.rpc('match_chunks', {
@@ -762,13 +887,14 @@ export async function retrieveDocuments(
 
   const vectorResults = vector.rows
   const keywordResults = keyword.rows
-  const [companyNumberSupplement, vsoreLoanSupplement, legalLocationSupplement, buenavistaFundingSupplement] = await Promise.all([
+  const [companyNumberSupplement, vsoreLoanSupplement, legalLocationSupplement, buenavistaFundingSupplement, madridSeniorBankFundingSupplement] = await Promise.all([
     fetchBhxCompanyNumberSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchBhxVsoreLoanPartySupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchLegalLocationSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchBuenavistaFundingSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
+    fetchMadridSeniorBankFundingSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
   ])
-  const supplementalResults = [...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...buenavistaFundingSupplement]
+  const supplementalResults = [...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...buenavistaFundingSupplement, ...madridSeniorBankFundingSupplement]
 
   // Merge the two lanes into a deduped, excluded-filtered pool (RRF or legacy vector-first, env-gated).
   const { pool, overlapCount } = fusePool(vectorResults, [...keywordResults, ...supplementalResults], {

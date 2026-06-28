@@ -93,6 +93,13 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/15\.657\.498,18/)
   })
 
+  it('anchors Santander/BBVA bank-cost answers to the signed senior financing contract', () => {
+    expect(src).toMatch(/isMadridSeniorBankFinancingCostQuery/)
+    expect(src).toMatch(/4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion \(vfinal\)/i)
+    expect(src).toMatch(/EURIBOR \+ 4,00% anual/i)
+    expect(src).toMatch(/Banco Santander 50% \/ 15\.500\.000 euros y BBVA 50% \/ 15\.500\.000 euros/i)
+  })
+
   it('keeps legal document-location answers scoped to titles and locations', () => {
     expect(src).toMatch(/LEGAL DOCUMENT-LOCATION questions/i)
     expect(src).toMatch(/answer ONLY with the document title, project\/entity lane, doc type/i)

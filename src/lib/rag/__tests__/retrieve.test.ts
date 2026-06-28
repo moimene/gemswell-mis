@@ -179,6 +179,28 @@ describe('retrieveDocuments', () => {
     expect(ranked[0].id).toBe('contract')
   })
 
+  it('promotes the Santander/BBVA senior financing contract cost clauses over mandate noise', async () => {
+    const vector: Row[] = [
+      {
+        id: 'mandate',
+        document_id: 'd1',
+        content: 'Carta de mandato Santander para estructuracion y coordinacion de una potencial financiacion bancaria.',
+        metadata: { ...approved, project_id: 'MAD', doc_type: 'funding', source_file: 'Mandato Madrid Playa Surf.docx' },
+        similarity: 0.89,
+      },
+      {
+        id: 'contract-cost',
+        document_id: 'd2',
+        content: 'Tipo de Interes Ordinario: Indice de Referencia EURIBOR mas Margen. El Margen es 4,00% anual.',
+        metadata: { ...approved, project_id: 'MAD', doc_type: 'funding', source_file: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf' },
+        similarity: 0.52,
+      },
+    ]
+    const { client } = fakeSupabase(vector, [])
+    const { ranked } = await retrieveDocuments(client, 'cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?')
+    expect(ranked[0].id).toBe('contract-cost')
+  })
+
   it('preserves storage_path metadata on Buenavista supplemental chunks', async () => {
     const docs: DocRow[] = [{
       id: 'doc-bv',
@@ -203,9 +225,41 @@ describe('retrieveDocuments', () => {
     expect(ranked[0].metadata.source_channel).toBe('upload')
   })
 
+  it('preserves metadata on Santander/BBVA senior financing supplemental cost chunks', async () => {
+    const docs: DocRow[] = [{
+      id: 'doc-bank',
+      title: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+      status: 'indexed',
+      review_status: 'approved',
+      authority_score: 95,
+      storage_path: 'uploads/doc-bank/original.pdf',
+      source_channel: 'manual_admin',
+    }]
+    const chunks: Row[] = [{
+      id: 'chunk-bank',
+      document_id: 'doc-bank',
+      content: 'Tipo de Interes Ordinario: Indice de Referencia Principal EURIBOR mas Margen. El Margen es 4,00% anual.',
+      metadata: {},
+    }]
+    const { client } = fakeSupabaseWithTables([], [], docs, chunks)
+    const { ranked } = await retrieveDocuments(client, 'coste financiacion bancaria MPS Santander BBVA')
+    expect(ranked[0].id).toBe('chunk-bank')
+    expect(ranked[0].metadata.storage_path).toBe('uploads/doc-bank/original.pdf')
+    expect(ranked[0].metadata.source_channel).toBe('manual_admin')
+  })
+
   it('does not add Buenavista supplemental chunks under an incompatible explicit project filter', async () => {
     const { client, from } = fakeSupabaseWithTables([], [], [], [])
     const { ranked } = await retrieveDocuments(client, 'Como es la financiacion de Buenvista?', { projectFilter: 'BHX' })
+    expect(ranked).toEqual([])
+    expect(from).not.toHaveBeenCalled()
+  })
+
+  it('does not add Santander/BBVA senior financing supplemental chunks under an incompatible explicit project filter', async () => {
+    const { client, from } = fakeSupabaseWithTables([], [], [], [])
+    const { ranked } = await retrieveDocuments(client, 'coste financiacion bancaria MPS Santander BBVA', { projectFilter: 'BHX' })
     expect(ranked).toEqual([])
     expect(from).not.toHaveBeenCalled()
   })
@@ -242,6 +296,14 @@ describe('retrieveDocuments', () => {
     const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
     expect(matchCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal', match_threshold: 0.18 })
     expect(kwCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal' })
+  })
+
+  it('bypasses the scoped vector lane for deterministic Santander/BBVA bank-cost retrieval', async () => {
+    const { client, rpc } = fakeSupabase([], [])
+    const { diagnostics } = await retrieveDocuments(client, 'coste financiacion bancaria MPS Santander BBVA', { projectFilter: 'MAD', docTypeFilter: 'funding' })
+    expect(rpc.mock.calls.some((c) => c[0] === 'match_chunks')).toBe(false)
+    expect(rpc.mock.calls.some((c) => c[0] === 'keyword_search_chunks')).toBe(true)
+    expect(diagnostics.vectorFailed).toBe(false)
   })
 
   it('expands high-value document aliases before calling vector and keyword RPCs', async () => {
@@ -300,6 +362,13 @@ describe('expandRetrievalQuery', () => {
     expect(expanded).toContain('credito participativo')
   })
 
+  it('adds Santander/BBVA senior financing aliases for MPS bank-cost questions', () => {
+    const expanded = expandRetrievalQuery('cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?')
+    expect(expanded).toContain('4140-7692-5542')
+    expect(expanded).toContain('Tipo de Interes Ordinario')
+    expect(expanded).toContain('EURIBOR')
+  })
+
   it('leaves unrelated queries unchanged', () => {
     expect(expandRetrievalQuery('resumen operativo semanal')).toBe('resumen operativo semanal')
   })
@@ -334,6 +403,21 @@ describe('metadataRelevanceBoost', () => {
       doc_type: 'funding',
     })
     expect(boost).toBeGreaterThanOrEqual(0.6)
+    expect(decoyBoost).toBeLessThan(boost)
+  })
+
+  it('strongly boosts exact Santander/BBVA senior bank financing contract metadata', () => {
+    const boost = metadataRelevanceBoost('coste financiacion bancaria MPS Santander BBVA EURIBOR margen', {
+      source_file: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+    })
+    const decoyBoost = metadataRelevanceBoost('coste financiacion bancaria MPS Santander BBVA EURIBOR margen', {
+      source_file: 'Mandato Madrid Playa Surf.docx',
+      project_id: 'MAD',
+      doc_type: 'funding',
+    })
+    expect(boost).toBeGreaterThanOrEqual(0.62)
     expect(decoyBoost).toBeLessThan(boost)
   })
 

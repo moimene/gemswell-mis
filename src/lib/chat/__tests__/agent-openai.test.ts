@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('../agent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../agent')>()
@@ -13,6 +13,8 @@ import {
   runAgentLoopOpenAIPrimary,
   runOpenAIAgentLoop,
 } from '../agent-openai'
+
+beforeEach(() => vi.clearAllMocks())
 
 function fakeOpenAI(responses: Array<{ output?: unknown[]; output_text?: string; status?: string }>) {
   let i = 0
@@ -126,6 +128,39 @@ describe('runAgentLoopOpenAIPrimary', () => {
     )
     expect(r.provider).toBe('openai')
     expect(r.message).toBe('ok from openai')
+  })
+
+  it('fast-paths MPS Santander/BBVA bank-cost questions through targeted contract searches', async () => {
+    ;(executeTool as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: 'Contrato 4140: Tipo de Interes Ordinario EURIBOR + Margen 4,00%. Banco Santander 15.500.000 y BBVA 15.500.000.',
+      sources: [{
+        id: 's-bank',
+        label: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
+        metadata: { source_file: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf', review_status: 'approved' },
+        preview: 'Tipo de Interes Ordinario EURIBOR Margen 4,00 31.000.000 15.500.000',
+      }],
+      degraded: false,
+      injectionFlagged: false,
+      retrievalIncomplete: false,
+    })
+    const client = fakeOpenAI([{ output_text: 'should not be used' }])
+    const r = await runAgentLoopOpenAIPrimary(
+      { messages: { create: vi.fn() } } as never,
+      [{ role: 'user', content: 'cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?' }],
+      'sys',
+      'claude-sonnet-4-6',
+      undefined,
+      undefined,
+      { groundingMode: 'standard', client: client as never },
+    )
+
+    expect(client.responses.create).not.toHaveBeenCalled()
+    expect(executeTool).toHaveBeenCalledTimes(3)
+    expect((executeTool as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({ project_id: 'MAD', doc_type: 'funding' })
+    expect(JSON.stringify((executeTool as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]))).toContain('4140-7692-5542')
+    expect(r.provider).toBe('openai')
+    expect(r.message).toContain('EURIBOR + 4,00% anual')
+    expect(r.sources.map((s) => s.id)).toEqual(['s-bank'])
   })
 
   it('falls back to Anthropic/Gemini only for OpenAI availability errors', async () => {

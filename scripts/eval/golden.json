@@ -222,6 +222,16 @@
     "notes": "Adversarial relevance test: the answer must be anchored to the signed participative-credit contract, not to the prior Buenavista letter of interest that mentions 22M."
   },
   {
+    "id": "mad-santander-bbva-bank-cost",
+    "question": "cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?",
+    "lang": "es",
+    "category": "funding",
+    "expected_kind": "documentary",
+    "ground_truth": { "expected_doc_ids": ["becaff10-41f7-4175-950d-d70e9a1d3b6b"], "titles": ["4140-7692-5542", "contrato de financiación"], "project_id": "MAD", "doc_type": "funding", "tool": "search_documents", "must_contain": ["EURIBOR", "4,00", "31.000.000", "15.500.000"] },
+    "scoped_filter": { "project_id": "MAD", "doc_type": "funding" },
+    "notes": "Adversarial source-routing test: the chat must identify the signed senior bank-financing contract for Santander/BBVA and recover cost clauses (EURIBOR + 4.00% margin, 31M total split 50/50), not stop at board minutes, mandate letters, BP models or an abstention."
+  },
+  {
     "id": "named-absent-abstain",
     "question": "¿Cómo es la financiación del prestamista Sukarrieta en el proyecto de Madrid?",
     "lang": "es",

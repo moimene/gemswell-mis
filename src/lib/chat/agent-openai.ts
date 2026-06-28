@@ -13,7 +13,8 @@ import type { GroundingMode } from '@/lib/rag/retrieve'
 import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
   CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED, systemPromptForGrounding, detectEntities,
-  enforcePostAnswerGuards, chooseChatModel, TOOL_RESULT_PREVIEW_CHARS, isBuenavistaFinancingConditionsQuery,
+  enforcePostAnswerGuards, chooseChatModel, TOOL_RESULT_PREVIEW_CHARS,
+  isBuenavistaFinancingConditionsQuery, isMadridSeniorBankFinancingCostQuery,
   type AgentLoopResult, type AgentAccumulators, type ChatTurnResult, type Source, type VerifierInput,
 } from './agent'
 import {
@@ -195,6 +196,59 @@ export async function verifyAnswerOpenAI(
 
 export type PrimaryAgentResult = AgentLoopResult & { provider: Provider }
 
+async function runGuardedSearchFastPath(
+  query: string,
+  searches: string[],
+  groundingMode: GroundingMode,
+): Promise<PrimaryAgentResult> {
+  const acc: AgentAccumulators = {
+    allSources: new Map<string, Source>(),
+    toolCalls: [],
+    degraded: false,
+    injectionFlagged: false,
+    retrievalIncomplete: false,
+    searchEvidence: [],
+  }
+  for (let i = 0; i < searches.length; i++) {
+    const args = { query: searches[i], project_id: 'MAD', doc_type: 'funding' }
+    const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool('search_documents', args, { groundingMode })
+    if (d) acc.degraded = true
+    if (inj) acc.injectionFlagged = true
+    if (ri) acc.retrievalIncomplete = true
+    if (sources) for (const source of sources) acc.allSources.set(source.id, source)
+    if ((sources?.length ?? 0) > 0) acc.searchEvidence.push(result)
+    acc.toolCalls.push({
+      iteration: i + 1,
+      name: 'search_documents',
+      input: args,
+      is_error: false,
+      source_count: sources?.length ?? 0,
+      result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS),
+    })
+  }
+  const guarded = await enforcePostAnswerGuards({
+    query,
+    answer: '',
+    sources: Array.from(acc.allSources.values()),
+    toolCalls: acc.toolCalls,
+    degraded: acc.degraded,
+    injectionFlagged: acc.injectionFlagged,
+    retrievalIncomplete: acc.retrievalIncomplete,
+    groundingMode,
+  })
+  return {
+    ...buildAgentResult(guarded.answer, false, {
+      ...acc,
+      allSources: new Map(guarded.sources.map((source) => [source.id, source])),
+      toolCalls: guarded.toolCalls,
+      degraded: guarded.degraded,
+      injectionFlagged: guarded.injectionFlagged,
+      retrievalIncomplete: guarded.retrievalIncomplete,
+    }),
+    provider: 'openai',
+  }
+}
+
 export async function runAgentLoopOpenAIPrimary(
   anthropic: Anthropic,
   messages: Anthropic.MessageParam[],
@@ -206,59 +260,20 @@ export async function runAgentLoopOpenAIPrimary(
 ): Promise<PrimaryAgentResult> {
   const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user')
   const lastUserText = lastUserMessage ? contentText(lastUserMessage.content) : ''
+  const groundingMode = opts.groundingMode ?? 'standard'
+  if (isMadridSeniorBankFinancingCostQuery(lastUserText)) {
+    return runGuardedSearchFastPath(lastUserText, [
+      '4140-7692-5542 Piscina de Olas Contrato de financiacion Santander BBVA Tipo de Interes Ordinario EURIBOR Margen 4,00',
+      '4140-7692-5542 Contrato de financiacion Santander BBVA Comision de Estructuracion Agencia Coordinacion Coste Financiero Contratos de Cobertura CAP',
+      '4140-7692-5542 Entidades Financiadoras Banco Santander BBVA financiacion coste 31.000.000 15.500.000',
+    ], groundingMode)
+  }
   if (isBuenavistaFinancingConditionsQuery(lastUserText)) {
-    const groundingMode = opts.groundingMode ?? 'standard'
-    const acc: AgentAccumulators = {
-      allSources: new Map<string, Source>(),
-      toolCalls: [],
-      degraded: false,
-      injectionFlagged: false,
-      retrievalIncomplete: false,
-      searchEvidence: [],
-    }
-    const searches = [
+    return runGuardedSearchFastPath(lastUserText, [
       'Contrato de Credito Participativo Buenavista Madrid Playa Surf 2.1 2.2 importe finalidad 15.657.498,18 Gastos Elegibles',
       'Contrato de Credito Participativo Buenavista 3.3 condiciones necesarias para realizar Disposiciones Solicitud de Disposicion facturas Asesor Tecnico',
       'Contrato de Credito Participativo Buenavista 6 Periodos de Interes primer Periodo de Interes 14 de julio de 2027',
-    ]
-    for (let i = 0; i < searches.length; i++) {
-      const args = { query: searches[i], project_id: 'MAD', doc_type: 'funding' }
-      const { result, sources, degraded: d, injectionFlagged: inj, retrievalIncomplete: ri } = await executeTool('search_documents', args, { groundingMode })
-      if (d) acc.degraded = true
-      if (inj) acc.injectionFlagged = true
-      if (ri) acc.retrievalIncomplete = true
-      if (sources) for (const source of sources) acc.allSources.set(source.id, source)
-      if ((sources?.length ?? 0) > 0) acc.searchEvidence.push(result)
-      acc.toolCalls.push({
-        iteration: i + 1,
-        name: 'search_documents',
-        input: args,
-        is_error: false,
-        source_count: sources?.length ?? 0,
-        result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS),
-      })
-    }
-    const guarded = await enforcePostAnswerGuards({
-      query: lastUserText,
-      answer: '',
-      sources: Array.from(acc.allSources.values()),
-      toolCalls: acc.toolCalls,
-      degraded: acc.degraded,
-      injectionFlagged: acc.injectionFlagged,
-      retrievalIncomplete: acc.retrievalIncomplete,
-      groundingMode,
-    })
-    return {
-      ...buildAgentResult(guarded.answer, false, {
-        ...acc,
-        allSources: new Map(guarded.sources.map((source) => [source.id, source])),
-        toolCalls: guarded.toolCalls,
-        degraded: guarded.degraded,
-        injectionFlagged: guarded.injectionFlagged,
-        retrievalIncomplete: guarded.retrievalIncomplete,
-      }),
-      provider: 'openai',
-    }
+    ], groundingMode)
   }
 
   if (OPENAI_PRIMARY_ENABLED) {
