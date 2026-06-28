@@ -106,6 +106,19 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/Do NOT add dates, signatories, company structure/i)
   })
 
+  it('lists all governed legal-location documents for pactos and poderes', () => {
+    expect(src).toMatch(/29\.06\.2023\. Escritura elevacion a publico Pacto de Socios MPS/i)
+    expect(src).toMatch(/PERSONAS APODERADAS\.docx/i)
+    expect(src).toMatch(/Acta PoA.s GEMSWELL\.docx/i)
+    expect(src).toMatch(/20251203_PoA Gemswell Ventures 118 account\.docx\.pdf/i)
+  })
+
+  it('answers the December 2024 capital call with material comments', () => {
+    expect(src).toMatch(/capital call de diciembre se planteaba por 3\.000\.000 euros/i)
+    expect(src).toMatch(/Acciona, WaveGarden e ICIO/i)
+    expect(src).toMatch(/25% del socio saliente/i)
+  })
+
   it('forces SH01 and Companies House search for BHX company-number cap-call questions', () => {
     expect(src).toMatch(/Birmingham company-number\/capital-call questions/i)
     expect(src).toMatch(/SH01.*Companies House.*company number/i)

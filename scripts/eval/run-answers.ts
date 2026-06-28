@@ -169,11 +169,7 @@ async function judgeWithOpenAI(system: string, user: string): Promise<JudgedVerd
 }
 
 async function judge(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>): Promise<JudgedVerdict | null> {
-  const dedupedSources = r.sources.filter((s, i, all) => {
-    if (!s.documentId) return true
-    return all.findIndex((candidate) => candidate.documentId === s.documentId) === i
-  })
-  const sourceCards = dedupedSources.slice(0, 24).map((s, i) => ({
+  const sourceCards = r.sources.slice(0, 24).map((s, i) => ({
     i: i + 1,
     document_id: s.documentId,
     label: s.label,

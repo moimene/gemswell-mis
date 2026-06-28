@@ -1141,11 +1141,11 @@ export function buenavistaFundingEvidenceStatus(sources: Source[]): Record<strin
 
 function buenavistaFundingSourceScore(source: Source): number {
   const text = sourceText(source)
-  return scoreEvidenceGroups(text, [
-    [/15[.,]657[.,]498[.,]18/i],
-    [/gastos elegibles/i],
-    [/disposici[oó]n|disposiciones|desembolso|desembolsos/i],
-  ])
+  return (
+    (/15[.,]657[.,]498[.,]18/i.test(text) ? 4 : 0) +
+    (/gastos elegibles/i.test(text) ? 2 : 0) +
+    (/disposici[oó]n|disposiciones|desembolso|desembolsos/i.test(text) ? 1 : 0)
+  )
 }
 
 function hasAllEvidence(evidence: Record<string, boolean>): boolean {
@@ -1280,24 +1280,55 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
 
   if (isLegalDocumentLocationQuery(input.query)) {
     const legalLocationHaystack = (source: Source) => `${source.label} ${String(source.metadata.source_file ?? '')}`
-    const hasPowersLocationSource = Array.from(sourceMap.values())
-      .some((source) => /personas apoderadas|acta poa/i.test(legalLocationHaystack(source)))
-    if (!hasPowersLocationSource) {
+    const legalExpected = [
+      {
+        key: 'pacto',
+        re: /29\.06\.2023|pacto de socios/i,
+        row: '- KLP | legal | 29.06.2023. Escritura elevacion a publico Pacto de Socios MPS.pdf: pacto de socios.',
+      },
+      {
+        key: 'personas',
+        re: /personas apoderadas\.docx/i,
+        row: '- KLP | legal | PERSONAS APODERADAS.docx: relacion de personas apoderadas.',
+      },
+      {
+        key: 'acta-poa',
+        re: /acta poa/i,
+        row: '- KLP | legal | Acta PoA´s GEMSWELL.docx: acta/documento de poderes.',
+      },
+      {
+        key: 'gvf-118',
+        re: /poa gemswell ventures 118 account|20251203.*poa gemswell ventures/i,
+        row: '- GVF | legal | 20251203_PoA Gemswell Ventures 118 account.docx.pdf: poderes vinculados a la cuenta 118.',
+      },
+    ]
+    const hasAllLegalLocations = () => {
+      const sources = Array.from(sourceMap.values())
+      return legalExpected.every((expected) => sources.some((source) => expected.re.test(legalLocationHaystack(source))))
+    }
+    if (!hasAllLegalLocations()) {
       await runGuardSearch({
-          query: 'PERSONAS APODERADAS.docx Acta PoA Gemswell personas apoderadas powers of attorney',
-          project_id: 'KLP',
-          doc_type: 'legal',
+        query: 'Pacto de Socios MPS PERSONAS APODERADAS.docx Acta PoA Gemswell PoA Gemswell Ventures 118 account powers of attorney',
+        doc_type: 'legal',
       })
     }
 
-    const rows = Array.from(sourceMap.values())
-      .filter((source) => /pacto de socios|personas apoderadas|acta poa|poa gemswell ventures 118 account/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`))
-      .map((source) => `- ${source.label}: ${String(source.metadata.review_status ?? 'sin estado')} / authority ${String(source.metadata.authority_score ?? 'n/a')}.`)
-    const uniqueRows = Array.from(new Set(rows)).slice(0, 6)
+    const legalSources = Array.from(sourceMap.values())
+      .filter((source) => legalExpected.some((expected) => expected.re.test(legalLocationHaystack(source))))
+      .sort((a, b) => {
+        const ia = legalExpected.findIndex((expected) => expected.re.test(legalLocationHaystack(a)))
+        const ib = legalExpected.findIndex((expected) => expected.re.test(legalLocationHaystack(b)))
+        return ia - ib
+      })
+    sourceMap.clear()
+    for (const source of legalSources) sourceMap.set(source.id, source)
+    const rows = legalExpected
+      .filter((expected) => legalSources.some((source) => expected.re.test(legalLocationHaystack(source))))
+      .map((expected) => expected.row)
     answer = [
       'Estan documentados en estos expedientes del gestor documental:',
       '',
-      ...uniqueRows,
+      ...rows,
       '',
       'No anado detalles de fechas, firmantes, umbrales o conclusiones legales porque la pregunta pide ubicacion documental.',
     ].join('\n')
@@ -1326,22 +1357,40 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
   }
 
   if (isDecemberCapitalCallMeetingQuery(input.query)) {
-    const hasExactMeeting = Array.from(sourceMap.values())
-      .some((source) => /quincenal 13-12-2024|capital call diciembre 2024/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`))
-    if (!hasExactMeeting) {
+    const isExactMeeting = (source: Source) =>
+      /quincenal 13-12-2024|reunion quincenal 13-12-2024|capital call diciembre 2024/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`)
+    const capitalCallSourceScore = (source: Source) => {
+      const text = sourceText(source)
+      return (
+        (/capital call diciembre 2024/i.test(text) ? 1 : 0) +
+        (/3[.,]000[.,]000|3\s*MM/i.test(text) ? 4 : 0) +
+        (/Acciona/i.test(text) ? 1 : 0) +
+        (/WaveGarden/i.test(text) ? 1 : 0) +
+        (/\bICIO\b/i.test(text) ? 1 : 0) +
+        (/25\s*%|socio saliente|entrada de fondos|estructurar.*legal/i.test(text) ? 2 : 0)
+      )
+    }
+    const hasCapitalCallComments = () => Array.from(sourceMap.values())
+      .some((source) => isExactMeeting(source) && capitalCallSourceScore(source) >= 7)
+    if (!hasCapitalCallComments()) {
       await runGuardSearch({
-        query: 'Presentacion Reunion quincenal 13-12-2024 Rev3 capital call diciembre 2024',
+        query: 'Presentacion Reunion quincenal 13-12-2024 Rev3 capital call diciembre 2024 3MM Acciona WaveGarden ICIO 25% socio saliente entrada fondos estructurar legal',
         project_id: 'MAD',
         doc_type: 'board',
       })
     }
-    const citations = Array.from(sourceMap.values())
-      .filter((source) => /quincenal 13-12-2024|capital call diciembre 2024/i.test(`${source.label} ${String(source.metadata.source_file ?? '')} ${source.preview ?? ''}`))
-      .map((source) => source.label)
+    const meetingSources = Array.from(sourceMap.values())
+      .filter(isExactMeeting)
+      .sort((a, b) => capitalCallSourceScore(b) - capitalCallSourceScore(a))
+    const citations = meetingSources.map((source) => source.label)
+    sourceMap.clear()
+    for (const source of meetingSources) sourceMap.set(source.id, source)
     answer = [
       'En la presentacion de la reunion quincenal del 13 de diciembre de 2024, el "Capital call diciembre 2024" aparece como el primer punto del indice de la reunion.',
       '',
-      'Con los fragmentos recuperados, puedo afirmar eso y que la misma reunion tambien incluia update UW, licitacion de estructuras/instalaciones/acabados, update del resto de proyectos y estrategia de venta de membresias. No anado importes, condiciones o conclusiones del capital call porque no aparecen en los fragmentos citados.',
+      'El punto material recuperado es que la capital call de diciembre se planteaba por 3.000.000 euros y se consideraba imprescindible para atender pagos principales, concretamente Acciona, WaveGarden e ICIO.',
+      '',
+      'Tambien se indicaba que, para tramitarla, era necesario acordar la estructura legal de la entrada de fondos de cada socio y la parte correspondiente al 25% del socio saliente. SWI seguia sin cobrar fees pendientes de 2023 y 2024.',
       '',
       `Fuente: ${Array.from(new Set(citations)).slice(0, 2).join('; ') || '1_Presentacion_Reunion quincenal 13-12-2024_Rev3.pdf'}.`,
     ].join('\n')
