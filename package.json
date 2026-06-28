@@ -16,7 +16,8 @@
     "sharepoint:reconcile": "tsx scripts/reconcile-sharepoint-local.ts",
     "ingest:jobs-loop": "tsx scripts/process-ingest-jobs-loop.ts",
     "ingest:jobs-direct": "tsx scripts/direct-ingest-jobs.ts",
-    "sharepoint:ingest-large": "tsx scripts/ingest-sharepoint-large-local.ts"
+    "sharepoint:ingest-large": "tsx scripts/ingest-sharepoint-large-local.ts",
+    "e2e:doc-chat": "tsx scripts/e2e/document-chat.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
@@ -46,6 +47,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "mammoth": "^1.12.0",
+    "playwright": "^1.61.1",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5",
