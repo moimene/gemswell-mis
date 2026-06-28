@@ -37,8 +37,10 @@ type IngestJobRow = {
 type CleanupState = {
   fileName: string
   jobId: string | null
+  extraJobIds: Set<string>
   documentId: string | null
   storagePaths: Set<string>
+  documentMayBeMissing?: boolean
 }
 
 type DocumentGovernanceSnapshot = {
@@ -49,6 +51,15 @@ type DocumentGovernanceSnapshot = {
   authority_score: number | null
   authority_tier: string | null
   status: string | null
+}
+
+type ProcessedJobResult = {
+  status: 'done' | 'error'
+  documentId: string | null
+  chunks: number
+  parser: string | null
+  storagePath: string
+  error?: string
 }
 
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
@@ -148,7 +159,7 @@ async function screenshot(page: Page, name: string): Promise<string> {
   return file
 }
 
-async function processJobById(sb: SupabaseClient, jobId: string): Promise<{ documentId: string; chunks: number; parser: string | null; storagePath: string }> {
+async function processJobById(sb: SupabaseClient, jobId: string, opts: { allowError?: boolean } = {}): Promise<ProcessedJobResult> {
   const { data: rawRow, error } = await sb
     .from('knowledge_ingest_jobs')
     .select('*')
@@ -208,6 +219,16 @@ async function processJobById(sb: SupabaseClient, jobId: string): Promise<{ docu
         error_message: message,
       })
       .eq('id', jobId)
+    if (opts.allowError) {
+      return {
+        status: 'error',
+        documentId: result.documentId ?? row.document_id,
+        chunks: 0,
+        parser: null,
+        storagePath: row.storage_path,
+        error: message,
+      }
+    }
     throw new Error(message)
   }
 
@@ -227,6 +248,7 @@ async function processJobById(sb: SupabaseClient, jobId: string): Promise<{ docu
   if (finished.error) throw new Error(`knowledge_ingest_jobs done update failed: ${finished.error.message}`)
 
   return {
+    status: 'done',
     documentId: result.documentId,
     chunks: result.chunks ?? 0,
     parser: result.parser ?? null,
@@ -265,25 +287,40 @@ async function cleanupUpload(sb: SupabaseClient, state: CleanupState): Promise<R
       .select('id, title, storage_path, md_path')
       .eq('id', state.documentId)
       .maybeSingle()
-    const title = typeof doc?.title === 'string' ? doc.title : null
-    if (title === state.fileName) {
-      for (const path of [doc?.storage_path, doc?.md_path]) {
-        if (typeof path === 'string' && path.length > 0) state.storagePaths.add(path)
-      }
-      await sb.from('rag_chunks').delete().eq('document_id', state.documentId)
-      await sb.from('rag_document_events').delete().eq('document_id', state.documentId)
-      const deleted = await sb.from('rag_documents').delete().eq('id', state.documentId)
-      if (deleted.error) details.documentDeleteError = deleted.error.message
-      else details.documentDeleted = true
+    if (!doc && state.documentMayBeMissing) {
+      details.documentDeleted = true
+      details.documentAlreadyMissing = true
     } else {
-      details.documentDeleteSkipped = `title mismatch: ${title ?? '(missing)'}`
+      const title = typeof doc?.title === 'string' ? doc.title : null
+      if (title === state.fileName) {
+        for (const path of [doc?.storage_path, doc?.md_path]) {
+          if (typeof path === 'string' && path.length > 0) state.storagePaths.add(path)
+        }
+        await sb.from('rag_chunks').delete().eq('document_id', state.documentId)
+        await sb.from('rag_document_events').delete().eq('document_id', state.documentId)
+        const deleted = await sb.from('rag_documents').delete().eq('id', state.documentId)
+        if (deleted.error) details.documentDeleteError = deleted.error.message
+        else details.documentDeleted = true
+      } else {
+        details.documentDeleteSkipped = `title mismatch: ${title ?? '(missing)'}`
+      }
     }
+  } else {
+    details.documentDeleted = true
+    details.noDocumentToDelete = true
   }
 
-  if (state.jobId) {
-    const deleted = await sb.from('knowledge_ingest_jobs').delete().eq('id', state.jobId)
+  const jobIds = [state.jobId, ...state.extraJobIds].filter((id): id is string => typeof id === 'string' && id.length > 0)
+  if (jobIds.length > 0) {
+    const deleted = await sb.from('knowledge_ingest_jobs').delete().in('id', jobIds)
     if (deleted.error) details.jobDeleteError = deleted.error.message
-    else details.jobDeleted = true
+    else {
+      details.jobDeleted = true
+      details.jobDeletedCount = jobIds.length
+    }
+  } else {
+    details.jobDeleted = true
+    details.jobDeletedCount = 0
   }
 
   const paths = [...state.storagePaths].filter((path) => path.startsWith('uploads/') || path.startsWith('artifacts/'))
@@ -312,8 +349,13 @@ async function main() {
     'El texto supera el minimo de extraccion y debe quedar disponible como fragmento del corpus tras procesar el job.',
   ].join('\n')
   writeFileSync(tempFile, content, 'utf8')
+  const failedToken = `BAD${randomBytes(5).toString('hex').toUpperCase()}`
+  const failedFileName = `codex-e2e-failed-ingest-${Date.now()}-${failedToken}.pdf`
+  const failedTempFile = join(tmpdir(), failedFileName)
+  writeFileSync(failedTempFile, `not-a-valid-pdf-${failedToken}`, 'utf8')
 
-  const cleanupState: CleanupState = { fileName, jobId: null, documentId: null, storagePaths: new Set() }
+  const cleanupState: CleanupState = { fileName, jobId: null, extraJobIds: new Set(), documentId: null, storagePaths: new Set() }
+  let failedCleanupState: CleanupState | null = null
   const tempEmail = `codex-e2e-${Date.now()}@gemswell.local`
   const tempPassword = `CodexE2E-${randomBytes(12).toString('hex')}!aA1`
   let tempUserId: string | null = null
@@ -402,6 +444,7 @@ async function main() {
     })
 
     const processed = await processJobById(supabase, jobId)
+    if (processed.status !== 'done' || !processed.documentId) throw new Error(`Expected successful ingest, got ${processed.status}`)
     cleanupState.documentId = processed.documentId
     cleanupState.storagePaths.add(processed.storagePath)
     results.push({
@@ -538,6 +581,151 @@ async function main() {
       ok: download.status() === 302,
       details: { status: download.status(), location: download.headers().location ? 'present' : 'missing' },
     })
+
+    failedCleanupState = {
+      fileName: failedFileName,
+      jobId: null,
+      extraJobIds: new Set(),
+      documentId: null,
+      storagePaths: new Set(),
+    }
+
+    await documentPage.goto(`${baseUrl}/admin/ingest`, { waitUntil: 'networkidle' })
+    await documentPage.waitForSelector('text=Ingesta documental')
+    const failedSignResponsePromise = documentPage.waitForResponse((resp) =>
+      resp.url().includes('/api/knowledge/upload/sign') && resp.request().method() === 'POST',
+      { timeout: 120_000 },
+    )
+    const failedJobResponsePromise = documentPage.waitForResponse((resp) =>
+      resp.url().includes('/api/knowledge/ingest/jobs') && resp.request().method() === 'POST',
+      { timeout: 120_000 },
+    )
+    await documentPage.locator('input[type="file"]').setInputFiles(failedTempFile)
+    await documentPage.locator('select').nth(0).selectOption('MAD')
+    await documentPage.locator('select').nth(1).selectOption('funding')
+    await documentPage.getByRole('button', { name: /Subir y encolar/i }).click()
+
+    const failedSignPayload = await (await failedSignResponsePromise).json() as { path?: string }
+    if (failedSignPayload.path) failedCleanupState.storagePaths.add(failedSignPayload.path)
+    const failedJobPayload = await (await failedJobResponsePromise).json() as { job?: { id?: string; status?: string } }
+    const failedJobId = failedJobPayload.job?.id
+    if (!failedJobId) throw new Error('Failed upload did not return a job id')
+    failedCleanupState.jobId = failedJobId
+    await documentPage.waitForFunction(
+      (file) => document.body.innerText.includes(file) && /encolado|cola/i.test(document.body.innerText),
+      failedFileName,
+      { timeout: 60_000 },
+    )
+    results.push({
+      step: 'failed-ingest-ui-enqueues-upload',
+      ok: true,
+      details: { fileName: failedFileName, jobId: failedJobId, storagePath: failedSignPayload.path ?? null },
+      screenshot: await screenshot(documentPage, 'failed-ingest-upload-enqueued'),
+    })
+
+    const failedProcessed = await processJobById(supabase, failedJobId, { allowError: true })
+    if (failedProcessed.documentId) failedCleanupState.documentId = failedProcessed.documentId
+    failedCleanupState.storagePaths.add(failedProcessed.storagePath)
+    if (failedProcessed.status !== 'error' || !failedProcessed.documentId) {
+      throw new Error(`Expected failed ingest, got ${failedProcessed.status}`)
+    }
+    const failedWorkerChecks = {
+      statusIsError: failedProcessed.status === 'error',
+      hasDocumentId: Boolean(failedProcessed.documentId),
+      hasErrorReason: Boolean(failedProcessed.error && failedProcessed.error.length > 0),
+    }
+    results.push({
+      step: 'failed-ingest-worker-records-error',
+      ok: Object.values(failedWorkerChecks).every(Boolean),
+      details: { ...failedWorkerChecks, failedProcessed },
+    })
+
+    await documentPage.goto(`${baseUrl}/admin/ingest`, { waitUntil: 'networkidle' })
+    await documentPage.waitForFunction(
+      (file) => document.body.innerText.includes(file) && /error/i.test(document.body.innerText),
+      failedFileName,
+      { timeout: 90_000 },
+    )
+    const failedJobPanelText = await documentPage.locator('body').innerText()
+    const failedJobChecks = assertText(failedJobPanelText, [
+      ['hasFile', new RegExp(failedFileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))],
+      ['hasErrorStatus', /error/i],
+      ['hasFichaLink', /ficha/i],
+    ])
+    results.push({
+      step: 'failed-ingest-ui-shows-error-link',
+      ok: Object.values(failedJobChecks).every(Boolean),
+      details: failedJobChecks,
+      screenshot: await screenshot(documentPage, 'failed-ingest-job-error'),
+    })
+
+    await documentPage.locator(`a[href="/admin/documents?doc=${failedProcessed.documentId}"]`).first().click()
+    await documentPage.waitForURL(/\/admin\/documents\?doc=/, { timeout: 60_000 })
+    await documentPage.waitForSelector(`text=${failedFileName}`, { timeout: 60_000 })
+    const failedPanelText = await documentPage.locator('aside').filter({ hasText: failedFileName }).innerText()
+    const failedPanelChecks = assertText(failedPanelText, [
+      ['hasFailedIngestNotice', /Ingesta fallida/i],
+      ['hasRetryAction', /Reintentar ingesta/i],
+      ['hasDeleteAction', /Borrar fallido/i],
+      ['hasStoragePath', /uploads\//i],
+    ])
+    results.push({
+      step: 'failed-document-panel-actions',
+      ok: Object.values(failedPanelChecks).every(Boolean),
+      details: failedPanelChecks,
+      screenshot: await screenshot(documentPage, 'failed-document-panel'),
+    })
+
+    const retryResponsePromise = documentPage.waitForResponse((resp) =>
+      resp.url().includes(`/api/knowledge/documents/${failedProcessed.documentId}/retry-ingest`) &&
+      resp.request().method() === 'POST' &&
+      resp.status() === 202,
+      { timeout: 60_000 },
+    )
+    await documentPage.getByRole('button', { name: /Reintentar ingesta/i }).click()
+    const retryPayload = await (await retryResponsePromise).json() as { job?: { id?: string }; alreadyQueued?: boolean }
+    const retryJobId = retryPayload.job?.id
+    if (retryJobId) failedCleanupState.extraJobIds.add(retryJobId)
+    const retryJobDelete = retryJobId
+      ? await supabase.from('knowledge_ingest_jobs').delete().eq('id', retryJobId)
+      : null
+    if (retryJobDelete?.error) throw new Error(`retry job cleanup failed: ${retryJobDelete.error.message}`)
+    const retryChecks = {
+      hasRetryJob: Boolean(retryJobId),
+      newlyQueued: retryPayload.alreadyQueued === false,
+      retryJobDeleted: !retryJobDelete?.error,
+    }
+    results.push({
+      step: 'failed-document-retry-enqueues-job',
+      ok: Object.values(retryChecks).every(Boolean),
+      details: { ...retryChecks, retryJobId },
+    })
+
+    const deleteResponsePromise = documentPage.waitForResponse((resp) =>
+      resp.url().includes(`/api/knowledge/documents/${failedProcessed.documentId}`) &&
+      resp.request().method() === 'DELETE' &&
+      resp.status() === 200,
+      { timeout: 60_000 },
+    )
+    documentPage.once('dialog', async (dialog) => { await dialog.accept() })
+    await documentPage.getByRole('button', { name: /Borrar fallido/i }).click()
+    await deleteResponsePromise
+    failedCleanupState.documentMayBeMissing = true
+    const { data: deletedFailedDoc, error: deletedLookupErr } = await supabase
+      .from('rag_documents')
+      .select('id')
+      .eq('id', failedProcessed.documentId)
+      .maybeSingle()
+    if (deletedLookupErr) throw new Error(`deleted failed document lookup failed: ${deletedLookupErr.message}`)
+    const deleteChecks = {
+      rowDeleted: deletedFailedDoc == null,
+    }
+    results.push({
+      step: 'failed-document-delete-removes-row',
+      ok: Object.values(deleteChecks).every(Boolean),
+      details: deleteChecks,
+      screenshot: await screenshot(documentPage, 'failed-document-deleted'),
+    })
   } catch (err) {
     const bodyText = page ? await page.locator('body').innerText().catch(() => '') : ''
     const failureShot = page ? await screenshot(page, 'failure').catch(() => null) : null
@@ -549,9 +737,29 @@ async function main() {
     }
   } finally {
     if (browser) await browser.close().catch(() => undefined)
-    cleanup = await cleanupUpload(supabase, cleanupState).catch((err) => ({ error: errorMessage(err) }))
+    const cleanupTargets = [cleanupState, failedCleanupState].filter((state): state is CleanupState => Boolean(state))
+    const cleanupResults = []
+    for (const target of cleanupTargets) {
+      cleanupResults.push(await cleanupUpload(supabase, target).catch((err) => ({
+        fileName: target.fileName,
+        error: errorMessage(err),
+      })))
+    }
+    const cleanupOk = cleanupResults.every((item) => {
+      const result = item as Record<string, unknown>
+      return result.documentDeleted === true &&
+        result.jobDeleted === true &&
+        !result.documentDeleteError &&
+        !result.jobDeleteError &&
+        !result.storageRemoveError
+    })
+    cleanup = {
+      ok: cleanupOk,
+      items: cleanupResults,
+    }
     if (tempUserId) await supabase.auth.admin.deleteUser(tempUserId).catch(() => undefined)
     rmSync(tempFile, { force: true })
+    rmSync(failedTempFile, { force: true })
     if (server) {
       server.kill('SIGTERM')
       await new Promise((resolveKill) => setTimeout(resolveKill, 500))
@@ -565,12 +773,11 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 9 &&
+      results.length === 15 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&
-      cleanup?.documentDeleted === true &&
-      cleanup?.jobDeleted === true,
+      cleanup?.ok === true,
     baseUrl,
     results,
     failure,
