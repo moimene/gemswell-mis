@@ -1086,6 +1086,72 @@ function normaliseGuardText(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
+function sourceText(source: Source): string {
+  return `${source.label} ${String(source.metadata.source_file ?? '')} ${String(source.preview ?? '')}`
+}
+
+function sourceEvidenceText(sources: Source[], predicate: (source: Source) => boolean): string {
+  return sources
+    .filter(predicate)
+    .map(sourceText)
+    .join('\n')
+}
+
+function scoreEvidenceGroups(text: string, groups: RegExp[][]): number {
+  return groups.filter((group) => group.every((pattern) => pattern.test(text))).length
+}
+
+export function seniorBankFundingEvidenceStatus(sources: Source[]): Record<string, boolean> {
+  const text = sourceEvidenceText(sources, (source) =>
+    /4140-7692-5542|piscina de olas.*contrato de financiaci/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`),
+  )
+  return {
+    amountAndSplit: /31[.,]000[.,]000/i.test(text) &&
+      /15[.,]500[.,]000/i.test(text) &&
+      /Santander/i.test(text) &&
+      /BBVA/i.test(text),
+    interestAndMargin: /EURIBOR/i.test(text) &&
+      /margen/i.test(text) &&
+      /4[,.]00/i.test(text),
+    ordinaryInterest: /tipo de inter[eé]?s ordinario|coste financiero|[ií]ndice de referencia/i.test(text),
+    feesAndHedges: /comisi[oó]n|estructuraci[oó]n|agencia|coordinaci[oó]n|cobertura|CAP/i.test(text),
+  }
+}
+
+function seniorBankFundingSourceScore(source: Source): number {
+  const text = sourceText(source)
+  return scoreEvidenceGroups(text, [
+    [/31[.,]000[.,]000/i, /15[.,]500[.,]000/i, /Santander/i, /BBVA/i],
+    [/EURIBOR/i, /margen/i, /4[,.]00/i],
+    [/tipo de inter[eé]?s ordinario|coste financiero|[ií]ndice de referencia/i],
+    [/comisi[oó]n|estructuraci[oó]n|agencia|coordinaci[oó]n|cobertura|CAP/i],
+  ])
+}
+
+export function buenavistaFundingEvidenceStatus(sources: Source[]): Record<string, boolean> {
+  const text = sourceEvidenceText(sources, (source) =>
+    /contrato de cr[eé]dito participativo.*buenavista|4148-6073-6102/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`),
+  )
+  return {
+    amount: /15[.,]657[.,]498[.,]18/i.test(text),
+    eligibleCosts: /gastos elegibles/i.test(text),
+    drawdown: /disposici[oó]n|disposiciones|desembolso|desembolsos/i.test(text),
+  }
+}
+
+function buenavistaFundingSourceScore(source: Source): number {
+  const text = sourceText(source)
+  return scoreEvidenceGroups(text, [
+    [/15[.,]657[.,]498[.,]18/i],
+    [/gastos elegibles/i],
+    [/disposici[oó]n|disposiciones|desembolso|desembolsos/i],
+  ])
+}
+
+function hasAllEvidence(evidence: Record<string, boolean>): boolean {
+  return Object.values(evidence).every(Boolean)
+}
+
 function isGroupOnePowersQuery(query: string): boolean {
   const q = normaliseGuardText(query)
   return /personas apoderadas|apoderados|powers? of attorney/.test(q) && /grupo\s*(1|i)\b/.test(q)
@@ -1353,16 +1419,16 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
   if (isMadridSeniorBankFinancingCostQuery(input.query)) {
     const isSeniorBankContractSource = (source: Source) =>
       /4140-7692-5542|piscina de olas.*contrato de financiaci/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`)
-    const hasCostClause = Array.from(sourceMap.values())
-      .some((source) => isSeniorBankContractSource(source) && /tipo de inter[eé]s|euribor|margen|4[,.]00|coste financiero|comisi[oó]n|31[.,]000[.,]000|15[.,]500[.,]000/i.test(`${source.preview ?? ''}`))
-    if (!hasCostClause) {
+    if (!hasAllEvidence(seniorBankFundingEvidenceStatus(Array.from(sourceMap.values())))) {
       await runGuardSearch({
-        query: '4140-7692-5542 Piscina de Olas Contrato de financiacion Santander BBVA Tipo de Interes Ordinario EURIBOR Margen 4,00 Coste Financiero Comision CAP',
+        query: '4140-7692-5542 Piscina de Olas Contrato de financiacion Santander BBVA Tipo de Interes Ordinario EURIBOR Margen 4,00 31.000.000 15.500.000 Comision Estructuracion Agencia Coordinacion Contratos de Cobertura CAP',
         project_id: 'MAD',
         doc_type: 'funding',
       })
     }
-    const contractSources = Array.from(sourceMap.values()).filter(isSeniorBankContractSource)
+    const contractSources = Array.from(sourceMap.values())
+      .filter(isSeniorBankContractSource)
+      .sort((a, b) => seniorBankFundingSourceScore(b) - seniorBankFundingSourceScore(a))
     const citations = contractSources.map((source) => source.label)
     sourceMap.clear()
     for (const source of contractSources) sourceMap.set(source.id, source)
@@ -1385,11 +1451,9 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
   if (isBuenavistaFinancingConditionsQuery(input.query)) {
     const isBuenavistaContractSource = (source: Source) =>
       /contrato de cr[eé]dito participativo.*buenavista|4148-6073-6102/i.test(`${source.label} ${String(source.metadata.source_file ?? '')}`)
-    const hasBuenavistaContract = Array.from(sourceMap.values())
-      .some(isBuenavistaContractSource)
-    if (!hasBuenavistaContract) {
+    if (!hasAllEvidence(buenavistaFundingEvidenceStatus(Array.from(sourceMap.values())))) {
       await runGuardSearch({
-        query: 'Contrato de Credito Participativo Buenavista Madrid Playa Surf importe finalidad condiciones disposicion intereses duracion 15.657.498,18',
+        query: '4148-6073-6102 Contrato de Credito Participativo Buenavista Madrid Playa Surf 15.657.498,18 Gastos Elegibles Disposicion Disposiciones desembolso finalidad condiciones',
         project_id: 'MAD',
         doc_type: 'funding',
       })
@@ -1397,7 +1461,9 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
     const citations = Array.from(sourceMap.values())
       .filter(isBuenavistaContractSource)
       .map((source) => source.label)
-    const contractSources = Array.from(sourceMap.values()).filter(isBuenavistaContractSource)
+    const contractSources = Array.from(sourceMap.values())
+      .filter(isBuenavistaContractSource)
+      .sort((a, b) => buenavistaFundingSourceScore(b) - buenavistaFundingSourceScore(a))
     sourceMap.clear()
     for (const source of contractSources) sourceMap.set(source.id, source)
     answer = [

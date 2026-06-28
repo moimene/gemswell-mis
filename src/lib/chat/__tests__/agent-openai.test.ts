@@ -5,7 +5,7 @@ vi.mock('../agent', async (importOriginal) => {
   return { ...actual, executeTool: vi.fn() }
 })
 
-import { executeTool } from '../agent'
+import { buenavistaFundingEvidenceStatus, executeTool, seniorBankFundingEvidenceStatus } from '../agent'
 import {
   anthropicHistoryToOpenAIInput,
   isOpenAIUnavailable,
@@ -137,7 +137,7 @@ describe('runAgentLoopOpenAIPrimary', () => {
         id: 's-bank',
         label: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
         metadata: { source_file: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf', review_status: 'approved' },
-        preview: 'Tipo de Interes Ordinario EURIBOR Margen 4,00 31.000.000 15.500.000',
+        preview: 'Tipo de Interes Ordinario EURIBOR Margen 4,00 31.000.000 Banco Santander 15.500.000 BBVA 15.500.000 Comision de Estructuracion Agencia Coordinacion Contratos de Cobertura CAP',
       }],
       degraded: false,
       injectionFlagged: false,
@@ -161,6 +161,45 @@ describe('runAgentLoopOpenAIPrimary', () => {
     expect(r.provider).toBe('openai')
     expect(r.message).toContain('EURIBOR + 4,00% anual')
     expect(r.sources.map((s) => s.id)).toEqual(['s-bank'])
+  })
+
+  it('distinguishes contract-title matches from clause-level funding evidence', () => {
+    const buenavistaTitleOnly = [{
+      id: 'bv-title',
+      label: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf',
+      metadata: { source_file: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf' },
+      preview: 'Contrato de Credito Participativo Buenavista.',
+    }] as never
+    expect(buenavistaFundingEvidenceStatus(buenavistaTitleOnly)).toEqual({
+      amount: false,
+      eligibleCosts: false,
+      drawdown: false,
+    })
+
+    const buenavistaWithClauses = [{
+      id: 'bv-evidence',
+      label: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf',
+      metadata: { source_file: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf' },
+      preview: 'Importe maximo 15.657.498,18 euros. Gastos Elegibles. Solicitud de Disposicion y desembolsos.',
+    }] as never
+    expect(buenavistaFundingEvidenceStatus(buenavistaWithClauses)).toEqual({
+      amount: true,
+      eligibleCosts: true,
+      drawdown: true,
+    })
+
+    const seniorWithClauses = [{
+      id: 'senior-evidence',
+      label: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
+      metadata: { source_file: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf' },
+      preview: 'Tipo de Interes Ordinario EURIBOR Margen 4,00 31.000.000 Banco Santander 15.500.000 BBVA 15.500.000 Comision de Estructuracion Agencia Coordinacion Contratos de Cobertura CAP',
+    }] as never
+    expect(seniorBankFundingEvidenceStatus(seniorWithClauses)).toEqual({
+      amountAndSplit: true,
+      interestAndMargin: true,
+      ordinaryInterest: true,
+      feesAndHedges: true,
+    })
   })
 
   it('falls back to Anthropic/Gemini only for OpenAI availability errors', async () => {
