@@ -13,6 +13,13 @@ vi.mock('@/lib/rag/rerank', () => ({
     degraded: false,
   })),
 }))
+vi.mock('@/lib/rag/openai-rerank', () => ({
+  rerankRetrievedChunksWithOpenAI: vi.fn(async (_q: string, chunks: unknown[]) => ({
+    chunks,
+    used: false,
+    model: null,
+  })),
+}))
 
 import {
   retrieveDocuments,
@@ -27,6 +34,7 @@ import {
   RAG_KEYWORD_MATCH_COUNT,
   RAG_VECTOR_MATCH_COUNT,
 } from '@/lib/rag/retrieve'
+import { rerankRetrievedChunksWithOpenAI } from '@/lib/rag/openai-rerank'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
 type DocRow = Record<string, unknown> & { id: string; title?: string; project_id?: string; doc_type?: string }
@@ -82,7 +90,14 @@ function fakeSupabaseWithTables(vectorRows: Row[], keywordRows: Row[], docs: Doc
 
 const approved = { authority_score: 95, review_status: 'approved', classification_source: 'human' }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  ;(rerankRetrievedChunksWithOpenAI as ReturnType<typeof vi.fn>).mockImplementation(async (_q: string, chunks: unknown[]) => ({
+    chunks,
+    used: false,
+    model: null,
+  }))
+})
 
 describe('retrieveDocuments', () => {
   it('merges + dedups vector and keyword pools and counts overlap', async () => {
@@ -248,6 +263,62 @@ describe('retrieveDocuments', () => {
     expect(ranked[0].id).toBe('chunk-bank')
     expect(ranked[0].metadata.storage_path).toBe('uploads/doc-bank/original.pdf')
     expect(ranked[0].metadata.source_channel).toBe('manual_admin')
+  })
+
+  it('uses graph expansion as a third retrieval lane when vector and keyword miss', async () => {
+    const docs: DocRow[] = [{
+      id: 'doc-bank',
+      title: '4140-7692-5542 v 1, Piscina de Olas - Contrato de financiacion (vfinal).pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+      status: 'indexed',
+      review_status: 'approved',
+      authority_score: 95,
+      classification_source: 'agent_reviewed',
+      source_channel: 'manual_admin',
+    }]
+    const chunks: Row[] = [{
+      id: 'chunk-graph-cost',
+      document_id: 'doc-bank',
+      content: 'Tipo de Interes Ordinario: EURIBOR mas Margen 4,00%. Entidades financiadoras Banco Santander y BBVA.',
+      metadata: {},
+    }]
+    const { client } = fakeSupabaseWithTables([], [], docs, chunks)
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'coste financiacion bancaria MPS Santander BBVA EURIBOR margen', {
+      projectFilter: 'MAD',
+      docTypeFilter: 'funding',
+      modelRerank: false,
+    })
+
+    expect(diagnostics.vectorCount).toBe(0)
+    expect(diagnostics.keywordCount).toBe(0)
+    expect(diagnostics.graphCount).toBe(1)
+    expect(diagnostics.graphEntities).toContain('bank:BBVA')
+    expect(ranked[0].id).toBe('chunk-graph-cost')
+    expect(ranked[0].metadata.retrieval_lane).toBe('graph')
+  })
+
+  it('uses the OpenAI chunk reranker before final trust-aware ranking when enabled', async () => {
+    const vector: Row[] = [
+      { id: 'weak', document_id: 'd1', content: 'generic financing mention', metadata: approved, similarity: 0.9 },
+      { id: 'strong', document_id: 'd2', content: 'EURIBOR margen 4,00 coste financiero exacto', metadata: approved, similarity: 0.4 },
+    ]
+    ;(rerankRetrievedChunksWithOpenAI as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_q: string, chunks: Array<Row & { relevanceScore: number }>) => ({
+      chunks: [
+        { ...chunks.find((chunk) => chunk.id === 'strong')!, relevanceScore: 0.99, metadata: { ...chunks.find((chunk) => chunk.id === 'strong')!.metadata, reranked_by: 'openai' } },
+        { ...chunks.find((chunk) => chunk.id === 'weak')!, relevanceScore: 0.2, metadata: { ...chunks.find((chunk) => chunk.id === 'weak')!.metadata, reranked_by: 'openai' } },
+      ],
+      used: true,
+      model: 'gpt-5.5',
+    }))
+
+    const { client } = fakeSupabase(vector, [])
+    const { ranked, diagnostics } = await retrieveDocuments(client, 'coste financiero EURIBOR margen', { modelRerank: true })
+
+    expect(ranked[0].id).toBe('strong')
+    expect(ranked[0].metadata.reranked_by).toBe('openai')
+    expect(diagnostics.modelRerankUsed).toBe(true)
+    expect(diagnostics.modelRerankModel).toBe('gpt-5.5')
   })
 
   it('does not add Buenavista supplemental chunks under an incompatible explicit project filter', async () => {

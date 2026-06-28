@@ -60,10 +60,10 @@ async function patch(id: string, body: PatchBody): Promise<boolean> {
 const DOCTYPES = DOC_TYPE_OPTIONS
 const TIERS = ['audited', 'executed', 'controller', 'board_pack', 'dd_memo', 'internal', 'narrative', 'unverified']
 
-export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; onClose: () => void; onChanged: () => void }) {
+export function DocumentPanel({ docId, targetChunkIndex, onClose, onChanged }: { docId: string; targetChunkIndex?: number | null; onClose: () => void; onChanged: () => void }) {
   const [d, setD] = useState<Detail | null>(null)
   const [loadErr, setLoadErr] = useState<number | null>(null)
-  const [open, setOpen] = useState({ md: false, chunks: false, history: false, reclass: false })
+  const [open, setOpen] = useState({ md: false, chunks: targetChunkIndex != null, history: false, reclass: false })
   const [supersedeOpen, setSupersedeOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
@@ -87,6 +87,14 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
       .catch(() => { if (!cancelled) setLoadErr(0) })
     return () => { cancelled = true }
   }, [docId])
+
+  useEffect(() => {
+    if (!d || targetChunkIndex == null) return
+    setOpen(o => ({ ...o, chunks: true }))
+    window.setTimeout(() => {
+      document.querySelector(`[data-chunk-index="${targetChunkIndex}"]`)?.scrollIntoView({ block: 'center' })
+    }, 50)
+  }, [d, targetChunkIndex])
 
   const act = async (body: PatchBody) => { if (await patch(docId, body)) { await load(); onChanged() } }
 
@@ -269,7 +277,14 @@ export function DocumentPanel({ docId, onClose, onChanged }: { docId: string; on
         </Section>
         <Section title={`Fragmentos (${d.chunks.length})`} open={open.chunks} onToggle={() => setOpen(o => ({ ...o, chunks: !o.chunks }))}>
           {d.chunks_truncated && <p className="mb-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">Mostrando solo los primeros fragmentos; el documento completo tiene más chunks indexados.</p>}
-          <div className="max-h-80 space-y-2 overflow-auto">{d.chunks.map(c => <div key={c.chunk_index} className="rounded border border-slate-200 p-1.5 text-xs"><span className="font-mono text-slate-400">#{c.chunk_index}</span> <span className="text-slate-700">{c.content.slice(0, 240)}</span></div>)}</div>
+          <div className="max-h-80 space-y-2 overflow-auto">{d.chunks.map(c => {
+            const active = targetChunkIndex != null && c.chunk_index === targetChunkIndex
+            return (
+              <div key={c.chunk_index} data-chunk-index={c.chunk_index} className={`rounded border p-1.5 text-xs ${active ? 'border-sky-300 bg-sky-50' : 'border-slate-200'}`}>
+                <span className={`font-mono ${active ? 'text-sky-700' : 'text-slate-400'}`}>#{c.chunk_index}</span> <span className="text-slate-700">{c.content.slice(0, 360)}</span>
+              </div>
+            )
+          })}</div>
         </Section>
         <Section title={`Historial (${d.events.length})`} open={open.history} onToggle={() => setOpen(o => ({ ...o, history: !o.history }))}>
           <ul className="max-h-80 space-y-1 overflow-auto text-xs">{d.events.map((e, i) => <li key={i} className="border-b border-slate-100 py-1"><span className="font-medium text-slate-700">{e.action}</span> {e.field ? <span className="text-slate-500">{e.field}: {e.old_value} → {e.new_value}</span> : null} <span className="text-slate-400">· {e.actor} · {new Date(e.created_at).toLocaleString()}</span>{e.reason ? <div className="text-slate-400">{e.reason}</div> : null}</li>)}</ul>

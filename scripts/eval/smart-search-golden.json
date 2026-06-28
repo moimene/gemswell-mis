@@ -1,0 +1,26 @@
+[
+  {
+    "id": "smart-mad-santander-bbva-cost",
+    "query": "coste financiacion bancaria MPS Santander BBVA",
+    "filters": { "project": "MAD", "doc_type": "funding", "review_status": "approved" },
+    "expected_doc_ids": ["becaff10-41f7-4175-950d-d70e9a1d3b6b"],
+    "must_snippet": ["EURIBOR", "Margen"],
+    "must_entities": ["Banco Santander", "BBVA", "MAD"]
+  },
+  {
+    "id": "smart-mad-buenavista-conditions",
+    "query": "condiciones financiacion Buenavista Madrid credito participativo",
+    "filters": { "project": "MAD", "doc_type": "funding", "review_status": "approved" },
+    "expected_doc_ids": ["502705bf-da6d-44bd-9871-38b1e1a8ab73"],
+    "must_snippet": ["Buenavista", "15.657.498,18"],
+    "must_entities": ["Buenavista", "MAD"]
+  },
+  {
+    "id": "smart-klp-pacto-socios",
+    "query": "pacto de socios Kelpa shareholders agreement",
+    "filters": { "doc_type": "legal", "review_status": "approved" },
+    "expected_doc_ids": ["7346215e-1c19-4165-80ec-012aa4859aa5"],
+    "must_snippet": ["Pacto de Socios"],
+    "must_entities": ["pacto de socios"]
+  }
+]

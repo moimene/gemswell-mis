@@ -296,7 +296,7 @@ export const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'search_documents',
-    description: 'Search the indexed document corpus using hybrid vector + keyword retrieval. Use for any question about document content, terms, conditions, contract clauses, board minutes, reports, permits, due diligence or narrative evidence. IMPORTANT: legal/shareholder/board/financing/fund documents for MAD and BHX are filed under the holding entities KLP/PHILAE/GVF — for those questions OMIT project_id (or set it to the holding entity), do NOT restrict to MAD/BHX or you will miss the authoritative source. Only set project_id=MAD|BHX for project-operational docs (construction drawings, site monitoring).',
+    description: 'Search the indexed document corpus using hybrid vector + keyword + graph retrieval with reranking. Use for any question about document content, terms, conditions, contract clauses, board minutes, reports, permits, due diligence or narrative evidence. IMPORTANT: legal/shareholder/board/financing/fund documents for MAD and BHX are filed under the holding entities KLP/PHILAE/GVF — for those questions OMIT project_id (or set it to the holding entity), do NOT restrict to MAD/BHX or you will miss the authoritative source. Only set project_id=MAD|BHX for project-operational docs (construction drawings, site monitoring).',
     input_schema: {
       type: 'object' as const,
       properties: {

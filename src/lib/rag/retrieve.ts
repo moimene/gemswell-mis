@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedText } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
 import { rankBySourceTrust, rankForStandardGrounding, trustTier } from '@/lib/rag/rank'
+import { expandDocumentGraph } from '@/lib/rag/graph'
+import { rerankRetrievedChunksWithOpenAI } from '@/lib/rag/openai-rerank'
 
 // ─── Shared retrieval core ───────────────────────────────────────────
 // Single source of truth for the documentary retrieval pipeline used by /api/chat's
@@ -27,6 +29,10 @@ export type RetrievalDiagnostics = {
   vectorCount: number
   /** Rows returned by the keyword RPC (keyword_search_chunks). */
   keywordCount: number
+  /** Rows returned by the explicit document-graph expansion lane. */
+  graphCount: number
+  /** Query entities that activated graph expansion. */
+  graphEntities: string[]
   /** Distinct chunks in the merged pool after dedup + excluded-source removal (what gets reranked). */
   poolCount: number
   /** Chunks present in BOTH vector and keyword result sets (retrieval agreement signal). */
@@ -43,6 +49,10 @@ export type RetrievalDiagnostics = {
   groundingMode: GroundingMode
   /** Chunks dropped because the active grounding mode requires stronger governance. */
   groundingFilteredCount: number
+  /** OpenAI chunk reranker was used after hybrid + graph candidate generation. */
+  modelRerankUsed: boolean
+  /** Model name used by the OpenAI chunk reranker, when active. */
+  modelRerankModel: string | null
 }
 
 export type RetrievalResult = {
@@ -55,6 +65,8 @@ export type RetrieveOptions = {
   projectFilter?: string | null
   docTypeFilter?: string | null
   groundingMode?: GroundingMode
+  /** Enables the final OpenAI chunk reranker. Defaults to on outside tests when OPENAI_API_KEY exists. */
+  modelRerank?: boolean
 }
 
 export type GroundingMode = 'standard' | 'trusted_only' | 'official_only'
@@ -514,6 +526,7 @@ async function fetchLegalLocationSupplement(
           classification_source: metadataString(doc, 'classification_source') ?? metadataString(chunk.metadata, 'classification_source'),
           authority_score: typeof doc?.authority_score === 'number' ? doc.authority_score : chunk.metadata?.authority_score,
           lifecycle: metadataString(doc, 'lifecycle') ?? metadataString(chunk.metadata, 'lifecycle'),
+          chunk_index: typeof chunk.chunk_index === 'number' ? chunk.chunk_index : chunk.metadata?.chunk_index,
           storage_path: metadataString(doc, 'storage_path') ?? metadataString(chunk.metadata, 'storage_path'),
           source_channel: metadataString(doc, 'source_channel') ?? metadataString(chunk.metadata, 'source_channel'),
         },
@@ -587,6 +600,7 @@ async function fetchBuenavistaFundingSupplement(
             classification_source: metadataString(doc, 'classification_source') ?? metadataString(chunk.metadata, 'classification_source'),
             authority_score: typeof doc?.authority_score === 'number' ? doc.authority_score : chunk.metadata?.authority_score,
             lifecycle: metadataString(doc, 'lifecycle') ?? metadataString(chunk.metadata, 'lifecycle'),
+            chunk_index: typeof chunk.chunk_index === 'number' ? chunk.chunk_index : chunk.metadata?.chunk_index,
             storage_path: metadataString(doc, 'storage_path') ?? metadataString(chunk.metadata, 'storage_path'),
             source_channel: metadataString(doc, 'source_channel') ?? metadataString(chunk.metadata, 'source_channel'),
           },
@@ -676,6 +690,7 @@ async function fetchMadridSeniorBankFundingSupplement(
             classification_source: metadataString(doc, 'classification_source') ?? metadataString(chunk.metadata, 'classification_source'),
             authority_score: typeof doc?.authority_score === 'number' ? doc.authority_score : chunk.metadata?.authority_score,
             lifecycle: metadataString(doc, 'lifecycle') ?? metadataString(chunk.metadata, 'lifecycle'),
+            chunk_index: typeof chunk.chunk_index === 'number' ? chunk.chunk_index : chunk.metadata?.chunk_index,
             storage_path: metadataString(doc, 'storage_path') ?? metadataString(chunk.metadata, 'storage_path'),
             source_channel: metadataString(doc, 'source_channel') ?? metadataString(chunk.metadata, 'source_channel'),
           },
@@ -887,14 +902,17 @@ export async function retrieveDocuments(
 
   const vectorResults = vector.rows
   const keywordResults = keyword.rows
-  const [companyNumberSupplement, vsoreLoanSupplement, legalLocationSupplement, buenavistaFundingSupplement, madridSeniorBankFundingSupplement] = await Promise.all([
+  const [graphExpansion, companyNumberSupplement, vsoreLoanSupplement, legalLocationSupplement, buenavistaFundingSupplement, madridSeniorBankFundingSupplement] = await Promise.all([
+    expandDocumentGraph(supabase, retrievalQuery, { projectFilter, docTypeFilter }),
     fetchBhxCompanyNumberSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchBhxVsoreLoanPartySupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchLegalLocationSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchBuenavistaFundingSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
     fetchMadridSeniorBankFundingSupplement(supabase, retrievalQuery, projectFilter, docTypeFilter),
   ])
-  const supplementalResults = [...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...buenavistaFundingSupplement, ...madridSeniorBankFundingSupplement]
+  const graphResults = graphExpansion.chunks
+  const graphEntities = graphExpansion.entities.map((entity) => `${entity.kind}:${entity.value}`)
+  const supplementalResults = [...graphResults, ...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...buenavistaFundingSupplement, ...madridSeniorBankFundingSupplement]
 
   // Merge the two lanes into a deduped, excluded-filtered pool (RRF or legacy vector-first, env-gated).
   const { pool, overlapCount } = fusePool(vectorResults, [...keywordResults, ...supplementalResults], {
@@ -909,6 +927,8 @@ export async function retrieveDocuments(
       diagnostics: {
         vectorCount: vectorResults.length,
         keywordCount: keywordResults.length,
+        graphCount: graphResults.length,
+        graphEntities,
         poolCount: 0,
         overlapCount,
         degraded: false,
@@ -917,6 +937,8 @@ export async function retrieveDocuments(
         unreviewedUsed: 0,
         groundingMode,
         groundingFilteredCount: 0,
+        modelRerankUsed: false,
+        modelRerankModel: null,
       },
     }
   }
@@ -929,6 +951,8 @@ export async function retrieveDocuments(
       diagnostics: {
         vectorCount: vectorResults.length,
         keywordCount: keywordResults.length,
+        graphCount: graphResults.length,
+        graphEntities,
         poolCount: 0,
         overlapCount,
         degraded: false,
@@ -937,6 +961,8 @@ export async function retrieveDocuments(
         unreviewedUsed: 0,
         groundingMode,
         groundingFilteredCount,
+        modelRerankUsed: false,
+        modelRerankModel: null,
       },
     }
   }
@@ -952,9 +978,12 @@ export async function retrieveDocuments(
     ? reranked
     : applyRelevanceFloor(reranked, RAG_RELEVANCE_FLOOR, (c) => trustTier(c.metadata) >= 2)
   const boosted = applyMetadataBoost(floored as RankedRetrievedChunk[], retrievalQuery)
+  const modelRerank = await rerankRetrievedChunksWithOpenAI(retrievalQuery, boosted, {
+    enabled: opts.modelRerank ?? true,
+  })
   const ranked = (groundingMode === 'standard'
-    ? rankForStandardGrounding(boosted)
-    : rankBySourceTrust(boosted)
+    ? rankForStandardGrounding(modelRerank.chunks)
+    : rankBySourceTrust(modelRerank.chunks)
   ).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
   const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 
@@ -963,6 +992,8 @@ export async function retrieveDocuments(
     diagnostics: {
       vectorCount: vectorResults.length,
       keywordCount: keywordResults.length,
+      graphCount: graphResults.length,
+      graphEntities,
       poolCount: pool.length,
       overlapCount,
       degraded,
@@ -971,6 +1002,8 @@ export async function retrieveDocuments(
       unreviewedUsed,
       groundingMode,
       groundingFilteredCount,
+      modelRerankUsed: modelRerank.used,
+      modelRerankModel: modelRerank.model,
     },
   }
 }
