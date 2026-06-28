@@ -41,6 +41,16 @@ type CleanupState = {
   storagePaths: Set<string>
 }
 
+type DocumentGovernanceSnapshot = {
+  review_status: string | null
+  classification_source: string | null
+  project_id: string | null
+  doc_type: string | null
+  authority_score: number | null
+  authority_tier: string | null
+  status: string | null
+}
+
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
@@ -222,6 +232,28 @@ async function processJobById(sb: SupabaseClient, jobId: string): Promise<{ docu
     parser: result.parser ?? null,
     storagePath: row.storage_path,
   }
+}
+
+async function fetchGovernanceSnapshot(sb: SupabaseClient, documentId: string): Promise<DocumentGovernanceSnapshot> {
+  const { data, error } = await sb
+    .from('rag_documents')
+    .select('review_status, classification_source, project_id, doc_type, authority_score, authority_tier, status')
+    .eq('id', documentId)
+    .maybeSingle()
+  if (error) throw new Error(`rag_documents governance lookup failed: ${error.message}`)
+  if (!data) throw new Error(`rag_documents row not found: ${documentId}`)
+  return data as DocumentGovernanceSnapshot
+}
+
+async function waitForPatch(page: Page, documentId: string, action: () => Promise<void>) {
+  const responsePromise = page.waitForResponse((resp) =>
+    resp.url().includes(`/api/knowledge/documents/${documentId}`) &&
+    resp.request().method() === 'PATCH' &&
+    resp.status() === 200,
+    { timeout: 60_000 },
+  )
+  await action()
+  await responsePromise
 }
 
 async function cleanupUpload(sb: SupabaseClient, state: CleanupState): Promise<Record<string, unknown>> {
@@ -423,7 +455,84 @@ async function main() {
       screenshot: await screenshot(page, 'documents-upload-detail'),
     })
 
-    const download = await page.request.get(`${baseUrl}/api/knowledge/documents/${processed.documentId}/download`, { maxRedirects: 0 })
+    if (!page) throw new Error('page not initialized')
+    const documentPage = page
+
+    await waitForPatch(documentPage, processed.documentId, async () => {
+      await documentPage.getByRole('button', { name: /Aprobar/i }).click()
+    })
+    await documentPage.waitForFunction(() => /Aprobado/i.test(document.body.innerText), null, { timeout: 60_000 })
+    const approvedState = await fetchGovernanceSnapshot(supabase, processed.documentId)
+    const approvedText = await documentPage.locator('body').innerText()
+    const approvedChecks = {
+      visibleApproved: /Aprobado/i.test(approvedText),
+      rowApproved: approvedState.review_status === 'approved',
+      sourceReviewed: approvedState.classification_source === 'agent_reviewed',
+    }
+    results.push({
+      step: 'documents-governance-approve',
+      ok: Object.values(approvedChecks).every(Boolean),
+      details: { ...approvedChecks, approvedState },
+      screenshot: await screenshot(documentPage, 'documents-governance-approved'),
+    })
+
+    await documentPage.getByRole('button', { name: /Reclasificar/i }).click()
+    await documentPage.locator('aside select').nth(0).selectOption('legal')
+    await documentPage.locator('aside select').nth(1).selectOption('executed')
+    await documentPage.locator('aside input[placeholder^="project_id"]').fill('KLP')
+    await waitForPatch(documentPage, processed.documentId, async () => {
+      await documentPage.getByRole('button', { name: /Aplicar reclasificaci/i }).click()
+    })
+    await documentPage.waitForFunction(() =>
+      /KLP/i.test(document.body.innerText) &&
+      /legal/i.test(document.body.innerText) &&
+      /agent_corrected/i.test(document.body.innerText),
+      null,
+      { timeout: 60_000 },
+    )
+    const reclassifiedState = await fetchGovernanceSnapshot(supabase, processed.documentId)
+    const reclassifiedText = await documentPage.locator('body').innerText()
+    const reclassifiedChecks = {
+      visibleProject: /KLP/i.test(reclassifiedText),
+      visibleDocType: /legal/i.test(reclassifiedText),
+      visibleCorrectedSource: /agent_corrected/i.test(reclassifiedText),
+      rowProject: reclassifiedState.project_id === 'KLP',
+      rowDocType: reclassifiedState.doc_type === 'legal',
+      rowAuthority: reclassifiedState.authority_tier === 'executed' && reclassifiedState.authority_score === 90,
+      rowCorrectedSource: reclassifiedState.classification_source === 'agent_corrected',
+    }
+    results.push({
+      step: 'documents-governance-reclassify',
+      ok: Object.values(reclassifiedChecks).every(Boolean),
+      details: { ...reclassifiedChecks, reclassifiedState },
+      screenshot: await screenshot(documentPage, 'documents-governance-reclassified'),
+    })
+
+    await waitForPatch(documentPage, processed.documentId, async () => {
+      await documentPage.getByRole('button', { name: /Retirar/i }).click()
+    })
+    await documentPage.waitForFunction(() => /Retirado/i.test(document.body.innerText), null, { timeout: 60_000 })
+    const retiredState = await fetchGovernanceSnapshot(supabase, processed.documentId)
+    await waitForPatch(documentPage, processed.documentId, async () => {
+      await documentPage.getByRole('button', { name: /Restaurar/i }).click()
+    })
+    await documentPage.waitForFunction(() => /Retirar/i.test(document.body.innerText), null, { timeout: 60_000 })
+    const restoredState = await fetchGovernanceSnapshot(supabase, processed.documentId)
+    const restoredText = await documentPage.locator('aside').filter({ hasText: fileName }).innerText()
+    const lifecycleChecks = {
+      rowRetired: retiredState.status === 'retired',
+      rowRestored: restoredState.status === 'indexed',
+      visibleRestoredAction: /Retirar/i.test(restoredText),
+      noRetiredBadge: !/Retirado/i.test(restoredText),
+    }
+    results.push({
+      step: 'documents-governance-retire-restore',
+      ok: Object.values(lifecycleChecks).every(Boolean),
+      details: { ...lifecycleChecks, retiredState, restoredState },
+      screenshot: await screenshot(documentPage, 'documents-governance-restored'),
+    })
+
+    const download = await documentPage.request.get(`${baseUrl}/api/knowledge/documents/${processed.documentId}/download`, { maxRedirects: 0 })
     results.push({
       step: 'documents-original-download-link',
       ok: download.status() === 302,
@@ -456,7 +565,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 6 &&
+      results.length === 9 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&
