@@ -320,6 +320,21 @@ async function main() {
     console.log(`  [${pad(kind, 12)}] n=${xs.length} pass ${rate(xs, (x) => x.verdict.verdict === 'pass')} behavior ${rate(xs, (x) => x.verdict.behavior_correct)} F${avg(xs, 'faithfulness').toFixed(1)} C${avg(xs, 'citation_precision').toFixed(1)}`)
   }
 
+  const gateFailures = rows.flatMap((row) => {
+    if (!('verdict' in row) || !row.verdict) return [{ id: row.g.id, reason: 'unscored/error' }]
+    const reasons = [
+      row.verdict.verdict !== 'pass' ? `verdict=${row.verdict.verdict}` : null,
+      !row.verdict.found_ground_truth ? 'missing_ground_truth' : null,
+      !row.verdict.behavior_correct ? 'behavior_incorrect' : null,
+    ].filter((reason): reason is string => Boolean(reason))
+    return reasons.length ? [{ id: row.g.id, reason: reasons.join(',') }] : []
+  })
+  if (gateFailures.length) {
+    console.log('\n── GATE FAILURES ──')
+    for (const failure of gateFailures) console.log(`  ✗ ${failure.id}: ${failure.reason}`)
+    if (process.env.EVAL_ANSWERS_STRICT !== 'false') process.exitCode = 1
+  }
+
   const outDir = resolve(process.cwd(), 'scripts/eval/results')
   mkdirSync(outDir, { recursive: true })
   const outPath = resolve(outDir, `answers-${label}.json`)
