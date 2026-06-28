@@ -17,10 +17,85 @@ type StepResult = {
   screenshot?: string
 }
 
+type SmartSearchScenario = {
+  step: string
+  query: string
+  project: string
+  docType: string
+  expectedDocId: string
+  expectedTitle: RegExp
+  checks: Array<[string, RegExp]>
+  screenshot: string
+}
+
+type ChatScenario = {
+  step: string
+  question: string
+  checks: Array<[string, RegExp]>
+  screenshot: string
+}
+
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-chat')
+
+const smartSearchScenarios: SmartSearchScenario[] = [
+  {
+    step: 'dms-smart-search-santander-bbva',
+    query: 'coste financiacion bancaria MPS Santander BBVA',
+    project: 'MAD',
+    docType: 'funding',
+    expectedDocId: 'becaff10-41f7-4175-950d-d70e9a1d3b6b',
+    expectedTitle: /4140-7692-5542/,
+    checks: [
+      ['hasContract', /4140-7692-5542/],
+      ['hasBanksOrReason', /Santander|BBVA|financiador|financiadoras/i],
+      ['hasGraphBadge', /GRAFO/i],
+      ['hasRerankOrModel', /RERANK|MODELO/i],
+    ],
+    screenshot: 'dms-smart-santander-bbva',
+  },
+  {
+    step: 'dms-smart-search-buenavista',
+    query: 'condiciones financiacion Buenavista Madrid credito participativo',
+    project: 'MAD',
+    docType: 'funding',
+    expectedDocId: '502705bf-da6d-44bd-9871-38b1e1a8ab73',
+    expectedTitle: /4148-6073-6102|Buenavista/i,
+    checks: [
+      ['hasBuenavista', /Buenavista/i],
+      ['hasParticipativeCredit', /participativo|participative|cr[eé]dito/i],
+      ['hasGraphBadge', /GRAFO/i],
+      ['hasRerankOrModel', /RERANK|MODELO/i],
+    ],
+    screenshot: 'dms-smart-buenavista',
+  },
+]
+
+const chatScenarios: ChatScenario[] = [
+  {
+    step: 'chat-answer-santander-bbva',
+    question: 'cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?',
+    checks: [
+      ['hasFinancialTerms', /EURIBOR|Margen|4[,\\.]00/i],
+      ['hasBanks', /Santander|BBVA/i],
+      ['hasSourceTitle', /4140-7692-5542|Contrato de financiaci/i],
+    ],
+    screenshot: 'chat-santander-bbva',
+  },
+  {
+    step: 'chat-answer-buenavista',
+    question: 'Condiciones de la financiación de Buenavista para el proyecto de Madrid',
+    checks: [
+      ['hasBuenavista', /Buenavista/i],
+      ['hasParticipativeCredit', /participativo|cr[eé]dito/i],
+      ['hasAmount', /15[.,]657[.,]498[.,]18/i],
+      ['hasSourceTitle', /4148-6073-6102|Contrato de Cr[eé]dito Participativo/i],
+    ],
+    screenshot: 'chat-buenavista',
+  },
+]
 
 function maskEmail(email: string): string {
   return email.replace(/^(.).+(@.*)$/, '$1***$2')
@@ -108,6 +183,101 @@ function assertText(text: string, checks: Array<[string, RegExp]>): Record<strin
   return Object.fromEntries(checks.map(([name, re]) => [name, re.test(text)]))
 }
 
+async function ensureSmartSearchMode(page: Page) {
+  if (!page.url().startsWith(`${baseUrl}/admin/documents`)) {
+    await page.goto(`${baseUrl}/admin/documents`, { waitUntil: 'networkidle' })
+  }
+  await page.waitForSelector('text=Biblioteca documental')
+  const smartButton = page.getByRole('button', { name: /Inteligente/i })
+  await smartButton.click()
+}
+
+async function runSmartSearch(page: Page, scenario: SmartSearchScenario): Promise<StepResult> {
+  await ensureSmartSearchMode(page)
+  await page.locator('select').nth(0).selectOption('')
+  await page.locator('select').nth(1).selectOption(scenario.docType)
+  await page.locator('select').nth(2).selectOption(scenario.project)
+  const responsePromise = page.waitForResponse((resp) =>
+    resp.url().includes('/api/knowledge/documents/intelligent-search') && resp.status() === 200,
+    { timeout: 180_000 },
+  )
+  await page.getByPlaceholder(/Buscar contenido/i).fill(scenario.query)
+  const response = await responsePromise
+  const payload = await response.json() as {
+    items?: Array<{ id?: string; title?: string | null }>
+    graphUsed?: boolean
+    modelRerankUsed?: boolean
+    modelUsed?: boolean
+  }
+  await page.waitForFunction(
+    (pattern) => new RegExp(pattern, 'i').test(document.body.innerText),
+    scenario.expectedTitle.source,
+    { timeout: 180_000 },
+  )
+  const bodyText = await page.locator('body').innerText()
+  const visibleChecks = assertText(bodyText, scenario.checks)
+  const apiChecks = {
+    topExpectedDoc: payload.items?.[0]?.id === scenario.expectedDocId,
+    graphUsed: payload.graphUsed === true,
+    rerankOrModelUsed: payload.modelRerankUsed === true || payload.modelUsed === true,
+  }
+  const details = { ...visibleChecks, ...apiChecks }
+  return {
+    step: scenario.step,
+    ok: Object.values(details).every(Boolean),
+    details,
+    screenshot: await screenshot(page, scenario.screenshot),
+  }
+}
+
+async function clickFirstSmartSnippet(page: Page): Promise<StepResult> {
+  const snippet = page.locator('button').filter({ hasText: /^#\d+/ }).first()
+  await snippet.click()
+  await page.waitForURL(/doc=.*chunk=/, { timeout: 60_000 })
+  await page.waitForSelector('text=FRAGMENTOS', { timeout: 60_000 })
+  const text = await page.locator('body').innerText()
+  const details = assertText(text, [
+    ['hasDocumentPanel', /MARKDOWN|FRAGMENTOS|HISTORIAL/i],
+    ['hasChunkEvidence', /#\d+|Fragmentos/i],
+  ])
+  return {
+    step: 'dms-smart-snippet-deeplink',
+    ok: Object.values(details).every(Boolean),
+    details,
+    screenshot: await screenshot(page, 'dms-smart-snippet-deeplink'),
+  }
+}
+
+async function sendChatQuestion(page: Page, scenario: ChatScenario): Promise<StepResult> {
+  await page.goto(`${baseUrl}/chat`, { waitUntil: 'networkidle' })
+  await page.waitForSelector('textarea')
+  const newConversation = page.getByRole('button', { name: /Nueva conversación/i })
+  if (await newConversation.count()) await newConversation.click()
+  await page.locator('textarea').fill(scenario.question)
+  await page.locator('textarea').evaluate((el) => {
+    const wrapper = el.closest('.flex.items-end')
+    const button = wrapper?.querySelector('button') as HTMLButtonElement | null
+    if (!button) throw new Error('send button not found')
+    button.click()
+  })
+  await page.waitForFunction(
+    (patterns) => {
+      const text = document.body.innerText
+      return (patterns as string[]).every((pattern) => new RegExp(pattern, 'i').test(text))
+    },
+    scenario.checks.map(([, re]) => re.source),
+    { timeout: 240_000 },
+  )
+  const text = await page.locator('body').innerText()
+  const details = assertText(text, scenario.checks)
+  return {
+    step: scenario.step,
+    ok: Object.values(details).every(Boolean),
+    details,
+    screenshot: await screenshot(page, scenario.screenshot),
+  }
+}
+
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -168,56 +338,13 @@ async function main() {
     await page.waitForSelector('text=Biblioteca documental')
     results.push({ step: 'login-form-temp-admin', ok: true, details: { email: maskEmail(tempEmail) } })
 
-    await page.getByRole('button', { name: /Inteligente/i }).click()
-    await page.locator('select').nth(1).selectOption('funding')
-    await page.locator('select').nth(2).selectOption('MAD')
-    const smartSearch = page.waitForResponse((resp) =>
-      resp.url().includes('/api/knowledge/documents/intelligent-search') && resp.status() === 200,
-      { timeout: 180_000 },
-    )
-    await page.getByPlaceholder(/Buscar contenido/i).fill('coste financiacion bancaria MPS Santander BBVA')
-    await smartSearch
-    await page.waitForSelector('text=4140-7692-5542', { timeout: 180_000 })
-    const dmsText = await page.locator('body').innerText()
-    const dmsChecks = assertText(dmsText, [
-      ['hasContract', /4140-7692-5542/],
-      ['hasBanksOrReason', /Santander|BBVA|financiador|financiadoras/i],
-      ['hasGraphBadge', /GRAFO/i],
-      ['hasRerankOrModel', /RERANK|MODELO/i],
-    ])
-    results.push({
-      step: 'dms-smart-search',
-      ok: Object.values(dmsChecks).every(Boolean),
-      details: dmsChecks,
-      screenshot: await screenshot(page, 'dms-smart-santander-bbva'),
-    })
+    results.push(await runSmartSearch(page, smartSearchScenarios[0]))
+    results.push(await clickFirstSmartSnippet(page))
+    results.push(await runSmartSearch(page, smartSearchScenarios[1]))
 
-    await page.goto(`${baseUrl}/chat`, { waitUntil: 'networkidle' })
-    await page.waitForSelector('textarea')
-    await page.locator('textarea').fill('cual es para mps el coste de la financiacion bancaria del prestamo santander y bbva?')
-    await page.locator('textarea').evaluate((el) => {
-      const wrapper = el.closest('.flex.items-end')
-      const button = wrapper?.querySelector('button') as HTMLButtonElement | null
-      if (!button) throw new Error('send button not found')
-      button.click()
-    })
-    await page.waitForFunction(() => {
-      const text = document.body.innerText
-      return /EURIBOR|Margen|4[,\\.]00|Santander|BBVA/i.test(text) &&
-        /4140-7692-5542|Contrato de financiaci/i.test(text)
-    }, null, { timeout: 240_000 })
-    const chatText = await page.locator('body').innerText()
-    const chatChecks = assertText(chatText, [
-      ['hasFinancialTerms', /EURIBOR|Margen|4[,\\.]00/i],
-      ['hasBanks', /Santander|BBVA/i],
-      ['hasSourceTitle', /4140-7692-5542|Contrato de financiaci/i],
-    ])
-    results.push({
-      step: 'chat-answer',
-      ok: Object.values(chatChecks).every(Boolean),
-      details: chatChecks,
-      screenshot: await screenshot(page, 'chat-santander-bbva'),
-    })
+    for (const scenario of chatScenarios) {
+      results.push(await sendChatQuestion(page, scenario))
+    }
   } catch (err) {
     const bodyText = page ? await page.locator('body').innerText().catch(() => '') : ''
     const failureShot = page ? await screenshot(page, 'failure').catch(() => null) : null
@@ -237,16 +364,22 @@ async function main() {
     }
   }
 
+  const relevantConsoleMessages = consoleMessages
+    .filter((line) => !/favicon|hydration/i.test(line))
+    .slice(0, 12)
+
   const summary = {
-    ok: !failure && results.length === 3 && results.every((result) => result.ok) && failedRequests.length === 0,
+    ok: !failure &&
+      results.length === 2 + smartSearchScenarios.length + chatScenarios.length &&
+      results.every((result) => result.ok) &&
+      failedRequests.length === 0 &&
+      relevantConsoleMessages.length === 0,
     baseUrl,
     results,
     failure,
     tempUserCleaned: Boolean(tempUserId),
     failedRequests,
-    consoleMessages: consoleMessages
-      .filter((line) => !/favicon|hydration/i.test(line))
-      .slice(0, 12),
+    consoleMessages: relevantConsoleMessages,
     artifactDir,
   }
   console.log(JSON.stringify(summary, null, 2))

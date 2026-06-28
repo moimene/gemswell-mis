@@ -35,6 +35,10 @@ type SmartResp = {
 type SearchMode = 'title' | 'smart'
 type SelectedDoc = { id: string; chunkIndex?: number | null }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 const REVIEW_OPTIONS = ['', 'needs_review', 'approved', 'rejected', 'pending']
 const REVIEW_LABELS: Record<string, string> = { needs_review: 'Sin revisar', approved: 'Aprobado', rejected: 'Rechazado', pending: 'Pendiente' }
 const DOCTYPE_OPTIONS = ['', ...DOC_TYPE_OPTIONS]
@@ -78,7 +82,7 @@ export default function DocumentsPage() {
     ].filter(Boolean).join(' ').toLowerCase().includes(term))
   }, [rows, searchMode, searchWithin])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setLoadError(false)
     setChecked(new Set())
@@ -91,6 +95,7 @@ export default function DocumentsPage() {
         const r = await fetch('/api/knowledge/documents/intelligent-search', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
+          signal,
           body: JSON.stringify({
             query: q,
             limit: 25,
@@ -108,6 +113,7 @@ export default function DocumentsPage() {
         })
         if (!r.ok) { setRows([]); setTotal(0); setSmartMeta(null); setLoadError(r.status === 401 ? 'auth' : 'error'); return }
         const j: SmartResp = await r.json()
+        if (signal?.aborted) return
         setRows(j.items ?? []); setTotal(j.total ?? 0)
         setSmartMeta({
           degraded: j.degraded,
@@ -135,13 +141,17 @@ export default function DocumentsPage() {
       if (filters.onlyNoMarkdown) sp.set('onlyNoMarkdown', 'true')
       if (filters.includeRetired) sp.set('includeRetired', 'true')
       if (filters.onlyErrors) sp.set('onlyErrors', 'true')
-      const r = await fetch(`/api/knowledge/documents?${sp.toString()}`)
+      const r = await fetch(`/api/knowledge/documents?${sp.toString()}`, { signal })
       if (!r.ok) { setRows([]); setTotal(0); setLoadError(r.status === 401 ? 'auth' : 'error'); return }
       const j: ListResp = await r.json()
+      if (signal?.aborted) return
       setRows(j.items ?? []); setTotal(j.total ?? 0)
     } catch (e) {
+      if (signal?.aborted || isAbortError(e)) return
       console.error(e); setLoadError('error')
-    } finally { setLoading(false) }
+    } finally {
+      if (!signal?.aborted) setLoading(false)
+    }
   }, [page, filters, searchMode])
 
   function toggleRow(id: string) {
@@ -183,7 +193,11 @@ export default function DocumentsPage() {
     load()
   }
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const controller = new AbortController()
+    load(controller.signal)
+    return () => controller.abort()
+  }, [load])
 
   // Deep-link from a chat citation: /admin/documents?doc=<id> opens that document's detail directly
   // (the panel fetches by id, so it works even when the doc isn't on the current list page). F1.
@@ -207,7 +221,7 @@ export default function DocumentsPage() {
               <button onClick={() => setShowUpload(s => !s)} className="flex items-center gap-2 rounded-md bg-white/10 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/20">
                 <Upload className="h-4 w-4" /> Subir documento
               </button>
-              <button onClick={load} className="flex items-center gap-2 rounded-md border border-white/20 px-3 py-1.5 text-sm text-white hover:bg-white/10">
+              <button onClick={() => load()} className="flex items-center gap-2 rounded-md border border-white/20 px-3 py-1.5 text-sm text-white hover:bg-white/10">
                 <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Actualizar
               </button>
             </>
@@ -370,7 +384,7 @@ export default function DocumentsPage() {
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
             <p className="font-medium">No se pudo cargar el listado{loadError === 'auth' ? ' — la sesión pudo expirar.' : '.'}</p>
             <div className="mt-3 flex items-center gap-3">
-              <button onClick={load} className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-amber-800 hover:bg-amber-100">Reintentar</button>
+              <button onClick={() => load()} className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-amber-800 hover:bg-amber-100">Reintentar</button>
               {loadError === 'auth' && <a href="/login" className="text-amber-700 underline hover:text-amber-900">Iniciar sesión</a>}
             </div>
           </div>
