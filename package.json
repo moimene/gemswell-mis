@@ -17,7 +17,9 @@
     "ingest:jobs-loop": "tsx scripts/process-ingest-jobs-loop.ts",
     "ingest:jobs-direct": "tsx scripts/direct-ingest-jobs.ts",
     "sharepoint:ingest-large": "tsx scripts/ingest-sharepoint-large-local.ts",
-    "e2e:doc-chat": "tsx scripts/e2e/document-chat.ts"
+    "e2e:doc-chat": "tsx scripts/e2e/document-chat.ts",
+    "e2e:doc-ingest": "tsx scripts/e2e/document-ingest.ts",
+    "e2e:documents": "npm run e2e:doc-chat && npm run e2e:doc-ingest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",

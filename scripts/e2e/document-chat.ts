@@ -106,7 +106,7 @@ async function waitForHttp(url: string, timeoutMs = 60_000): Promise<void> {
   while (Date.now() - started < timeoutMs) {
     try {
       const res = await fetch(url, { redirect: 'manual' })
-      if (res.status < 500) return
+      if (res.status >= 200 && res.status < 400) return
     } catch {
       // server not ready yet
     }
