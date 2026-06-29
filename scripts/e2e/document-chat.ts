@@ -130,6 +130,18 @@ const chatSourceLinkScenarios: ChatSourceLinkScenario[] = [
     ],
     screenshot: 'chat-history-source-link-santander-bbva-document',
   },
+  {
+    step: 'chat-source-link-opens-buenavista-document',
+    expectedDocId: '502705bf-da6d-44bd-9871-38b1e1a8ab73',
+    expectedTitle: /4148-6073-6102|Buenavista/i,
+    checks: [
+      ['hasLibrary', /Biblioteca documental/i],
+      ['hasContract', /4148-6073-6102|Buenavista/i],
+      ['hasDocumentPanel', /MARKDOWN|FRAGMENTOS|HISTORIAL/i],
+      ['hasFundingMeta', /funding|financiaci/i],
+    ],
+    screenshot: 'chat-source-link-buenavista-document',
+  },
 ]
 
 function maskEmail(email: string): string {
@@ -509,6 +521,8 @@ async function main() {
       if (scenario.step === 'chat-answer-santander-bbva') {
         results.push(await openChatSourceDeepLink(page, chatSourceLinkScenarios[0]))
         results.push(await restoreChatHistoryAndOpenSourceDeepLink(page, scenario, chatSourceLinkScenarios[1]))
+      } else if (scenario.step === 'chat-answer-buenavista') {
+        results.push(await openChatSourceDeepLink(page, chatSourceLinkScenarios[2]))
       }
     }
   } catch (err) {
