@@ -19,11 +19,40 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 const OPENAI_JUDGE_MODEL = process.env.EVAL_OPENAI_JUDGE_MODEL || process.env.OPENAI_VERIFIER_MODEL || process.env.OPENAI_CHAT_MODEL || 'gpt-5.5'
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || 'claude-opus-4-8'
 const GEMINI_JUDGE_MODEL = process.env.EVAL_GEMINI_JUDGE_MODEL || process.env.GEMINI_VERIFIER_MODEL || 'gemini-2.5-flash'
+const PHASE_TIMEOUT_MS = positiveIntEnv('EVAL_ANSWERS_PHASE_TIMEOUT_MS', 420_000)
 let geminiJudge: GoogleGenAI | null = null
 
 function arg(flag: string): string | undefined {
   const i = process.argv.indexOf(flag)
   return i >= 0 ? process.argv[i + 1] : undefined
+}
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function logProgress(event: string, fields: Record<string, unknown>) {
+  console.log(JSON.stringify({ eval: 'answers', event, at: new Date().toISOString(), ...fields }))
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null
+  const timer = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    timeout.unref?.()
+  })
+  try {
+    return await Promise.race([promise, timer])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 type Verdict = {
@@ -264,23 +293,52 @@ async function main() {
   const skippedLatencyOnly = golden.filter((g) => g.id === 'common-terms-latency')
   golden = golden.filter((g) => g.id !== 'common-terms-latency')
 
-  console.log(`\n=== TIER-B ANSWER EVAL (label=${label}) — ${golden.length} questions, concurrency=${concurrency}, judge=openai:${OPENAI_JUDGE_MODEL} ===\n`)
+  console.log(`\n=== TIER-B ANSWER EVAL (label=${label}) — ${golden.length} questions, concurrency=${concurrency}, judge=openai:${OPENAI_JUDGE_MODEL}, phase_timeout=${PHASE_TIMEOUT_MS}ms ===\n`)
   if (skippedLatencyOnly.length) console.log(`Skipped latency-only retrieval guards: ${skippedLatencyOnly.map((g) => g.id).join(', ')}\n`)
   const cache = new Map<string, DocMeta>()
 
   const rows = await pool(golden, concurrency, async (g) => {
     const t0 = Date.now()
+    logProgress('case_start', { id: g.id, expected_kind: g.expected_kind, category: g.category })
     let r: PrimaryChatTurnResult
     try {
-      r = await runChatTurnOpenAIPrimary(anthropic, g.question)
+      r = await withTimeout(runChatTurnOpenAIPrimary(anthropic, g.question), PHASE_TIMEOUT_MS, `${g.id} answer`)
     } catch (e) {
-      console.log(`${pad(g.id, 22)} ERROR: ${(e as Error).message}`)
-      return { g, error: (e as Error).message }
+      const message = errorMessage(e)
+      logProgress('case_error', { id: g.id, phase: 'answer', ms: Date.now() - t0, error: message })
+      console.log(`${pad(g.id, 22)} ERROR: ${message}`)
+      return { g, error: message }
     }
     const ms = Date.now() - t0
+    logProgress('case_answered', {
+      id: g.id,
+      ms,
+      provider: r.provider,
+      model: r.model,
+      source_count: r.sources.length,
+      tools: r.toolCalls.map((tool) => tool.name),
+      verified: r.verified,
+    })
     await resolveDocMeta(sb, r.sources.map((s) => s.documentId).filter(Boolean) as string[], cache)
     const det = deterministic(g, r, cache)
-    const v = await judge(g, r, cache)
+    const judgeStart = Date.now()
+    logProgress('case_judge_start', { id: g.id, answer_ms: ms })
+    let v: JudgedVerdict | null = null
+    let judgeError: string | undefined
+    try {
+      v = await withTimeout(judge(g, r, cache), PHASE_TIMEOUT_MS, `${g.id} judge`)
+    } catch (e) {
+      judgeError = errorMessage(e)
+      logProgress('case_error', { id: g.id, phase: 'judge', ms: Date.now() - judgeStart, error: judgeError })
+    }
+    logProgress('case_judged', {
+      id: g.id,
+      ms: Date.now() - judgeStart,
+      verdict: v?.verdict ?? null,
+      judge_provider: v?.judge_provider ?? null,
+      judge_model: v?.judge_model ?? null,
+      error: judgeError ?? null,
+    })
     const line = `${pad(g.id, 22)} ${pad(g.expected_kind, 12)} ${padL(ms, 6)}ms verdict=${pad(v?.verdict ?? '?', 5)} ` +
       `F${v?.faithfulness ?? '?'} C${v?.citation_precision ?? '?'} K${v?.completeness ?? '?'} ` +
       `gt=${det.citedExpectedDoc || det.answerHasMustContain || det.usedExpectedTool ? 'Y' : 'n'} ` +

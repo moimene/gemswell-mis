@@ -89,6 +89,9 @@ jobs:
         run: npm run eval:retrieval -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Critical answer eval
+        timeout-minutes: 45
+        env:
+          EVAL_ANSWERS_PHASE_TIMEOUT_MS: '420000'
         run: >
           npm run eval:answers -- live-${{ github.run_id }}-${{ github.run_attempt }}-critical
           --only mad-dec-capitalcall,cross-project-legal,mad-buenavista-conditions,mad-santander-bbva-bank-cost,named-absent-abstain,zero-ski,ambiguous-cost
