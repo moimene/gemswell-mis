@@ -12,6 +12,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { runChatTurnOpenAIPrimary } from '../../src/lib/chat/agent-openai'
 
 const PHASE_TIMEOUT_MS = positiveIntEnv('EVAL_PROMPT_BEHAVIOR_PHASE_TIMEOUT_MS', 300_000)
+const RETRIES = positiveIntEnv('EVAL_PROMPT_BEHAVIOR_RETRIES', 2)
+const RETRY_DELAY_MS = positiveIntEnv('EVAL_PROMPT_BEHAVIOR_RETRY_DELAY_MS', 2_500)
 const ABSTAIN_RE = /(no\s+(?:hay|existe|se\s+(?:han?\s+)?encontr|dispongo|tengo|consta|encuentro)|sin\s+evidencia|no\s+evidence|there\s+(?:is|was)\s+no\s+(?:specific\s+)?(?:documentary\s+)?evidence|(?:do|did)\s+not\s+find(?:\s+\w+){0,4}\s+evidence|(?:do|did)\s+not\s+find(?:\s+\w+){0,10}\s+(?:policy|treasury|hedging)|found\s+no\s+(?:documentary\s+)?evidence|no\s+documentary\s+evidence|not\s+found|no\s+relevant|cannot\s+find|has\s+been\s+found|no\s+he\s+(?:encontrado|hallado)|no\s+.{0,90}(?:exists?|appears?|is\s+(?:found|present)|encontrad\w*)\s+in\s+the\s+.{0,25}corpus|no\s+.{0,30}(?:en\s+el\s+corpus|documental))/i
 const CLARIFY_RE = /(qué\s+proyecto|which\s+project|podrías\s+(?:aclarar|especificar|indicar|concretar)|necesito\s+(?:más|un poco más)|could\s+you\s+(?:clarify|specify)|a\s+qué\s+te\s+refieres|te\s+refieres\s+(?:a|al|a\s+la|a\s+los|a\s+las)|aclarar|especific)/i
 
@@ -61,6 +63,15 @@ export function isAbstentionText(text: string): boolean {
   return ABSTAIN_RE.test(normalizeBehaviorText(text))
 }
 
+export function isTransientEvalErrorMessage(message: string): boolean {
+  if (/insufficient_quota|quota_or_billing|billing/i.test(message)) return false
+  return /\b(?:502|503|504)\b|UNAVAILABLE|temporar(?:y|ily)|timed out|timeout|ETIMEDOUT|ECONNRESET|socket hang up/i.test(message)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+}
+
 async function withTimeout<T>(
   run: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
@@ -100,6 +111,23 @@ async function run(c: Case, anthropic: Anthropic, signal: AbortSignal) {
   return { id: c.id, pass: fail.length === 0, tools, sources: r.sources.length, checks, fail, snippet: r.answer.slice(0, 120).replace(/\n/g, ' ') }
 }
 
+async function runWithRetries(c: Case, anthropic: Anthropic) {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= RETRIES + 1; attempt++) {
+    try {
+      const result = await withTimeout((signal) => run(c, anthropic, signal), PHASE_TIMEOUT_MS, `${c.id} prompt behavior`)
+      return { ...result, attempts: attempt }
+    } catch (err) {
+      lastError = err
+      const message = errorMessage(err)
+      if (attempt > RETRIES || !isTransientEvalErrorMessage(message)) throw err
+      logProgress('case_retry', { id: c.id, attempt, nextAttempt: attempt + 1, error: message })
+      await sleep(RETRY_DELAY_MS * attempt)
+    }
+  }
+  throw lastError
+}
+
 async function main() {
   const label = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'run'
   const only = arg('--only')?.split(',').map((s) => s.trim())
@@ -116,7 +144,7 @@ async function main() {
     const t0 = Date.now()
     logProgress('case_start', { id: c.id, expect: c.expect })
     try {
-      const r = await withTimeout((signal) => run(c, anthropic, signal), PHASE_TIMEOUT_MS, `${c.id} prompt behavior`)
+      const r = await runWithRetries(c, anthropic)
       if (r.pass) pass++
       console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.id} | tools=${JSON.stringify(r.tools)} src=${r.sources}${r.fail.length ? ' | FAILED: ' + r.fail.join(',') : ''}`)
       if (!r.pass) console.log(`     snippet: ${r.snippet}`)

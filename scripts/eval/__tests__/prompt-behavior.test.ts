@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbstentionText } from '../prompt-behavior-check'
+import { isAbstentionText, isTransientEvalErrorMessage } from '../prompt-behavior-check'
 
 describe('prompt behavior abstention detector', () => {
   it('recognizes English no-evidence abstentions', () => {
@@ -9,5 +9,11 @@ describe('prompt behavior abstention detector', () => {
 
   it('does not classify ordinary positive answers as abstentions', () => {
     expect(isAbstentionText('The contract sets a margin of EURIBOR plus 4.00% and cites the financing agreement.')).toBe(false)
+  })
+
+  it('classifies provider 503 and timeout errors as retryable but not quota exhaustion', () => {
+    expect(isTransientEvalErrorMessage('{"error":{"code":503,"message":"The request timed out.","status":"UNAVAILABLE"}}')).toBe(true)
+    expect(isTransientEvalErrorMessage('socket hang up')).toBe(true)
+    expect(isTransientEvalErrorMessage('429 insufficient_quota quota_or_billing')).toBe(false)
   })
 })

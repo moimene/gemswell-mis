@@ -62,12 +62,28 @@ type ProcessedJobResult = {
   error?: string
 }
 
+type SmartSearchProbe = {
+  status: number
+  ok: boolean
+  itemIds: string[]
+  topId: string | null
+  matchedRank: number | null
+  hasTokenSnippet: boolean
+  hasMarginSnippet: boolean
+  degraded?: boolean
+  graphUsed?: boolean
+  modelUsed?: boolean
+  modelRerankUsed?: boolean
+  error?: string
+}
+
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
 const serverMode = process.env.E2E_SERVER_MODE === 'start' ? 'start' : 'dev'
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-ingest')
 const uploadBucket = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+const ragReadyTimeoutMs = Number(process.env.E2E_RAG_READY_TIMEOUT_MS || '180000')
 
 function writeSummaryArtifact(summary: unknown, defaultName: string): void {
   const path = process.env.E2E_SUMMARY_PATH || (process.env.E2E_SUMMARY_DIR ? join(process.env.E2E_SUMMARY_DIR, defaultName) : null)
@@ -365,18 +381,99 @@ async function askChatAboutIndexedUpload(page: Page, fileName: string, token: st
   await page.waitForFunction(
     (patterns) => {
       const text = document.body.innerText
-      return (patterns as string[]).every((pattern) => new RegExp(pattern, 'i').test(text))
+      const allExpected = (patterns as string[]).every((pattern) => new RegExp(pattern, 'i').test(text))
+      const completedAnswer = /\nIA\n/i.test(text) && /\ncopiar\n/i.test(text)
+      return allExpected || completedAnswer
     },
     checks.map(([, re]) => re.source),
     { timeout: 300_000 },
-  )
+  ).catch(() => undefined)
   const text = await page.locator('body').innerText()
   const details = assertText(text, checks)
   return {
     step: 'chat-recovers-newly-ingested-document',
     ok: Object.values(details).every(Boolean),
-    details,
+    details: {
+      ...details,
+      answerTail: text.slice(-900),
+    },
     screenshot: await screenshot(page, 'chat-newly-ingested-document'),
+  }
+}
+
+async function probeSmartSearch(page: Page, documentId: string, fileName: string, token: string): Promise<SmartSearchProbe> {
+  return page.evaluate(async ({ documentId, fileName, token }) => {
+    try {
+      const response = await fetch('/api/knowledge/documents/intelligent-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `${token} margen documental 7,31 ${fileName}`,
+          filters: { project: 'MAD', doc_type: 'funding', review_status: 'approved' },
+          limit: 5,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      const items = Array.isArray(data.items) ? data.items as Array<{
+        id?: unknown
+        smart_snippets?: Array<{ text?: unknown }>
+      }> : []
+      const itemIds = items.map((item) => String(item.id ?? '')).filter(Boolean)
+      const matchIndex = itemIds.indexOf(documentId)
+      const matched = matchIndex >= 0 ? items[matchIndex] : null
+      const snippetText = (matched?.smart_snippets ?? [])
+        .map((snippet) => String(snippet.text ?? ''))
+        .join('\n')
+      return {
+        status: response.status,
+        ok: response.ok && matchIndex >= 0,
+        itemIds,
+        topId: itemIds[0] ?? null,
+        matchedRank: matchIndex >= 0 ? matchIndex + 1 : null,
+        hasTokenSnippet: new RegExp(token, 'i').test(snippetText),
+        hasMarginSnippet: /7[.,]31\s*(?:por ciento|%)/i.test(snippetText),
+        degraded: Boolean(data.degraded),
+        graphUsed: Boolean(data.graphUsed),
+        modelUsed: Boolean(data.modelUsed),
+        modelRerankUsed: Boolean(data.modelRerankUsed),
+      }
+    } catch (err) {
+      return {
+        status: 0,
+        ok: false,
+        itemIds: [],
+        topId: null,
+        matchedRank: null,
+        hasTokenSnippet: false,
+        hasMarginSnippet: false,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }, { documentId, fileName, token })
+}
+
+async function waitForIndexedUploadSmartSearch(page: Page, documentId: string, fileName: string, token: string): Promise<StepResult> {
+  const started = Date.now()
+  let lastProbe: SmartSearchProbe | null = null
+  while (Date.now() - started < ragReadyTimeoutMs) {
+    lastProbe = await probeSmartSearch(page, documentId, fileName, token)
+    if (lastProbe.ok && lastProbe.matchedRank === 1 && lastProbe.hasTokenSnippet) {
+      return {
+        step: 'rag-search-recovers-newly-ingested-document',
+        ok: true,
+        details: { attemptsMs: Date.now() - started, ...lastProbe },
+      }
+    }
+    await sleep(3_000)
+  }
+  return {
+    step: 'rag-search-recovers-newly-ingested-document',
+    ok: false,
+    details: {
+      attemptsMs: Date.now() - started,
+      lastProbe,
+    },
+    screenshot: await screenshot(page, 'rag-search-newly-ingested-timeout'),
   }
 }
 
@@ -692,8 +789,18 @@ async function main() {
       screenshot: await screenshot(documentPage, 'documents-governance-approved'),
     })
 
-    results.push(await askChatAboutIndexedUpload(documentPage, fileName, token))
-    results.push(await openIndexedUploadChatSourceDeepLink(documentPage, processed.documentId, fileName, token))
+    results.push(await waitForIndexedUploadSmartSearch(documentPage, processed.documentId, fileName, token))
+    const chatRecovery = await askChatAboutIndexedUpload(documentPage, fileName, token)
+    results.push(chatRecovery)
+    if (chatRecovery.ok) {
+      results.push(await openIndexedUploadChatSourceDeepLink(documentPage, processed.documentId, fileName, token))
+    } else {
+      results.push({
+        step: 'chat-source-link-opens-newly-ingested-document',
+        ok: false,
+        details: { skipped: true, reason: 'chat recovery did not cite the newly ingested document' },
+      })
+    }
     await documentPage.goto(`${baseUrl}/admin/documents?doc=${processed.documentId}`, { waitUntil: 'networkidle' })
     await documentPage.waitForSelector(`text=${fileName}`, { timeout: 60_000 })
 
@@ -954,7 +1061,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 17 &&
+      results.length === 18 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&
