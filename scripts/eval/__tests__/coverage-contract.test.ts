@@ -116,5 +116,8 @@ describe('critical eval coverage contract', () => {
     for (const id of criticalPromptBehaviorIds) {
       expect(checker, id).toContain(id)
     }
+
+    expect(checker).toContain('found\\s+no\\s+(?:documentary\\s+)?evidence')
+    expect(checker).toContain('no\\s+documentary\\s+evidence')
   })
 })
