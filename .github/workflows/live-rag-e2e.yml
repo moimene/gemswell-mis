@@ -83,6 +83,9 @@ jobs:
         run: npm run build
 
       - name: Smart document search eval
+        timeout-minutes: 30
+        env:
+          EVAL_SMART_SEARCH_PHASE_TIMEOUT_MS: '240000'
         run: npm run eval:smart-search -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Retrieval eval
