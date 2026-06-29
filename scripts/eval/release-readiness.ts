@@ -60,6 +60,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   const expectedModel = input.expectedModel ?? 'gpt-5.5'
   const liveRun = input.liveRun ?? null
   const checks = {
+    expectedShaProvided: Boolean(input.expectedSha),
     openAIHealthOk: input.health.ok === true,
     openAIModelMatches: input.health.model === expectedModel,
     openAINotQuotaBlocked: input.health.failure?.class !== 'quota_or_billing',
@@ -67,10 +68,11 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
     liveRunIsCorrectWorkflow: liveRun?.workflowName === 'live-rag-e2e',
     liveRunCompleted: liveRun?.status === 'completed',
     liveRunSucceeded: liveRun?.conclusion === 'success',
-    liveRunShaMatches: input.expectedSha ? liveRun?.headSha === input.expectedSha : true,
+    liveRunShaMatches: Boolean(input.expectedSha) && liveRun?.headSha === input.expectedSha,
   }
 
   const failures: string[] = []
+  if (!checks.expectedShaProvided) failures.push('Expected release SHA was not provided.')
   if (!checks.openAIHealthOk) failures.push('OpenAI health is not ok.')
   if (!checks.openAIModelMatches) failures.push(`OpenAI health model is not ${expectedModel}.`)
   if (!checks.openAINotQuotaBlocked) failures.push('OpenAI health is blocked by quota_or_billing.')
@@ -83,12 +85,17 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   const nextActions = failures.length === 0
     ? ['Proceed to strict local production E2E without E2E_ALLOW_SMART_MODEL_FALLBACK, then release if it passes.']
     : [
-        input.health.failure?.class === 'quota_or_billing'
-          ? 'Resolve OpenAI billing/limits before investigating RAG.'
-          : 'Regenerate OpenAI health evidence with npm run eval:openai-health -- release-openai-health.',
-        'Run live-rag-e2e on main and provide its latest successful JSON evidence.',
+        !checks.expectedShaProvided ? 'Pass --expected-sha with the exact release commit SHA.' : null,
+        !checks.openAIHealthOk || !checks.openAIModelMatches
+          ? input.health.failure?.class === 'quota_or_billing'
+            ? 'Resolve OpenAI billing/limits before investigating RAG.'
+            : 'Regenerate OpenAI health evidence with npm run eval:openai-health -- release-openai-health.'
+          : null,
+        !checks.liveRunProvided || !checks.liveRunIsCorrectWorkflow || !checks.liveRunCompleted || !checks.liveRunSucceeded || !checks.liveRunShaMatches
+          ? 'Run live-rag-e2e on main and provide its latest successful JSON evidence for the release SHA.'
+          : null,
         'Do not use E2E_ALLOW_SMART_MODEL_FALLBACK as release evidence.',
-      ]
+      ].filter((action): action is string => Boolean(action))
 
   return {
     ok: failures.length === 0,

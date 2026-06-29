@@ -62,4 +62,23 @@ describe('release readiness evaluator', () => {
     expect(failed.failures).toContain('live-rag-e2e did not conclude success.')
     expect(failed.failures).toContain('live-rag-e2e SHA does not match expected release SHA.')
   })
+
+  it('requires the expected release SHA so old green live runs cannot be reused accidentally', () => {
+    const result = evaluateReleaseReadiness({
+      health: { ok: true, model: 'gpt-5.5' },
+      liveRun: {
+        workflowName: 'live-rag-e2e',
+        status: 'completed',
+        conclusion: 'success',
+        headSha: 'old-green-sha',
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.checks.expectedShaProvided).toBe(false)
+    expect(result.checks.liveRunShaMatches).toBe(false)
+    expect(result.failures).toContain('Expected release SHA was not provided.')
+    expect(result.failures).not.toContain('live-rag-e2e SHA does not match expected release SHA.')
+    expect(result.nextActions).toContain('Pass --expected-sha with the exact release commit SHA.')
+  })
 })

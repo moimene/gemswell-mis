@@ -117,6 +117,7 @@ describe('critical eval coverage contract', () => {
       expect(workflow).toContain(script)
     }
 
+    expect(workflow).not.toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
     expect(documentChatE2e).toContain('chat-source-link-opens-santander-bbva-document')
     expect(documentChatE2e).toContain('chat-history-source-link-opens-santander-bbva-document')
     expect(documentChatE2e).toContain('chat-source-link-opens-buenavista-document')
