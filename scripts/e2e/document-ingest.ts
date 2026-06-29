@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { ingestBuffer, errorMessage } from '../../src/lib/ingest/queue-processor'
 import type { SourceChannel } from '../../src/lib/knowledge/contracts'
 
@@ -67,6 +67,14 @@ let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-ingest')
 const uploadBucket = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
+
+function writeSummaryArtifact(summary: unknown, defaultName: string): void {
+  const path = process.env.E2E_SUMMARY_PATH || (process.env.E2E_SUMMARY_DIR ? join(process.env.E2E_SUMMARY_DIR, defaultName) : null)
+  if (!path) return
+  const outPath = resolve(path)
+  mkdirSync(dirname(outPath), { recursive: true })
+  writeFileSync(outPath, JSON.stringify(summary, null, 2))
+}
 
 function maskEmail(email: string): string {
   return email.replace(/^(.).+(@.*)$/, '$1***$2')
@@ -959,6 +967,7 @@ async function main() {
     consoleMessages: relevantConsoleMessages,
     artifactDir,
   }
+  writeSummaryArtifact(summary, 'document-ingest-summary.json')
   console.log(JSON.stringify(summary, null, 2))
   process.exit(summary.ok ? 0 : 1)
 }

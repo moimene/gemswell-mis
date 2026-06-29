@@ -99,6 +99,7 @@ describe('critical eval coverage contract', () => {
       'Governance eval',
       'Documentary browser E2E - chat/search',
       'Documentary browser E2E - ingest/governance',
+      'E2E_SUMMARY_DIR',
     ]) {
       expect(workflow).toContain(step)
     }
@@ -126,10 +127,12 @@ describe('critical eval coverage contract', () => {
     expect(documentChatE2e).toContain('502705bf-da6d-44bd-9871-38b1e1a8ab73')
     expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
     expect(documentChatE2e).toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
+    expect(documentChatE2e).toContain('document-chat-summary.json')
     expect(documentChatE2e).toContain('Ranking local')
     expect(documentChatE2e).toContain('acceptableRankingMode')
     expect(documentIngestE2e).toContain('chat-source-link-opens-newly-ingested-document')
     expect(documentIngestE2e).toContain('urlHasDocumentId')
+    expect(documentIngestE2e).toContain('document-ingest-summary.json')
   })
 
   it('keeps the documentary release checklist aligned with the live gates', () => {
@@ -139,8 +142,12 @@ describe('critical eval coverage contract', () => {
     for (const required of [
       'npm run eval:openai-health -- release-openai-health',
       'npm run eval:release-readiness',
+      '--e2e-dir /tmp/gemswell-e2e-documents-prod',
+      'document-chat-summary.json',
+      'document-ingest-summary.json',
       'gh api -X POST repos/moimene/gemswell-mis/actions/workflows/303814927/dispatches -f ref=main',
       'E2E_BASE_URL=http://localhost:3127',
+      'E2E_SUMMARY_DIR=/tmp/gemswell-e2e-documents-prod',
       'npm run e2e:documents',
       'E2E_ALLOW_SMART_MODEL_FALLBACK=true',
       'rerankOrModelUsed: true',

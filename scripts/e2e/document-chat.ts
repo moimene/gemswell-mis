@@ -3,10 +3,10 @@ import { createClient } from '@supabase/supabase-js'
 import { chromium, type Browser, type Page } from 'playwright'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 config({ path: resolve(process.cwd(), '.env.local') })
 
@@ -48,6 +48,14 @@ let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-chat')
 const allowSmartModelFallback = process.env.E2E_ALLOW_SMART_MODEL_FALLBACK === 'true'
+
+function writeSummaryArtifact(summary: unknown, defaultName: string): void {
+  const path = process.env.E2E_SUMMARY_PATH || (process.env.E2E_SUMMARY_DIR ? join(process.env.E2E_SUMMARY_DIR, defaultName) : null)
+  if (!path) return
+  const outPath = resolve(path)
+  mkdirSync(dirname(outPath), { recursive: true })
+  writeFileSync(outPath, JSON.stringify(summary, null, 2))
+}
 
 const smartSearchScenarios: SmartSearchScenario[] = [
   {
@@ -573,6 +581,7 @@ async function main() {
     consoleMessages: relevantConsoleMessages,
     artifactDir,
   }
+  writeSummaryArtifact(summary, 'document-chat-summary.json')
   console.log(JSON.stringify(summary, null, 2))
   process.exit(summary.ok ? 0 : 1)
 }

@@ -65,10 +65,10 @@ Verificar la evidencia agregada antes de liberar:
 
 ```bash
 gh run view <live-run-id> --repo moimene/gemswell-mis --json databaseId,workflowName,status,conclusion,headSha > /tmp/live-rag-e2e-latest.json
-npm run eval:release-readiness -- --health scripts/eval/results/openai-health-release-openai-health.json --live-run /tmp/live-rag-e2e-latest.json --expected-sha <release-sha>
+npm run eval:release-readiness -- --health scripts/eval/results/openai-health-release-openai-health.json --live-run /tmp/live-rag-e2e-latest.json --expected-sha <release-sha> --e2e-dir /tmp/gemswell-e2e-documents-prod
 ```
 
-Este verificador debe devolver `ok: true`. Si devuelve `quota_or_billing` o falta un `live-rag-e2e` verde para el SHA de release, no liberar.
+Este verificador debe devolver `ok: true`. Si devuelve `quota_or_billing`, falta un `live-rag-e2e` verde para el SHA de release, falta `--expected-sha`, o los resumenes E2E no prueban `rerankOrModelUsed: true`, no liberar.
 
 ## Ultima evidencia offline
 
@@ -82,7 +82,7 @@ Cuando `eval:openai-health` pase, validar tambien `next start` local:
 ```bash
 npm run build
 npm run start -- -p 3127
-E2E_BASE_URL=http://localhost:3127 E2E_ARTIFACT_DIR=/tmp/gemswell-e2e-documents-prod npm run e2e:documents
+E2E_BASE_URL=http://localhost:3127 E2E_ARTIFACT_DIR=/tmp/gemswell-e2e-documents-prod E2E_SUMMARY_DIR=/tmp/gemswell-e2e-documents-prod npm run e2e:documents
 ```
 
 Resultado esperado:
@@ -97,6 +97,8 @@ Resultado esperado:
 - `chat-source-link-opens-newly-ingested-document`: `ok: true`.
 - `failedRequests: []`.
 - `consoleMessages: []`.
+- `/tmp/gemswell-e2e-documents-prod/document-chat-summary.json`: `ok: true`.
+- `/tmp/gemswell-e2e-documents-prod/document-ingest-summary.json`: `ok: true`.
 
 Parar el servidor despues de la prueba y confirmar:
 
@@ -112,8 +114,9 @@ Liberable para test del equipo solo si se cumplen todos:
 1. `eval:openai-health` pasa para `gpt-5.5`.
 2. `live-rag-e2e` pasa en `main`.
 3. La prueba local de produccion `E2E_BASE_URL=http://localhost:3127 npm run e2e:documents` pasa.
-4. No quedan servidores locales colgados.
-5. `git status --short --branch` no muestra cambios propios sin commit.
+4. `eval:release-readiness` pasa con `--expected-sha <release-sha>` y los resumenes E2E estrictos.
+5. No quedan servidores locales colgados.
+6. `git status --short --branch` no muestra cambios propios sin commit.
 
 Si falla `eval:openai-health` con `quota_or_billing`, no investigar RAG primero: resolver billing/limits de OpenAI y relanzar.
 

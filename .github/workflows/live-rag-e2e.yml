@@ -36,6 +36,7 @@ jobs:
       MISTRAL_APIKEY_OCR: ${{ secrets.MISTRAL_APIKEY_OCR }}
       RAG_OCR_ENABLED: ${{ vars.RAG_OCR_ENABLED || secrets.RAG_OCR_ENABLED }}
       E2E_ARTIFACT_DIR: /tmp/gemswell-e2e-artifacts
+      E2E_SUMMARY_DIR: /tmp/gemswell-e2e-artifacts
     steps:
       - uses: actions/checkout@v7
 
