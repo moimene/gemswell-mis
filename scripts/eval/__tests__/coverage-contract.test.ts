@@ -126,6 +126,7 @@ describe('critical eval coverage contract', () => {
 
     expect(checker).toContain('found\\s+no\\s+(?:documentary\\s+)?evidence')
     expect(checker).toContain('no\\s+documentary\\s+evidence')
+    expect(checker).toContain('did\\s+not\\s+find(?:\\s+\\w+){0,10}\\s+(?:policy|treasury|hedging)')
     expect(checker).toContain('te\\s+refieres')
   })
 })
