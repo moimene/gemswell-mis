@@ -73,47 +73,69 @@ jobs:
         run: npm ci
 
       - name: OpenAI quota health
+        id: openai_health
+        continue-on-error: true
         timeout-minutes: 5
         run: npm run eval:openai-health -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Install Chromium for E2E
+        id: install_chromium
+        continue-on-error: true
         run: npx playwright install --with-deps chromium
 
       - name: Typecheck
+        id: typecheck
+        continue-on-error: true
         run: npx tsc --noEmit --pretty false
 
       - name: Lint
+        id: lint
+        continue-on-error: true
         run: npm run lint
 
       - name: Unit and invariant tests
+        id: unit_tests
+        continue-on-error: true
         run: npm test
 
       - name: OCR fallback smoke
+        id: ocr_smoke
+        continue-on-error: true
         timeout-minutes: 5
         run: npm run eval:ocr-smoke -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Production build
+        id: production_build
+        continue-on-error: true
         run: npm run build
 
       - name: Smart document search eval
+        id: smart_search_eval
+        continue-on-error: true
         timeout-minutes: 30
         env:
           EVAL_SMART_SEARCH_PHASE_TIMEOUT_MS: '240000'
         run: npm run eval:smart-search -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Retrieval eval
+        id: retrieval_eval
+        continue-on-error: true
         timeout-minutes: 30
         env:
           EVAL_RETRIEVAL_PHASE_TIMEOUT_MS: '240000'
         run: npm run eval:retrieval -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Prompt behavior eval
+        id: prompt_behavior_eval
+        continue-on-error: true
         timeout-minutes: 30
         env:
           EVAL_PROMPT_BEHAVIOR_PHASE_TIMEOUT_MS: '300000'
         run: npm run eval:prompt-behavior -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Critical answer eval
+        id: critical_answer_eval
+        continue-on-error: true
         timeout-minutes: 45
         env:
           EVAL_ANSWERS_PHASE_TIMEOUT_MS: '420000'
@@ -123,14 +145,20 @@ jobs:
           --concurrency 1
 
       - name: Governance eval
+        id: governance_eval
+        continue-on-error: true
         timeout-minutes: 10
         run: npm run eval:governance -- live-${{ github.run_id }}-${{ github.run_attempt }}-critical
 
       - name: Documentary browser E2E - chat/search
+        id: document_chat_e2e
+        continue-on-error: true
         timeout-minutes: 30
         run: npm run e2e:doc-chat
 
       - name: Documentary browser E2E - ingest/governance
+        id: document_ingest_e2e
+        continue-on-error: true
         timeout-minutes: 45
         run: npm run e2e:doc-ingest
 
@@ -144,3 +172,52 @@ jobs:
           path: |
             scripts/eval/results/*.json
             /tmp/gemswell-e2e-artifacts/**
+
+      - name: Validate live gate outcomes
+        if: always()
+        shell: bash
+        env:
+          OPENAI_HEALTH_OUTCOME: ${{ steps.openai_health.outcome }}
+          INSTALL_CHROMIUM_OUTCOME: ${{ steps.install_chromium.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          UNIT_TESTS_OUTCOME: ${{ steps.unit_tests.outcome }}
+          OCR_SMOKE_OUTCOME: ${{ steps.ocr_smoke.outcome }}
+          PRODUCTION_BUILD_OUTCOME: ${{ steps.production_build.outcome }}
+          SMART_SEARCH_EVAL_OUTCOME: ${{ steps.smart_search_eval.outcome }}
+          RETRIEVAL_EVAL_OUTCOME: ${{ steps.retrieval_eval.outcome }}
+          PROMPT_BEHAVIOR_EVAL_OUTCOME: ${{ steps.prompt_behavior_eval.outcome }}
+          CRITICAL_ANSWER_EVAL_OUTCOME: ${{ steps.critical_answer_eval.outcome }}
+          GOVERNANCE_EVAL_OUTCOME: ${{ steps.governance_eval.outcome }}
+          DOCUMENT_CHAT_E2E_OUTCOME: ${{ steps.document_chat_e2e.outcome }}
+          DOCUMENT_INGEST_E2E_OUTCOME: ${{ steps.document_ingest_e2e.outcome }}
+        run: |
+          failed=0
+          check() {
+            local label="$1"
+            local outcome="$2"
+            if [ "$outcome" != "success" ]; then
+              echo "::error::${label} outcome=${outcome}"
+              failed=1
+            fi
+          }
+
+          check "OpenAI quota health" "$OPENAI_HEALTH_OUTCOME"
+          check "Install Chromium for E2E" "$INSTALL_CHROMIUM_OUTCOME"
+          check "Typecheck" "$TYPECHECK_OUTCOME"
+          check "Lint" "$LINT_OUTCOME"
+          check "Unit and invariant tests" "$UNIT_TESTS_OUTCOME"
+          check "OCR fallback smoke" "$OCR_SMOKE_OUTCOME"
+          check "Production build" "$PRODUCTION_BUILD_OUTCOME"
+          check "Smart document search eval" "$SMART_SEARCH_EVAL_OUTCOME"
+          check "Retrieval eval" "$RETRIEVAL_EVAL_OUTCOME"
+          check "Prompt behavior eval" "$PROMPT_BEHAVIOR_EVAL_OUTCOME"
+          check "Critical answer eval" "$CRITICAL_ANSWER_EVAL_OUTCOME"
+          check "Governance eval" "$GOVERNANCE_EVAL_OUTCOME"
+          check "Documentary browser E2E - chat/search" "$DOCUMENT_CHAT_E2E_OUTCOME"
+          check "Documentary browser E2E - ingest/governance" "$DOCUMENT_INGEST_E2E_OUTCOME"
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::live-rag-e2e collected available artifacts, but one or more required release gates failed."
+          fi
+          exit "$failed"

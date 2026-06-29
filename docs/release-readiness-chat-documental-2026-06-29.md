@@ -1,6 +1,6 @@
 # Release readiness chat documental y gestor documental - 2026-06-29
 
-Estado actual: no liberable como release final con OpenAI principal hasta resolver la cuota API. El sistema documental y los E2E estan consolidados en dev/CI previo, pero el gate vigente falla correctamente en el preflight OpenAI.
+Estado actual: no liberable como release final con OpenAI principal hasta resolver la cuota API. El sistema documental y los E2E estan consolidados en dev/CI previo. El gate `live-rag-e2e` debe recopilar evidencias aunque OpenAI falle, subir artefactos, y fallar al final si cualquier carril requerido no esta verde.
 
 ## Bloqueo externo actual
 
@@ -8,7 +8,7 @@ Estado actual: no liberable como release final con OpenAI principal hasta resolv
 - Status OpenAI: `429`.
 - Code/type: `insufficient_quota`.
 - Modelo objetivo: `gpt-5.5`.
-- Run remoto que confirma el bloqueo: `28385163901`.
+- Runs remotos que confirman el bloqueo: `28385163901`, `28394061561`, `28395313427`.
 
 Accion requerida fuera del repo:
 
@@ -72,8 +72,10 @@ Este verificador debe devolver `ok: true`. Si devuelve `quota_or_billing`, falta
 
 ## Ultima evidencia offline
 
-- `eval-gate` remoto del ultimo commit de hardening: run `28388533419`, SHA `8906f46a63b3e75d1fc6c4298fae1fce34aeb43d`, success.
-- `npm run eval:openai-health` sigue fallando con `quota_or_billing` el 2026-06-29, por lo que no se relanza `live-rag-e2e` hasta resolver cuota.
+- `eval-gate` remoto del ultimo commit de hardening anterior: run `28388533419`, SHA `8906f46a63b3e75d1fc6c4298fae1fce34aeb43d`, success.
+- `eval-gate` remoto con evidencias RAG estrictas: run `28395187086`, SHA `78e0dc9fd4e7b168fe7dda8756759a17e0dcc839`, success.
+- `live-rag-e2e` debe relanzarse tambien cuando OpenAI siga en `quota_or_billing`: la run no libera release, pero debe recopilar artefactos de los carriles que alcancen a ejecutarse y fallar en `Validate live gate outcomes`.
+- `npm run eval:openai-health` sigue fallando con `quota_or_billing` el 2026-06-29, por lo que la release estricta sigue bloqueada aunque RAG, busqueda inteligente, ingestion y links esten pasando en modo degradado.
 
 ## Prueba local de produccion
 
@@ -123,7 +125,7 @@ Liberable para test del equipo solo si se cumplen todos:
 6. No quedan servidores locales colgados.
 7. `git status --short --branch` no muestra cambios propios sin commit.
 
-Si falla `eval:openai-health` con `quota_or_billing`, no investigar RAG primero: resolver billing/limits de OpenAI y relanzar.
+Si falla `eval:openai-health` con `quota_or_billing`, no investigar RAG primero: resolver billing/limits de OpenAI y relanzar. El workflow live debe seguir recogiendo artefactos, pero el cierre correcto es fallo rojo hasta que OpenAI y `rerankOrModelUsed: true` queden probados.
 
 ## Smoke degradado mientras OpenAI esta sin cuota
 

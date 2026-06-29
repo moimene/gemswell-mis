@@ -99,6 +99,7 @@ describe('critical eval coverage contract', () => {
       'Governance eval',
       'Documentary browser E2E - chat/search',
       'Documentary browser E2E - ingest/governance',
+      'Validate live gate outcomes',
       'E2E_SUMMARY_DIR',
       'E2E_SERVER_MODE: start',
     ]) {
@@ -119,6 +120,11 @@ describe('critical eval coverage contract', () => {
       expect(workflow).toContain(script)
     }
 
+    expect(workflow).toContain('continue-on-error: true')
+    expect(workflow).toContain('steps.openai_health.outcome')
+    expect(workflow).toContain('live-rag-e2e collected available artifacts')
+    expect(workflow.indexOf('name: OpenAI quota health')).toBeLessThan(workflow.indexOf('name: Documentary browser E2E - chat/search'))
+    expect(workflow.indexOf('name: Upload eval and E2E artifacts')).toBeLessThan(workflow.indexOf('name: Validate live gate outcomes'))
     expect(workflow).not.toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
     expect(documentChatE2e).toContain('chat-source-link-opens-santander-bbva-document')
     expect(documentChatE2e).toContain('chat-history-source-link-opens-santander-bbva-document')
