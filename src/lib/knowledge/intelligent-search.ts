@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { retrieveDocuments, type RankedRetrievedChunk } from '@/lib/rag/retrieve'
 import { LIST_COLUMNS } from '@/lib/knowledge/documents-query'
 import { DOC_TYPES, PROJECT_IDS, type DocType, type ProjectId } from '@/lib/knowledge/contracts'
+import { openAIErrorSummary } from '@/lib/openai-error'
 
 const SMART_SEARCH_MODEL = process.env.DOCUMENT_SMART_SEARCH_MODEL || process.env.OPENAI_CHAT_MODEL || 'gpt-5.5'
 const MODEL_ENABLED = process.env.DOCUMENT_SMART_SEARCH_MODEL_ENABLED !== 'false'
@@ -445,7 +446,7 @@ export async function searchDocumentsIntelligently(
       modelUsed = modelRows.length > 0
       items = applyModelRerank(items, modelRows).slice(0, limit)
     } catch (err) {
-      console.warn('[intelligent-search] model rerank failed, using deterministic ranking:', err)
+      console.warn('[intelligent-search] model rerank failed, using deterministic ranking:', openAIErrorSummary(err))
     }
   }
 

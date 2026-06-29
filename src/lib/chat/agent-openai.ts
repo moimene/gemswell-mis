@@ -10,6 +10,7 @@ import type {
   ResponseInputItem,
 } from 'openai/resources/responses/responses'
 import type { GroundingMode } from '@/lib/rag/retrieve'
+import { openAIErrorSummary } from '@/lib/openai-error'
 import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
   CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED, systemPromptForGrounding, detectEntities,
@@ -190,7 +191,7 @@ export async function verifyAnswerOpenAI(
     if (text) return { text, verified: true }
     return { text: input.draft, verified: false }
   } catch (err) {
-    console.warn('OpenAI verifier failed, returning draft answer (unverified):', err)
+    console.warn('OpenAI verifier failed, returning draft answer (unverified):', openAIErrorSummary(err))
     return { text: input.draft, verified: false }
   }
 }

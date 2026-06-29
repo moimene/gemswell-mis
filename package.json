@@ -14,6 +14,7 @@
     "eval:answers": "tsx scripts/eval/run-answers.ts",
     "eval:governance": "tsx scripts/eval/run-governance.ts",
     "eval:smart-search": "tsx scripts/eval/run-smart-search.ts",
+    "eval:openai-health": "tsx scripts/eval/openai-health.ts",
     "eval:prompt-behavior": "tsx scripts/eval/prompt-behavior-check.ts",
     "eval:ocr-smoke": "tsx scripts/eval/ocr-smoke.ts",
     "sharepoint:reconcile": "tsx scripts/reconcile-sharepoint-local.ts",

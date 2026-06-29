@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type { RankedRetrievedChunk } from '@/lib/rag/retrieve'
+import { openAIErrorSummary } from '@/lib/openai-error'
 
 const OPENAI_RAG_RERANK_MODEL = process.env.RAG_OPENAI_RERANK_MODEL || process.env.OPENAI_CHAT_MODEL || 'gpt-5.5'
 const OPENAI_RAG_RERANK_MAX = Number(process.env.RAG_OPENAI_RERANK_MAX || '16')
@@ -163,7 +164,7 @@ export async function rerankRetrievedChunksWithOpenAI(
     for (const chunk of candidates) if (!seen.has(chunk.id)) ranked.push(chunk)
     return { chunks: [...ranked, ...rest], used: true, model: OPENAI_RAG_RERANK_MODEL }
   } catch (err) {
-    console.warn('[rag/openai-rerank] model rerank failed, using hybrid ranking:', err)
+    console.warn('[rag/openai-rerank] model rerank failed, using hybrid ranking:', openAIErrorSummary(err))
     return { chunks, used: false, model: null }
   }
 }
