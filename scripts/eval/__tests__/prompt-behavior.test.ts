@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbstentionText, isTransientEvalErrorMessage } from '../prompt-behavior-check'
+import { isAbstentionText, isClarificationText, isTransientEvalErrorMessage } from '../prompt-behavior-check'
 
 describe('prompt behavior abstention detector', () => {
   it('recognizes English no-evidence abstentions', () => {
@@ -9,6 +9,11 @@ describe('prompt behavior abstention detector', () => {
 
   it('does not classify ordinary positive answers as abstentions', () => {
     expect(isAbstentionText('The contract sets a margin of EURIBOR plus 4.00% and cites the financing agreement.')).toBe(false)
+  })
+
+  it('recognizes Spanish clarification phrasing from ambiguous cost answers', () => {
+    expect(isClarificationText('Para poder responder, necesitaría un poco más de detalle. ¿Se refiere al coste total de la construcción?')).toBe(true)
+    expect(isClarificationText('¿Te refieres al coste de financiación o al coste de construcción?')).toBe(true)
   })
 
   it('classifies provider 503 and timeout errors as retryable but not quota exhaustion', () => {
