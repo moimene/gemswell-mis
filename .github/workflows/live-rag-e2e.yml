@@ -1,0 +1,117 @@
+name: live-rag-e2e
+
+# Live, secret-backed regression gate for the documentary chat and DMS flows.
+# This intentionally does not run on pull_request because it needs production-like
+# API keys and Supabase service-role access. Use manually before release, and let
+# the nightly schedule catch drift in providers, corpus metadata, RPCs, and RAG.
+on:
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: 'Run browser E2E document chat + ingest'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+  schedule:
+    - cron: '17 3 * * *'
+
+concurrency:
+  group: live-rag-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-rag-e2e:
+    name: live RAG + documentary E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      CI: 'true'
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_CHAT_MODEL || 'gpt-5.5' }}
+      OPENAI_VERIFIER_MODEL: ${{ vars.OPENAI_VERIFIER_MODEL || vars.OPENAI_CHAT_MODEL || 'gpt-5.5' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+      LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
+      E2E_ARTIFACT_DIR: ${{ runner.temp }}/gemswell-e2e-artifacts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Verify required live secrets
+        shell: bash
+        run: |
+          required=(
+            NEXT_PUBLIC_SUPABASE_URL
+            NEXT_PUBLIC_SUPABASE_ANON_KEY
+            SUPABASE_SERVICE_ROLE_KEY
+            OPENAI_API_KEY
+            COHERE_API_KEY
+          )
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret or env: ${name}"
+              missing=1
+            fi
+          done
+          if [ -z "${GOOGLE_AI_API_KEY}" ] && [ -z "${GEMINI_API_KEY}" ]; then
+            echo "::error::Missing required Gemini embedding secret: set GOOGLE_AI_API_KEY or GEMINI_API_KEY"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for E2E
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        run: npx tsc --noEmit --pretty false
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and invariant tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Smart document search eval
+        run: npm run eval:smart-search -- live-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Retrieval eval
+        run: npm run eval:retrieval -- live-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Critical answer eval
+        run: >
+          npm run eval:answers -- live-${{ github.run_id }}-${{ github.run_attempt }}-critical
+          --only mad-dec-capitalcall,cross-project-legal,mad-buenavista-conditions,mad-santander-bbva-bank-cost,named-absent-abstain,zero-ski,ambiguous-cost
+          --concurrency 1
+
+      - name: Documentary browser E2E
+        if: ${{ github.event_name == 'schedule' || inputs.run_e2e == 'true' }}
+        run: npm run e2e:documents
+
+      - name: Upload eval and E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-rag-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            scripts/eval/results/*.json
+            ${{ runner.temp }}/gemswell-e2e-artifacts/**
