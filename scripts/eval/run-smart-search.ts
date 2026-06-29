@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { getSupabase, hitAtK, mean, pad, padL, pct } from './_harness'
+import { buildSmartSearchSummary, type SmartSearchEvalRow } from './smart-search-summary'
 import { searchDocumentsIntelligently, type SmartDocumentSearchFilters } from '../../src/lib/knowledge/intelligent-search'
 
 const PHASE_TIMEOUT_MS = positiveIntEnv('EVAL_SMART_SEARCH_PHASE_TIMEOUT_MS', 240_000)
@@ -66,7 +67,7 @@ async function main() {
   let golden = loadSmartGolden()
   if (only) golden = golden.filter((g) => only.includes(g.id))
   if (limit) golden = golden.slice(0, limit)
-  const rows = []
+  const rows: SmartSearchEvalRow[] = []
 
   console.log(`\n=== SMART DOCUMENT SEARCH EVAL (label=${label}) — ${golden.length} queries, model=${modelEnabled ? 'on' : 'off'}, phase_timeout=${PHASE_TIMEOUT_MS}ms ===\n`)
   for (const g of golden) {
@@ -115,15 +116,20 @@ async function main() {
   const hits1 = rows.filter((row) => hitAtK(row.rank, 1)).length
   const hits3 = rows.filter((row) => hitAtK(row.rank, 3)).length
   const pass = rows.filter((row) => row.pass).length
+  const summary = buildSmartSearchSummary(rows)
+  if (!summary.ok) {
+    console.log('\n── STRICT SUMMARY FAILURES ──')
+    for (const failure of summary.failures) console.log(`  ✗ ${failure}`)
+  }
   console.log('\n── AGGREGATE ──')
   console.log(`  doc@1 ${pct(hits1, rows.length)}  doc@3 ${pct(hits3, rows.length)}  pass ${pct(pass, rows.length)}  avg latency ${mean(rows.map((row) => row.ms)).toFixed(0)}ms`)
 
   const outDir = resolve(process.cwd(), 'scripts/eval/results')
   mkdirSync(outDir, { recursive: true })
   const outPath = resolve(outDir, `smart-search-${label}.json`)
-  writeFileSync(outPath, JSON.stringify({ label, at: new Date().toISOString(), modelEnabled, rows }, null, 2))
+  writeFileSync(outPath, JSON.stringify({ label, at: new Date().toISOString(), modelEnabled, summary, rows }, null, 2))
   console.log(`\nWrote ${outPath}\n`)
-  if (pass !== rows.length) process.exitCode = 1
+  if (!summary.ok) process.exitCode = 1
 }
 
 main().catch((err) => { console.error(err); process.exit(1) })
