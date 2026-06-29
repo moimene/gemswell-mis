@@ -102,7 +102,7 @@ jobs:
           --concurrency 1
 
       - name: Documentary browser E2E
-        if: ${{ github.event_name == 'schedule' || inputs.run_e2e == 'true' }}
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.run_e2e == 'true' }}
         run: npm run e2e:documents
 
       - name: Upload eval and E2E artifacts
