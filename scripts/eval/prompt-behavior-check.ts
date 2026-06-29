@@ -12,7 +12,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { runChatTurnOpenAIPrimary } from '../../src/lib/chat/agent-openai'
 
 const PHASE_TIMEOUT_MS = positiveIntEnv('EVAL_PROMPT_BEHAVIOR_PHASE_TIMEOUT_MS', 300_000)
-const ABSTAIN_RE = /(no\s+(?:hay|existe|se\s+(?:han?\s+)?encontr|dispongo|tengo|consta|encuentro)|sin\s+evidencia|did\s+not\s+find(?:\s+\w+){0,4}\s+evidence|did\s+not\s+find(?:\s+\w+){0,10}\s+(?:policy|treasury|hedging)|found\s+no\s+(?:documentary\s+)?evidence|no\s+documentary\s+evidence|not\s+found|no\s+relevant|cannot\s+find|has\s+been\s+found|no\s+he\s+(?:encontrado|hallado)|no\s+.{0,90}(?:exists?|appears?|is\s+(?:found|present)|encontrad\w*)\s+in\s+the\s+.{0,25}corpus|no\s+.{0,30}(?:en\s+el\s+corpus|documental))/i
+const ABSTAIN_RE = /(no\s+(?:hay|existe|se\s+(?:han?\s+)?encontr|dispongo|tengo|consta|encuentro)|sin\s+evidencia|(?:do|did)\s+not\s+find(?:\s+\w+){0,4}\s+evidence|(?:do|did)\s+not\s+find(?:\s+\w+){0,10}\s+(?:policy|treasury|hedging)|found\s+no\s+(?:documentary\s+)?evidence|no\s+documentary\s+evidence|not\s+found|no\s+relevant|cannot\s+find|has\s+been\s+found|no\s+he\s+(?:encontrado|hallado)|no\s+.{0,90}(?:exists?|appears?|is\s+(?:found|present)|encontrad\w*)\s+in\s+the\s+.{0,25}corpus|no\s+.{0,30}(?:en\s+el\s+corpus|documental))/i
 const CLARIFY_RE = /(qué\s+proyecto|which\s+project|podrías\s+(?:aclarar|especificar|indicar|concretar)|necesito\s+(?:más|un poco más)|could\s+you\s+(?:clarify|specify)|a\s+qué\s+te\s+refieres|te\s+refieres\s+(?:a|al|a\s+la|a\s+los|a\s+las)|aclarar|especific)/i
 
 type Expect = { searched?: boolean; abstained?: boolean; clarifies?: boolean; includes?: string[]; tool?: string }
