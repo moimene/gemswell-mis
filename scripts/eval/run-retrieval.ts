@@ -4,7 +4,7 @@
 // diagnostics (vector/keyword/overlap), latency, and the cross-vs-scoped delta that exposes the
 // project-scoping defect.
 //
-// Usage:  npx tsx scripts/eval/run-retrieval.ts [label]
+// Usage:  npx tsx scripts/eval/run-retrieval.ts [label] [--only id1,id2] [--limit N]
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
@@ -14,6 +14,12 @@ import {
 import { retrieveDocuments } from '../../src/lib/rag/retrieve'
 
 const K_VALUES = [1, 3, 5, 10]
+const PHASE_TIMEOUT_MS = positiveIntEnv('EVAL_RETRIEVAL_PHASE_TIMEOUT_MS', 240_000)
+
+function arg(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag)
+  return i >= 0 ? process.argv[i + 1] : undefined
+}
 
 type RunOut = {
   mode: 'cross' | 'scoped'
@@ -29,6 +35,34 @@ type RunOut = {
   /** precision@5 by pinned ids; null when the case is not yet id-pinned. */
   precisionAt5: number | null
   topTitles: { title: string | null; project_id: string | null; doc_type: string | null; authority: number | null; review: string | null }[]
+}
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function logProgress(event: string, fields: Record<string, unknown>) {
+  console.log(JSON.stringify({ eval: 'retrieval', event, at: new Date().toISOString(), ...fields }))
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null
+  const timer = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+    timeout.unref?.()
+  })
+  try {
+    return await Promise.race([promise, timer])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 async function runOne(
@@ -63,16 +97,61 @@ function hasScoped(g: Golden): boolean {
 
 async function main() {
   const label = process.argv[2] || 'baseline'
+  const only = arg('--only')?.split(',').map((s) => s.trim())
+  const limit = arg('--limit') ? Number(arg('--limit')) : undefined
   const sb = getSupabase()
-  const golden = loadGolden()
+  let golden = loadGolden()
+  if (only) golden = golden.filter((g) => only.includes(g.id))
+  if (limit) golden = golden.slice(0, limit)
   const cache = new Map<string, DocMeta>()
 
   const results: Array<{ g: Golden; cross: RunOut; scoped: RunOut | null }> = []
 
-  console.log(`\n=== TIER-A RETRIEVAL EVAL (label=${label}) — ${golden.length} questions ===\n`)
+  console.log(`\n=== TIER-A RETRIEVAL EVAL (label=${label}) — ${golden.length} questions, phase_timeout=${PHASE_TIMEOUT_MS}ms ===\n`)
   for (const g of golden) {
-    const cross = await runOne(sb, g, 'cross', cache)
-    const scoped = hasScoped(g) ? await runOne(sb, g, 'scoped', cache) : null
+    const caseStart = Date.now()
+    logProgress('case_start', { id: g.id, expected_kind: g.expected_kind, category: g.category })
+    logProgress('mode_start', { id: g.id, mode: 'cross' })
+    let cross: RunOut
+    try {
+      cross = await withTimeout(runOne(sb, g, 'cross', cache), PHASE_TIMEOUT_MS, `${g.id} cross retrieval`)
+      logProgress('mode_done', {
+        id: g.id,
+        mode: 'cross',
+        ms: cross.ms,
+        pool: cross.poolCount,
+        vector: cross.vectorCount,
+        keyword: cross.keywordCount,
+        overlap: cross.overlapCount,
+        rank: cross.rank,
+        degraded: cross.degraded,
+      })
+    } catch (e) {
+      logProgress('case_error', { id: g.id, mode: 'cross', ms: Date.now() - caseStart, error: errorMessage(e) })
+      throw e
+    }
+
+    let scoped: RunOut | null = null
+    if (hasScoped(g)) {
+      logProgress('mode_start', { id: g.id, mode: 'scoped', filter: g.scoped_filter ?? null })
+      try {
+        scoped = await withTimeout(runOne(sb, g, 'scoped', cache), PHASE_TIMEOUT_MS, `${g.id} scoped retrieval`)
+        logProgress('mode_done', {
+          id: g.id,
+          mode: 'scoped',
+          ms: scoped.ms,
+          pool: scoped.poolCount,
+          vector: scoped.vectorCount,
+          keyword: scoped.keywordCount,
+          overlap: scoped.overlapCount,
+          rank: scoped.rank,
+          degraded: scoped.degraded,
+        })
+      } catch (e) {
+        logProgress('case_error', { id: g.id, mode: 'scoped', ms: Date.now() - caseStart, error: errorMessage(e) })
+        throw e
+      }
+    }
     results.push({ g, cross, scoped })
 
     const gt = g.ground_truth?.titles ? ` GT[${g.ground_truth.titles.join('|')}]` : ''
@@ -87,6 +166,13 @@ async function main() {
       const top = cross.topTitles.slice(0, 3).map((t, i) => `      ${i + 1}. [${t.project_id}/${t.doc_type}/a${t.authority}/${t.review}] ${String(t.title).slice(0, 60)}`).join('\n')
       console.log(top + gt + (g.notes && cross.rank === 0 ? `\n      ⚠ MISS — ${g.notes.slice(0, 90)}` : ''))
     }
+    logProgress('case_done', {
+      id: g.id,
+      ms: Date.now() - caseStart,
+      cross_rank: cross.rank,
+      scoped_rank: scoped?.rank ?? null,
+      degraded: cross.degraded || scoped?.degraded === true,
+    })
   }
 
   // ── Aggregate ──

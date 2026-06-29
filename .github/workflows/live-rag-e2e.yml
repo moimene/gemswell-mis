@@ -86,6 +86,9 @@ jobs:
         run: npm run eval:smart-search -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Retrieval eval
+        timeout-minutes: 30
+        env:
+          EVAL_RETRIEVAL_PHASE_TIMEOUT_MS: '240000'
         run: npm run eval:retrieval -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Critical answer eval
