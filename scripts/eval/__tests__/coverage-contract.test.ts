@@ -133,9 +133,11 @@ describe('critical eval coverage contract', () => {
 
   it('keeps the documentary release checklist aligned with the live gates', () => {
     const readiness = readFileSync(resolve(root, 'docs/release-readiness-chat-documental-2026-06-29.md'), 'utf8')
+    const packageJson = readFileSync(resolve(root, 'package.json'), 'utf8')
 
     for (const required of [
       'npm run eval:openai-health -- release-openai-health',
+      'npm run eval:release-readiness',
       'gh api -X POST repos/moimene/gemswell-mis/actions/workflows/303814927/dispatches -f ref=main',
       'E2E_BASE_URL=http://localhost:3127',
       'npm run e2e:documents',
@@ -147,9 +149,11 @@ describe('critical eval coverage contract', () => {
       'no investigar RAG primero',
       '28380967059',
       '28385163901',
+      '28388533419',
     ]) {
       expect(readiness).toContain(required)
     }
+    expect(packageJson).toContain('"eval:release-readiness"')
   })
 
   it('keeps governance gates wired to deterministic cited-source checks', () => {

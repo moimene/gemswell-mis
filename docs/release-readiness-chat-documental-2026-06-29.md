@@ -61,6 +61,20 @@ gh run list --repo moimene/gemswell-mis --workflow live-rag-e2e.yml --branch mai
 
 El release queda bloqueado si el workflow no termina en success.
 
+Verificar la evidencia agregada antes de liberar:
+
+```bash
+gh run view <live-run-id> --repo moimene/gemswell-mis --json databaseId,workflowName,status,conclusion,headSha > /tmp/live-rag-e2e-latest.json
+npm run eval:release-readiness -- --health scripts/eval/results/openai-health-release-openai-health.json --live-run /tmp/live-rag-e2e-latest.json --expected-sha <release-sha>
+```
+
+Este verificador debe devolver `ok: true`. Si devuelve `quota_or_billing` o falta un `live-rag-e2e` verde para el SHA de release, no liberar.
+
+## Ultima evidencia offline
+
+- `eval-gate` remoto del ultimo commit de hardening: run `28388533419`, SHA `8906f46a63b3e75d1fc6c4298fae1fce34aeb43d`, success.
+- `npm run eval:openai-health` sigue fallando con `quota_or_billing` el 2026-06-29, por lo que no se relanza `live-rag-e2e` hasta resolver cuota.
+
 ## Prueba local de produccion
 
 Cuando `eval:openai-health` pase, validar tambien `next start` local:
