@@ -15,7 +15,6 @@ import { isAnthropicUnavailable } from '../../src/lib/chat/agent-gemini'
 import { isOpenAIUnavailable, runChatTurnOpenAIPrimary, type PrimaryChatTurnResult } from '../../src/lib/chat/agent-openai'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
 const OPENAI_JUDGE_MODEL = process.env.EVAL_OPENAI_JUDGE_MODEL || process.env.OPENAI_VERIFIER_MODEL || process.env.OPENAI_CHAT_MODEL || 'gpt-5.5'
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || 'claude-opus-4-8'
 const GEMINI_JUDGE_MODEL = process.env.EVAL_GEMINI_JUDGE_MODEL || process.env.GEMINI_VERIFIER_MODEL || 'gemini-2.5-flash'
@@ -221,6 +220,7 @@ async function judgeWithGemini(system: string, user: string): Promise<JudgedVerd
 }
 
 async function judgeWithOpenAI(system: string, user: string): Promise<JudgedVerdict | null> {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
   const resp = await openai.responses.create({
     model: OPENAI_JUDGE_MODEL,
     instructions: system,
