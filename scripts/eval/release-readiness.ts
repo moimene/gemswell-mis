@@ -38,11 +38,41 @@ type E2ESummary = {
   }
 }
 
+type SmartSearchEval = {
+  summary?: { ok?: boolean }
+  rows?: Array<{
+    id?: string
+    pass?: boolean
+    rank?: number
+    snippetOk?: boolean
+    entityOk?: boolean
+  }>
+}
+
+type RetrievalEval = {
+  summary?: {
+    ok?: boolean
+    failures?: string[]
+    documentary?: {
+      titleOnly?: number
+      cross?: {
+        recallAt1?: number | null
+        recallAt5?: number | null
+      }
+    }
+    latency?: {
+      degradedCount?: number
+    }
+  }
+}
+
 export type ReleaseReadinessInput = {
   health: OpenAIHealthResult
   liveRun?: GithubRunResult | null
   docChatE2E?: E2ESummary | null
   docIngestE2E?: E2ESummary | null
+  smartSearchEval?: SmartSearchEval | null
+  retrievalEval?: RetrievalEval | null
   expectedModel?: string
   expectedSha?: string
 }
@@ -63,6 +93,8 @@ export type ReleaseReadinessResult = {
     expectedSha?: string
     docChatArtifact?: boolean
     docIngestArtifact?: boolean
+    smartSearchArtifact?: boolean
+    retrievalArtifact?: boolean
   }
 }
 
@@ -101,11 +133,40 @@ function strictSmartSearchUsedModel(summary: E2ESummary | null | undefined): boo
   )
 }
 
+function smartSearchEvalOk(evalResult: SmartSearchEval | null | undefined): boolean {
+  if (evalResult?.summary?.ok === true) return true
+  return Array.isArray(evalResult?.rows) &&
+    evalResult.rows.length > 0 &&
+    evalResult.rows.every((row) => row.pass === true && row.snippetOk !== false && row.entityOk !== false)
+}
+
+function smartSearchCriticalDocsAt1(evalResult: SmartSearchEval | null | undefined): boolean {
+  const rows = evalResult?.rows ?? []
+  const criticalIds = ['smart-mad-santander-bbva-cost', 'smart-mad-buenavista-conditions']
+  return criticalIds.every((id) => {
+    const row = rows.find((candidate) => candidate.id === id)
+    return row?.pass === true && row.rank === 1
+  })
+}
+
+function retrievalEvalOk(evalResult: RetrievalEval | null | undefined): boolean {
+  return evalResult?.summary?.ok === true &&
+    (evalResult.summary.documentary?.titleOnly ?? 0) === 0 &&
+    (evalResult.summary.latency?.degradedCount ?? 0) === 0
+}
+
+function retrievalRecallStrong(evalResult: RetrievalEval | null | undefined): boolean {
+  return evalResult?.summary?.documentary?.cross?.recallAt1 === 1 &&
+    evalResult.summary.documentary.cross.recallAt5 === 1
+}
+
 export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseReadinessResult {
   const expectedModel = input.expectedModel ?? 'gpt-5.5'
   const liveRun = input.liveRun ?? null
   const docChat = input.docChatE2E ?? null
   const docIngest = input.docIngestE2E ?? null
+  const smartSearch = input.smartSearchEval ?? null
+  const retrieval = input.retrievalEval ?? null
   const checks = {
     expectedShaProvided: Boolean(input.expectedSha),
     openAIHealthOk: input.health.ok === true,
@@ -124,6 +185,12 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
     docIngestE2EOk: docIngest?.ok === true,
     docIngestE2ENoBrowserNoise: noBrowserNoise(docIngest),
     docIngestE2ECleanupOk: docIngest?.cleanup?.ok === true,
+    smartSearchEvalProvided: Boolean(smartSearch),
+    smartSearchEvalOk: smartSearchEvalOk(smartSearch),
+    smartSearchCriticalDocsAt1: smartSearchCriticalDocsAt1(smartSearch),
+    retrievalEvalProvided: Boolean(retrieval),
+    retrievalEvalOk: retrievalEvalOk(retrieval),
+    retrievalRecallStrong: retrievalRecallStrong(retrieval),
   }
 
   const failures: string[] = []
@@ -144,6 +211,12 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   if (docIngest && !checks.docIngestE2EOk) failures.push('Strict document-ingest E2E did not pass.')
   if (docIngest && !checks.docIngestE2ENoBrowserNoise) failures.push('Strict document-ingest E2E had failed requests or console messages.')
   if (docIngest && !checks.docIngestE2ECleanupOk) failures.push('Strict document-ingest E2E cleanup did not pass.')
+  if (!checks.smartSearchEvalProvided) failures.push('Smart-search eval evidence was not provided.')
+  if (smartSearch && !checks.smartSearchEvalOk) failures.push('Smart-search eval did not pass all rows.')
+  if (smartSearch && !checks.smartSearchCriticalDocsAt1) failures.push('Smart-search eval did not rank critical funding contracts at #1.')
+  if (!checks.retrievalEvalProvided) failures.push('Retrieval eval evidence was not provided.')
+  if (retrieval && !checks.retrievalEvalOk) failures.push('Retrieval eval summary was not ok.')
+  if (retrieval && !checks.retrievalRecallStrong) failures.push('Retrieval eval did not prove documentary recall@1 and recall@5 at 100%.')
 
   const nextActions = failures.length === 0
     ? ['Proceed to strict local production E2E without E2E_ALLOW_SMART_MODEL_FALLBACK, then release if it passes.']
@@ -160,6 +233,10 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
         !checks.docChatE2EProvided || !checks.docChatE2EOk || !checks.docChatE2ENoBrowserNoise || !checks.docChatE2EStrictModelUsed ||
           !checks.docIngestE2EProvided || !checks.docIngestE2EOk || !checks.docIngestE2ENoBrowserNoise || !checks.docIngestE2ECleanupOk
           ? 'Run strict local production documentary E2E with E2E_SUMMARY_DIR and without E2E_ALLOW_SMART_MODEL_FALLBACK.'
+          : null,
+        !checks.smartSearchEvalProvided || !checks.smartSearchEvalOk || !checks.smartSearchCriticalDocsAt1 ||
+          !checks.retrievalEvalProvided || !checks.retrievalEvalOk || !checks.retrievalRecallStrong
+          ? 'Run eval:smart-search and eval:retrieval, then provide their JSON evidence.'
           : null,
         'Do not use E2E_ALLOW_SMART_MODEL_FALLBACK as release evidence.',
       ].filter((action): action is string => Boolean(action))
@@ -180,6 +257,8 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
       expectedSha: input.expectedSha,
       docChatArtifact: Boolean(docChat),
       docIngestArtifact: Boolean(docIngest),
+      smartSearchArtifact: Boolean(smartSearch),
+      retrievalArtifact: Boolean(retrieval),
     },
   }
 }
@@ -201,16 +280,22 @@ async function main() {
   const e2eDir = arg('e2e-dir')
   const docChatE2EPath = arg('doc-chat-e2e') ?? (e2eDir ? join(e2eDir, 'document-chat-summary.json') : undefined)
   const docIngestE2EPath = arg('doc-ingest-e2e') ?? (e2eDir ? join(e2eDir, 'document-ingest-summary.json') : undefined)
+  const smartSearchEvalPath = arg('smart-search-eval')
+  const retrievalEvalPath = arg('retrieval-eval')
   const outPath = arg('out')
   const health = readJson<OpenAIHealthResult>(healthPath)
   const liveRun = liveRunPath ? firstRun(readJson<unknown>(liveRunPath)) : null
   const docChatE2E = docChatE2EPath ? readJson<E2ESummary>(docChatE2EPath) : null
   const docIngestE2E = docIngestE2EPath ? readJson<E2ESummary>(docIngestE2EPath) : null
+  const smartSearchEval = smartSearchEvalPath ? readJson<SmartSearchEval>(smartSearchEvalPath) : null
+  const retrievalEval = retrievalEvalPath ? readJson<RetrievalEval>(retrievalEvalPath) : null
   const result = evaluateReleaseReadiness({
     health,
     liveRun,
     docChatE2E,
     docIngestE2E,
+    smartSearchEval,
+    retrievalEval,
     expectedModel: arg('expected-model') ?? process.env.OPENAI_CHAT_MODEL ?? 'gpt-5.5',
     expectedSha: arg('expected-sha'),
   })

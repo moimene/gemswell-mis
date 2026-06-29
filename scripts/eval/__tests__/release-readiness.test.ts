@@ -27,6 +27,28 @@ const strictDocIngestE2E = {
   results: [],
 }
 
+const strictSmartSearchEval = {
+  rows: [
+    { id: 'smart-mad-santander-bbva-cost', pass: true, rank: 1, snippetOk: true, entityOk: true },
+    { id: 'smart-mad-buenavista-conditions', pass: true, rank: 1, snippetOk: true, entityOk: true },
+    { id: 'smart-klp-pacto-socios', pass: true, rank: 1, snippetOk: true, entityOk: true },
+  ],
+}
+
+const strictRetrievalEval = {
+  summary: {
+    ok: true,
+    failures: [],
+    documentary: {
+      total: 3,
+      pinned: 3,
+      titleOnly: 0,
+      cross: { total: 3, recallAt1: 1, recallAt3: 1, recallAt5: 1, recallAt10: 1, mrr: 1 },
+    },
+    latency: { degradedCount: 0 },
+  },
+}
+
 describe('release readiness evaluator', () => {
   it('blocks release when OpenAI is quota blocked even if a prior live run was green', () => {
     const result = evaluateReleaseReadiness({
@@ -45,6 +67,8 @@ describe('release readiness evaluator', () => {
       expectedSha: 'abc',
       docChatE2E: strictDocChatE2E,
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
 
     expect(result.ok).toBe(false)
@@ -68,6 +92,8 @@ describe('release readiness evaluator', () => {
       expectedSha: 'release-sha',
       docChatE2E: strictDocChatE2E,
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
 
     expect(result.ok).toBe(true)
@@ -83,6 +109,8 @@ describe('release readiness evaluator', () => {
       expectedSha: 'abc',
       docChatE2E: strictDocChatE2E,
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     }).failures).toContain('No live-rag-e2e run evidence was provided.')
 
     const failed = evaluateReleaseReadiness({
@@ -91,6 +119,8 @@ describe('release readiness evaluator', () => {
       expectedSha: 'def',
       docChatE2E: strictDocChatE2E,
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
     expect(failed.ok).toBe(false)
     expect(failed.failures).toContain('live-rag-e2e did not conclude success.')
@@ -108,6 +138,8 @@ describe('release readiness evaluator', () => {
       },
       docChatE2E: strictDocChatE2E,
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
 
     expect(result.ok).toBe(false)
@@ -123,6 +155,8 @@ describe('release readiness evaluator', () => {
       health: { ok: true, model: 'gpt-5.5' },
       liveRun: { workflowName: 'live-rag-e2e', status: 'completed', conclusion: 'success', headSha: 'release-sha' },
       expectedSha: 'release-sha',
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
     expect(missing.ok).toBe(false)
     expect(missing.failures).toContain('Strict document-chat E2E evidence was not provided.')
@@ -141,10 +175,55 @@ describe('release readiness evaluator', () => {
         ),
       },
       docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
     })
 
     expect(degraded.ok).toBe(false)
     expect(degraded.failures).toContain('Strict document-chat E2E did not prove model/rerank usage for critical smart searches.')
     expect(degraded.nextActions).toContain('Run strict local production documentary E2E with E2E_SUMMARY_DIR and without E2E_ALLOW_SMART_MODEL_FALLBACK.')
+  })
+
+  it('requires smart-search and retrieval eval evidence', () => {
+    const missing = evaluateReleaseReadiness({
+      health: { ok: true, model: 'gpt-5.5' },
+      liveRun: { workflowName: 'live-rag-e2e', status: 'completed', conclusion: 'success', headSha: 'release-sha' },
+      expectedSha: 'release-sha',
+      docChatE2E: strictDocChatE2E,
+      docIngestE2E: strictDocIngestE2E,
+    })
+    expect(missing.ok).toBe(false)
+    expect(missing.failures).toContain('Smart-search eval evidence was not provided.')
+    expect(missing.failures).toContain('Retrieval eval evidence was not provided.')
+
+    const bad = evaluateReleaseReadiness({
+      health: { ok: true, model: 'gpt-5.5' },
+      liveRun: { workflowName: 'live-rag-e2e', status: 'completed', conclusion: 'success', headSha: 'release-sha' },
+      expectedSha: 'release-sha',
+      docChatE2E: strictDocChatE2E,
+      docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: {
+        rows: strictSmartSearchEval.rows.map((row) =>
+          row.id === 'smart-mad-santander-bbva-cost' ? { ...row, rank: 2 } : row,
+        ),
+      },
+      retrievalEval: {
+        summary: {
+          ...strictRetrievalEval.summary,
+          ok: false,
+          failures: ['miss'],
+          documentary: {
+            ...strictRetrievalEval.summary.documentary,
+            titleOnly: 1,
+            cross: { ...strictRetrievalEval.summary.documentary.cross, recallAt1: 0.5 },
+          },
+        },
+      },
+    })
+    expect(bad.ok).toBe(false)
+    expect(bad.failures).toContain('Smart-search eval did not rank critical funding contracts at #1.')
+    expect(bad.failures).toContain('Retrieval eval summary was not ok.')
+    expect(bad.failures).toContain('Retrieval eval did not prove documentary recall@1 and recall@5 at 100%.')
+    expect(bad.nextActions).toContain('Run eval:smart-search and eval:retrieval, then provide their JSON evidence.')
   })
 })
