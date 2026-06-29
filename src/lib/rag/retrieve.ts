@@ -289,8 +289,21 @@ function contentRelevanceBoost(query: string, content: string): number {
 function applyMetadataBoost<T extends RankedRetrievedChunk>(chunks: T[], query: string): T[] {
   return chunks.map((chunk) => {
     const boost = metadataRelevanceBoost(query, chunk.metadata) + contentRelevanceBoost(query, chunk.content)
-    if (boost <= 0) return chunk
-    return { ...chunk, relevanceScore: Math.min(1.5, chunk.relevanceScore + boost) }
+    const supplementScore = Number(chunk.metadata?.supplement_score)
+    const supplementTieBreak = Number.isFinite(supplementScore) && supplementScore > 0
+      ? Math.min(0.05, supplementScore / 1000)
+      : 0
+    if (boost <= 0 && supplementTieBreak <= 0) return chunk
+    return { ...chunk, relevanceScore: Math.min(1.5, chunk.relevanceScore + boost) + supplementTieBreak }
+  })
+}
+
+function applySupplementPriority<T extends RankedRetrievedChunk>(chunks: T[]): T[] {
+  return chunks.map((chunk) => {
+    const supplementScore = Number(chunk.metadata?.supplement_score)
+    if (!Number.isFinite(supplementScore) || supplementScore < 7) return chunk
+    const tieBreak = Math.min(0.05, supplementScore / 1000)
+    return { ...chunk, relevanceScore: Math.max(chunk.relevanceScore, 1.5) + tieBreak }
   })
 }
 
@@ -578,13 +591,28 @@ async function fetchBuenavistaFundingSupplement(
     if (chunksRes.error) return []
 
     const docById = new Map(docs.map((doc) => [doc.id, doc]))
-    return ((chunksRes.data || []) as Array<RetrievedChunk & { chunk_index?: number }>)
-      .filter((chunk) => {
-        const text = normaliseQuery(chunk.content || '')
-        return /credito participativo|cr[eé]dito participativo|buenavista nextgen|15[.,]657[.,]498[.,]18|entidad acreditante|importe maximo/.test(text)
-      })
-      .slice(0, 12)
+    const scored = ((chunksRes.data || []) as Array<RetrievedChunk & { chunk_index?: number }>)
       .map((chunk) => {
+        const text = normaliseQuery(chunk.content || '')
+        const score =
+          (/3\.3 condiciones necesarias para realizar disposiciones/.test(text) ? 12 : 0) +
+          (/3\.5\.1/.test(text) && /solicitudes de disposicion/.test(text) ? 10 : 0) +
+          (/3\.5\.2/.test(text) && /importe maximo del credito participativo/.test(text) ? 9 : 0) +
+          (/2\.2 importe/.test(text) && /15[.,]657[.,]498[.,]18/.test(text) ? 10 : 0) +
+          (/2\.3 finalidad/.test(text) && /gastos elegibles/.test(text) ? 10 : 0) +
+          (/gastos elegibles/.test(text) ? 7 : 0) +
+          (/\bdisposicion\b|\bdisposiciones\b|solicitud de disposicion|fecha de desembolso|cuenta de disposiciones/.test(text) ? 5 : 0) +
+          (/6\. periodos de interes|primer periodo de interes|14 de julio de 2027/.test(text) ? 4 : 0) +
+          (/credito participativo|buenavista nextgen|entidad acreditante|importe maximo/.test(text) ? 2 : 0) +
+          (/15[.,]657[.,]498[.,]18/.test(text) ? 3 : 0)
+        return { chunk, score, chunkIndex: typeof chunk.chunk_index === 'number' ? chunk.chunk_index : Number.MAX_SAFE_INTEGER }
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || a.chunkIndex - b.chunkIndex)
+
+    return scored
+      .slice(0, 18)
+      .map(({ chunk, score }) => {
         const doc = docById.get(chunk.document_id)
         return {
           id: chunk.id,
@@ -603,8 +631,9 @@ async function fetchBuenavistaFundingSupplement(
             chunk_index: typeof chunk.chunk_index === 'number' ? chunk.chunk_index : chunk.metadata?.chunk_index,
             storage_path: metadataString(doc, 'storage_path') ?? metadataString(chunk.metadata, 'storage_path'),
             source_channel: metadataString(doc, 'source_channel') ?? metadataString(chunk.metadata, 'source_channel'),
+            supplement_score: score,
           },
-          similarity: 0.96,
+          similarity: Math.min(0.995, 0.8 + score / 100),
         } satisfies RetrievedChunk
       })
   } catch {
@@ -912,7 +941,7 @@ export async function retrieveDocuments(
   ])
   const graphResults = graphExpansion.chunks
   const graphEntities = graphExpansion.entities.map((entity) => `${entity.kind}:${entity.value}`)
-  const supplementalResults = [...graphResults, ...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...buenavistaFundingSupplement, ...madridSeniorBankFundingSupplement]
+  const supplementalResults = [...buenavistaFundingSupplement, ...graphResults, ...companyNumberSupplement, ...vsoreLoanSupplement, ...legalLocationSupplement, ...madridSeniorBankFundingSupplement]
 
   // Merge the two lanes into a deduped, excluded-filtered pool (RRF or legacy vector-first, env-gated).
   const { pool, overlapCount } = fusePool(vectorResults, [...keywordResults, ...supplementalResults], {
@@ -981,9 +1010,10 @@ export async function retrieveDocuments(
   const modelRerank = await rerankRetrievedChunksWithOpenAI(retrievalQuery, boosted, {
     enabled: opts.modelRerank ?? true,
   })
+  const postModelBoosted = applySupplementPriority(modelRerank.chunks)
   const ranked = (groundingMode === 'standard'
-    ? rankForStandardGrounding(modelRerank.chunks)
-    : rankBySourceTrust(modelRerank.chunks)
+    ? rankForStandardGrounding(postModelBoosted)
+    : rankBySourceTrust(postModelBoosted)
   ).slice(0, RAG_FINAL_TOP_K) as RankedRetrievedChunk[]
   const unreviewedUsed = ranked.filter((c) => isUnreviewedSource(c.metadata)).length
 

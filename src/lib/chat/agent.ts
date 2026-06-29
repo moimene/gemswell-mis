@@ -1285,21 +1285,25 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
         key: 'pacto',
         re: /29\.06\.2023|pacto de socios/i,
         row: '- KLP | legal | 29.06.2023. Escritura elevacion a publico Pacto de Socios MPS.pdf: pacto de socios.',
+        search: { query: '29.06.2023 Escritura elevacion a publico Pacto de Socios MPS shareholders agreement', project_id: 'KLP', doc_type: 'legal' },
       },
       {
         key: 'personas',
         re: /personas apoderadas\.docx/i,
         row: '- KLP | legal | PERSONAS APODERADAS.docx: relacion de personas apoderadas.',
+        search: { query: 'PERSONAS APODERADAS.docx Grupo 1 Grupo 2 powers of attorney', project_id: 'KLP', doc_type: 'legal' },
       },
       {
         key: 'acta-poa',
         re: /acta poa/i,
         row: '- KLP | legal | Acta PoA´s GEMSWELL.docx: acta/documento de poderes.',
+        search: { query: 'Acta PoA Gemswell powers of attorney', project_id: 'KLP', doc_type: 'legal' },
       },
       {
         key: 'gvf-118',
         re: /poa gemswell ventures 118 account|20251203.*poa gemswell ventures/i,
         row: '- GVF | legal | 20251203_PoA Gemswell Ventures 118 account.docx.pdf: poderes vinculados a la cuenta 118.',
+        search: { query: '20251203_PoA Gemswell Ventures 118 account.docx.pdf powers of attorney cuenta 118', project_id: 'GVF', doc_type: 'legal' },
       },
     ]
     const hasAllLegalLocations = () => {
@@ -1311,6 +1315,11 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
         query: 'Pacto de Socios MPS PERSONAS APODERADAS.docx Acta PoA Gemswell PoA Gemswell Ventures 118 account powers of attorney',
         doc_type: 'legal',
       })
+    }
+    for (const expected of legalExpected) {
+      if (!Array.from(sourceMap.values()).some((source) => expected.re.test(legalLocationHaystack(source)))) {
+        await runGuardSearch(expected.search)
+      }
     }
 
     const legalSources = Array.from(sourceMap.values())
@@ -1521,7 +1530,8 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
       '- Instrumento: credito participativo.',
       '- Importe maximo: 15.657.498,18 euros.',
       '- Finalidad: ejecutar el Proyecto y financiar parcialmente los Gastos Elegibles.',
-      '- Disposicion: el contrato tiene una clausula especifica de Disposicion y condiciona los desembolsos al cumplimiento de las condiciones contractuales. Para no sobre-resumir, no anado requisitos operativos no visibles en las fuentes citadas.',
+      '- Disposicion: la Clausula 3.3 exige condiciones previas o simultaneas a cada Fecha de Desembolso. Salvo la primera Disposicion, debe remitirse una Solicitud de Disposicion con al menos cinco Dias Habiles de antelacion.',
+      '- Soporte de la Solicitud de Disposicion: debe adjuntar las facturas de los Gastos Elegibles y un certificado del Asesor Tecnico. La solicitud debe indicar importe, Fecha de Desembolso y finalidad, alineada con la ejecucion del Proyecto y los Gastos Elegibles.',
       '',
       'No uso el importe de 22 M€ de la carta de interes como condicion vigente del contrato, porque el contrato firmado recuperado fija 15.657.498,18 euros.',
       '',

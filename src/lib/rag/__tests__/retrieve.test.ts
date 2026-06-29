@@ -36,7 +36,7 @@ import {
 } from '@/lib/rag/retrieve'
 import { rerankRetrievedChunksWithOpenAI } from '@/lib/rag/openai-rerank'
 
-type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number }
+type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number; chunk_index?: number }
 type DocRow = Record<string, unknown> & { id: string; title?: string; project_id?: string; doc_type?: string }
 
 function fakeSupabase(vectorRows: Row[], keywordRows: Row[]) {
@@ -238,6 +238,52 @@ describe('retrieveDocuments', () => {
     const { ranked } = await retrieveDocuments(client, 'Como es la financiacion de Buenvista?')
     expect(ranked[0].metadata.storage_path).toBe('uploads/doc-bv/original.pdf')
     expect(ranked[0].metadata.source_channel).toBe('upload')
+  })
+
+  it('prioritizes Buenavista condition clauses in supplemental chunks', async () => {
+    const docs: DocRow[] = [{
+      id: 'doc-bv',
+      title: '4148-6073-6102 v 1, 1.- MPS_Contrato de Credito Participativo (Buenavista)_vFF.pdf',
+      project_id: 'MAD',
+      doc_type: 'funding',
+      status: 'indexed',
+      review_status: 'approved',
+      authority_score: 95,
+    }]
+    const chunks: Row[] = [
+      {
+        id: 'generic-contract',
+        document_id: 'doc-bv',
+        chunk_index: 1,
+        content: 'Contrato de Credito Participativo. Buenavista Nextgen Urbano como Entidad Acreditante.',
+        metadata: {},
+      },
+      {
+        id: 'amount',
+        document_id: 'doc-bv',
+        chunk_index: 95,
+        content: '## 2.2 Importe El importe del Credito Participativo asciende a 15.657.498,18 euros.',
+        metadata: {},
+      },
+      {
+        id: 'eligible-costs',
+        document_id: 'doc-bv',
+        chunk_index: 96,
+        content: '## 2.3 Finalidad El Credito Participativo se destinara unicamente a la ejecucion del Proyecto y a la financiacion parcial de los Gastos Elegibles.',
+        metadata: {},
+      },
+      {
+        id: 'drawdown-conditions',
+        document_id: 'doc-bv',
+        chunk_index: 101,
+        content: '## 3.3 Condiciones necesarias para realizar Disposiciones La Solicitud de Disposicion adjunta facturas de Gastos Elegibles y certificado del Asesor Tecnico.',
+        metadata: {},
+      },
+    ]
+    const { client } = fakeSupabaseWithTables([], [], docs, chunks)
+    const { ranked } = await retrieveDocuments(client, 'Condiciones de la financiacion de Buenavista para el proyecto de Madrid')
+    expect(ranked.slice(0, 3).map((row) => row.id)).toEqual(expect.arrayContaining(['drawdown-conditions', 'eligible-costs', 'amount']))
+    expect(ranked.findIndex((row) => row.id === 'generic-contract')).toBeGreaterThan(2)
   })
 
   it('preserves metadata on Santander/BBVA senior financing supplemental cost chunks', async () => {
