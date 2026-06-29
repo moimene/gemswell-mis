@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { parseDocument } from '@/lib/rag/parse'
 
 // Integration of the OCR fallback into parseDocument (Ronda 1 reviewer B must-add). We drive the
@@ -6,6 +6,14 @@ import { parseDocument } from '@/lib/rag/parse'
 const pdf = Buffer.from('%PDF-1.7 scanned image only, no text layer')
 
 describe('parseDocument — OCR wiring is strictly opt-in (default-OFF)', () => {
+  beforeEach(() => {
+    vi.stubEnv('LLAMA_CLOUD_API_KEY', '')
+    vi.stubEnv('MISTRAL_API_KEY', '')
+    vi.stubEnv('MISTRAL_APIKEY_OCR', '')
+    vi.stubEnv('MISTRAL_API_KEY_OCR', '')
+    vi.stubEnv('RAG_OCR_ENABLED', '')
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
