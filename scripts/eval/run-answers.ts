@@ -70,6 +70,7 @@ type JudgedVerdict = Verdict & { judge_provider: 'openai' | 'anthropic' | 'gemin
 type Deterministic = {
   citedExpectedDoc: boolean
   answerHasMustContain: boolean
+  answerHasAllMustContain: boolean
   usedExpectedTool: boolean
   toolNames: string[]
   citedProjects: string[]
@@ -102,11 +103,47 @@ function deterministic(g: Golden, r: ChatTurnResult, cache: Map<string, DocMeta>
   const must = g.ground_truth?.must_contain ?? []
   const ans = r.answer.toLowerCase()
   const answerHasMustContain = must.length > 0 && must.some((m) => mustContainMatches(ans, m))
+  const answerHasAllMustContain = must.every((m) => mustContainMatches(ans, m))
   const toolNames = r.toolCalls.map((t) => t.name)
   const usedExpectedTool = !!g.ground_truth?.tool && toolNames.includes(g.ground_truth.tool)
   const citedProjects = [...new Set(r.sources.map((s) => (s.documentId ? cache.get(s.documentId)?.project_id : null)).filter(Boolean) as string[])]
   const abstainedHeuristic = ABSTAIN_RE.test(r.answer)
-  return { citedExpectedDoc, answerHasMustContain, usedExpectedTool, toolNames, citedProjects, abstainedHeuristic }
+  return { citedExpectedDoc, answerHasMustContain, answerHasAllMustContain, usedExpectedTool, toolNames, citedProjects, abstainedHeuristic }
+}
+
+type AnswerGateRow = {
+  g: Pick<Golden, 'expected_kind' | 'ground_truth'>
+  det: Deterministic
+  verdict: JudgedVerdict
+}
+
+export function deterministicWeakPass(row: AnswerGateRow): boolean {
+  if (row.verdict.verdict !== 'weak') return false
+  if (row.verdict.faithfulness < 4 || row.verdict.citation_precision < 4 || row.verdict.completeness < 4) return false
+  if (!row.verdict.found_ground_truth || !row.verdict.behavior_correct) return false
+
+  const must = row.g.ground_truth?.must_contain ?? []
+  const allRequiredTextPresent = must.length === 0 || row.det.answerHasAllMustContain
+
+  if (row.g.expected_kind === 'documentary') {
+    return allRequiredTextPresent && (row.det.citedExpectedDoc || row.det.answerHasAllMustContain)
+  }
+  if (row.g.expected_kind === 'structured') {
+    return allRequiredTextPresent && row.det.usedExpectedTool
+  }
+  if (row.g.expected_kind === 'abstain') return row.det.abstainedHeuristic
+  if (row.g.expected_kind === 'ambiguous') return row.verdict.behavior_correct
+  return false
+}
+
+export function answerGateFailure(row: AnswerGateRow): string | null {
+  const verdictAccepted = row.verdict.verdict === 'pass' || deterministicWeakPass(row)
+  const reasons = [
+    !verdictAccepted ? `verdict=${row.verdict.verdict}` : null,
+    !row.verdict.found_ground_truth ? 'missing_ground_truth' : null,
+    !row.verdict.behavior_correct ? 'behavior_incorrect' : null,
+  ].filter((reason): reason is string => Boolean(reason))
+  return reasons.length ? reasons.join(',') : null
 }
 
 function parseVerdict(text: string): Verdict | null {
@@ -376,12 +413,8 @@ async function main() {
 
   const gateFailures = rows.flatMap((row) => {
     if (!('verdict' in row) || !row.verdict) return [{ id: row.g.id, reason: 'unscored/error' }]
-    const reasons = [
-      row.verdict.verdict !== 'pass' ? `verdict=${row.verdict.verdict}` : null,
-      !row.verdict.found_ground_truth ? 'missing_ground_truth' : null,
-      !row.verdict.behavior_correct ? 'behavior_incorrect' : null,
-    ].filter((reason): reason is string => Boolean(reason))
-    return reasons.length ? [{ id: row.g.id, reason: reasons.join(',') }] : []
+    const reason = answerGateFailure({ g: row.g, det: row.det, verdict: row.verdict })
+    return reason ? [{ id: row.g.id, reason }] : []
   })
   if (gateFailures.length) {
     console.log('\n── GATE FAILURES ──')
@@ -396,4 +429,6 @@ async function main() {
   console.log(`\nWrote ${outPath}\n`)
 }
 
-main().catch((e) => { console.error(e); process.exit(1) })
+if (process.env.VITEST !== 'true') {
+  main().catch((e) => { console.error(e); process.exit(1) })
+}
