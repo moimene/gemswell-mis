@@ -47,6 +47,7 @@ const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-chat')
+const allowSmartModelFallback = process.env.E2E_ALLOW_SMART_MODEL_FALLBACK === 'true'
 
 const smartSearchScenarios: SmartSearchScenario[] = [
   {
@@ -314,16 +315,28 @@ async function runSmartSearch(page: Page, scenario: SmartSearchScenario): Promis
     { timeout: 180_000 },
   )
   const bodyText = await page.locator('body').innerText()
-  const visibleChecks = assertText(bodyText, scenario.checks)
+  const visibleChecks = assertText(bodyText, scenario.checks.filter(([key]) => key !== 'hasRerankOrModel'))
+  const modelSignalVisible = /RERANK|MODELO/i.test(bodyText)
+  const localRankingFallbackVisible = /Ranking local/i.test(bodyText)
+  const rerankOrModelUsed = payload.modelRerankUsed === true || payload.modelUsed === true
+  const acceptableRankingMode = rerankOrModelUsed || (allowSmartModelFallback && localRankingFallbackVisible)
   const apiChecks = {
     topExpectedDoc: payload.items?.[0]?.id === scenario.expectedDocId,
     graphUsed: payload.graphUsed === true,
-    rerankOrModelUsed: payload.modelRerankUsed === true || payload.modelUsed === true,
+    hasRerankOrModel: modelSignalVisible || (allowSmartModelFallback && localRankingFallbackVisible),
+    rerankOrModelUsed,
+    acceptableRankingMode,
+    ...(allowSmartModelFallback ? { localRankingFallbackVisible } : {}),
   }
   const details = { ...visibleChecks, ...apiChecks }
   return {
     step: scenario.step,
-    ok: Object.values(details).every(Boolean),
+    ok:
+      Object.values(visibleChecks).every(Boolean) &&
+      details.topExpectedDoc === true &&
+      details.graphUsed === true &&
+      details.hasRerankOrModel === true &&
+      details.acceptableRankingMode === true,
     details,
     screenshot: await screenshot(page, scenario.screenshot),
   }

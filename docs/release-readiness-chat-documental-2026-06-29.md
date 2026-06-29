@@ -102,3 +102,26 @@ Liberable para test del equipo solo si se cumplen todos:
 5. `git status --short --branch` no muestra cambios propios sin commit.
 
 Si falla `eval:openai-health` con `quota_or_billing`, no investigar RAG primero: resolver billing/limits de OpenAI y relanzar.
+
+## Smoke degradado mientras OpenAI esta sin cuota
+
+Este smoke no libera release. Sirve solo para confirmar que, durante el bloqueo de cuota, el gestor documental mantiene recuperacion determinista, grafo, enlaces de fuentes e ingesta.
+
+```bash
+npm run build
+npm run start -- -p 3127
+E2E_BASE_URL=http://localhost:3127 E2E_ALLOW_SMART_MODEL_FALLBACK=true E2E_ARTIFACT_DIR=/tmp/gemswell-e2e-documents-prod-degraded npm run e2e:documents
+```
+
+No ejecutar `npm run build` en paralelo contra la misma instancia `next start`: puede dejar assets de `.next` en transicion y producir 500 espurios antes del login.
+
+Resultado esperado en modo degradado:
+
+- Los documentos Santander/BBVA y Buenavista siguen como `topExpectedDoc: true`.
+- `graphUsed: true`.
+- `acceptableRankingMode: true`.
+- La UI puede mostrar `Ranking local` en vez de `Rerank`/`Modelo`.
+- `failedRequests: []`.
+- `consoleMessages: []`.
+
+Este modo solo es aceptable cuando el bloqueo ya esta clasificado por `eval:openai-health` como `quota_or_billing`.

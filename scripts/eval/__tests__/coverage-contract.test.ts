@@ -124,6 +124,9 @@ describe('critical eval coverage contract', () => {
     expect(documentChatE2e).toContain('becaff10-41f7-4175-950d-d70e9a1d3b6b')
     expect(documentChatE2e).toContain('502705bf-da6d-44bd-9871-38b1e1a8ab73')
     expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
+    expect(documentChatE2e).toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
+    expect(documentChatE2e).toContain('Ranking local')
+    expect(documentChatE2e).toContain('acceptableRankingMode')
     expect(documentIngestE2e).toContain('chat-source-link-opens-newly-ingested-document')
     expect(documentIngestE2e).toContain('urlHasDocumentId')
   })
@@ -136,7 +139,10 @@ describe('critical eval coverage contract', () => {
       'gh api -X POST repos/moimene/gemswell-mis/actions/workflows/303814927/dispatches -f ref=main',
       'E2E_BASE_URL=http://localhost:3127',
       'npm run e2e:documents',
+      'E2E_ALLOW_SMART_MODEL_FALLBACK=true',
       'rerankOrModelUsed: true',
+      'acceptableRankingMode: true',
+      'Ranking local',
       'quota_or_billing',
       'no investigar RAG primero',
       '28380967059',
