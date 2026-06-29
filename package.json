@@ -14,6 +14,7 @@
     "eval:answers": "tsx scripts/eval/run-answers.ts",
     "eval:smart-search": "tsx scripts/eval/run-smart-search.ts",
     "eval:prompt-behavior": "tsx scripts/eval/prompt-behavior-check.ts",
+    "eval:ocr-smoke": "tsx scripts/eval/ocr-smoke.ts",
     "sharepoint:reconcile": "tsx scripts/reconcile-sharepoint-local.ts",
     "ingest:jobs-loop": "tsx scripts/process-ingest-jobs-loop.ts",
     "ingest:jobs-direct": "tsx scripts/direct-ingest-jobs.ts",

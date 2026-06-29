@@ -82,6 +82,10 @@ jobs:
       - name: Unit and invariant tests
         run: npm test
 
+      - name: OCR fallback smoke
+        timeout-minutes: 5
+        run: npm run eval:ocr-smoke -- live-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Production build
         run: npm run build
 
