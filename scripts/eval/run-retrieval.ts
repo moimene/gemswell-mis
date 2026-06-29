@@ -37,6 +37,35 @@ type RunOut = {
   topTitles: { title: string | null; project_id: string | null; doc_type: string | null; authority: number | null; review: string | null }[]
 }
 
+export type RetrievalResult = { g: Golden; cross: RunOut; scoped: RunOut | null }
+
+type ModeSummary = {
+  total: number
+  recallAt1: number | null
+  recallAt3: number | null
+  recallAt5: number | null
+  recallAt10: number | null
+  mrr: number | null
+}
+
+export type RetrievalSummary = {
+  ok: boolean
+  failures: string[]
+  documentary: {
+    total: number
+    pinned: number
+    titleOnly: number
+    cross: ModeSummary
+    scoped: ModeSummary | null
+    precisionAt5: number | null
+  }
+  latency: {
+    avgMs: number
+    degradedCount: number
+  }
+  zeroResultPools: Array<{ id: string; pool: number; vector: number; keyword: number }>
+}
+
 function positiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name]
   if (!raw) return fallback
@@ -95,6 +124,70 @@ function hasScoped(g: Golden): boolean {
   return !!(g.scoped_filter && (g.scoped_filter.project_id || g.scoped_filter.doc_type))
 }
 
+function hasDocumentaryGroundTruth(g: Golden): boolean {
+  return !!(g.ground_truth?.titles?.length || g.ground_truth?.expected_doc_ids?.length)
+}
+
+function ratio(n: number, d: number): number | null {
+  return d === 0 ? null : n / d
+}
+
+export function buildRetrievalSummary(results: RetrievalResult[]): RetrievalSummary {
+  const docQs = results.filter((r) => r.g.expected_kind === 'documentary' && hasDocumentaryGroundTruth(r.g))
+  const modeRows = (mode: 'cross' | 'scoped') =>
+    docQs.map((r) => (mode === 'cross' ? r.cross : r.scoped)).filter(Boolean) as RunOut[]
+  const modeSummary = (mode: 'cross' | 'scoped'): ModeSummary | null => {
+    const rows = modeRows(mode)
+    if (mode === 'scoped' && rows.length === 0) return null
+    return {
+      total: rows.length,
+      recallAt1: ratio(rows.filter((r) => hitAtK(r.rank, 1)).length, rows.length),
+      recallAt3: ratio(rows.filter((r) => hitAtK(r.rank, 3)).length, rows.length),
+      recallAt5: ratio(rows.filter((r) => hitAtK(r.rank, 5)).length, rows.length),
+      recallAt10: ratio(rows.filter((r) => hitAtK(r.rank, 10)).length, rows.length),
+      mrr: rows.length ? mean(rows.map((r) => (r.rank ? 1 / r.rank : 0))) : null,
+    }
+  }
+
+  const pinned = docQs.filter((r) => r.cross.scoredBy === 'id')
+  const p5vals = pinned.map((r) => r.cross.precisionAt5).filter((x): x is number => x != null)
+  const titleOnly = docQs.filter((r) => r.cross.scoredBy !== 'id').length
+  const allCross = results.map((r) => r.cross)
+  const zeroResultPools = results
+    .filter((r) => r.g.expected_kind === 'abstain')
+    .map((r) => ({ id: r.g.id, pool: r.cross.poolCount, vector: r.cross.vectorCount, keyword: r.cross.keywordCount }))
+
+  const failures: string[] = []
+  if (docQs.length === 0) failures.push('No documentary retrieval cases with ground truth were evaluated.')
+  for (const row of pinned) {
+    if (!hitAtK(row.cross.rank, 5)) failures.push(`${row.g.id}: expected pinned document missing from cross top 5.`)
+    if (row.scoped && hitAtK(row.cross.rank, 10) && !hitAtK(row.scoped.rank, 10)) {
+      failures.push(`${row.g.id}: scoped retrieval missed a document found by cross retrieval.`)
+    }
+  }
+  if (titleOnly > 0) failures.push(`${titleOnly} documentary retrieval cases are still title-only; pin expected_doc_ids.`)
+  const degradedCount = allCross.filter((r) => r.degraded).length
+  if (degradedCount > 0) failures.push(`${degradedCount} cross retrieval cases ran degraded.`)
+
+  return {
+    ok: failures.length === 0,
+    failures,
+    documentary: {
+      total: docQs.length,
+      pinned: pinned.length,
+      titleOnly,
+      cross: modeSummary('cross') ?? { total: 0, recallAt1: null, recallAt3: null, recallAt5: null, recallAt10: null, mrr: null },
+      scoped: modeSummary('scoped'),
+      precisionAt5: p5vals.length ? mean(p5vals) : null,
+    },
+    latency: {
+      avgMs: mean(allCross.map((r) => r.ms)),
+      degradedCount,
+    },
+    zeroResultPools,
+  }
+}
+
 async function main() {
   const label = process.argv[2] || 'baseline'
   const only = arg('--only')?.split(',').map((s) => s.trim())
@@ -105,7 +198,7 @@ async function main() {
   if (limit) golden = golden.slice(0, limit)
   const cache = new Map<string, DocMeta>()
 
-  const results: Array<{ g: Golden; cross: RunOut; scoped: RunOut | null }> = []
+  const results: RetrievalResult[] = []
 
   console.log(`\n=== TIER-A RETRIEVAL EVAL (label=${label}) — ${golden.length} questions, phase_timeout=${PHASE_TIMEOUT_MS}ms ===\n`)
   for (const g of golden) {
@@ -164,7 +257,7 @@ async function main() {
     )
     if (g.expected_kind === 'documentary') {
       const top = cross.topTitles.slice(0, 3).map((t, i) => `      ${i + 1}. [${t.project_id}/${t.doc_type}/a${t.authority}/${t.review}] ${String(t.title).slice(0, 60)}`).join('\n')
-      console.log(top + gt + (g.notes && cross.rank === 0 ? `\n      ⚠ MISS — ${g.notes.slice(0, 90)}` : ''))
+      console.log(top + gt + (hasDocumentaryGroundTruth(g) && g.notes && cross.rank === 0 ? `\n      ⚠ MISS — ${g.notes.slice(0, 90)}` : ''))
     }
     logProgress('case_done', {
       id: g.id,
@@ -224,8 +317,16 @@ async function main() {
   const outDir = resolve(process.cwd(), 'scripts/eval/results')
   mkdirSync(outDir, { recursive: true })
   const outPath = resolve(outDir, `retrieval-${label}.json`)
-  writeFileSync(outPath, JSON.stringify({ label, at: new Date().toISOString(), results }, null, 2))
+  const summary = buildRetrievalSummary(results)
+  if (!summary.ok) {
+    console.log('\n── STRICT RETRIEVAL FAILURES ──')
+    for (const failure of summary.failures) console.log(`  ✗ ${failure}`)
+  }
+  writeFileSync(outPath, JSON.stringify({ label, at: new Date().toISOString(), summary, results }, null, 2))
   console.log(`\nWrote ${outPath}\n`)
+  if (!summary.ok && process.env.EVAL_RETRIEVAL_STRICT !== 'false') process.exitCode = 1
 }
 
-main().catch((e) => { console.error(e); process.exit(1) })
+if (process.env.VITEST !== 'true') {
+  main().catch((e) => { console.error(e); process.exit(1) })
+}
