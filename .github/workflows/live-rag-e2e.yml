@@ -94,6 +94,12 @@ jobs:
           EVAL_RETRIEVAL_PHASE_TIMEOUT_MS: '240000'
         run: npm run eval:retrieval -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: Prompt behavior eval
+        timeout-minutes: 30
+        env:
+          EVAL_PROMPT_BEHAVIOR_PHASE_TIMEOUT_MS: '300000'
+        run: npm run eval:prompt-behavior -- live-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Critical answer eval
         timeout-minutes: 45
         env:
