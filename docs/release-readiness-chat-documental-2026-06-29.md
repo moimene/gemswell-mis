@@ -47,7 +47,7 @@ Evidencia local adicional:
 Despues de resolver cuota OpenAI, ejecutar:
 
 ```bash
-npm run eval:openai-health -- release-openai-health
+npm run eval:openai-health -- release-openai-health --out scripts/eval/results/openai-health-release-openai-health.json
 ```
 
 Debe devolver `ok: true`.

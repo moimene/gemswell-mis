@@ -82,8 +82,10 @@ describe('critical eval coverage contract', () => {
 
   it('keeps live-rag-e2e wired to the critical eval and browser gates', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/live-rag-e2e.yml'), 'utf8')
+    const packageJson = readFileSync(resolve(root, 'package.json'), 'utf8')
     const documentChatE2e = readFileSync(resolve(root, 'scripts/e2e/document-chat.ts'), 'utf8')
     const documentIngestE2e = readFileSync(resolve(root, 'scripts/e2e/document-ingest.ts'), 'utf8')
+    const documentsE2e = readFileSync(resolve(root, 'scripts/e2e/documents.ts'), 'utf8')
 
     for (const id of criticalAnswerIds) {
       expect(workflow, id).toContain(id)
@@ -150,6 +152,13 @@ describe('critical eval coverage contract', () => {
     expect(documentIngestE2e).toContain('urlHasDocumentId')
     expect(documentIngestE2e).toContain('E2E_SERVER_MODE')
     expect(documentIngestE2e).toContain('document-ingest-summary.json')
+    expect(packageJson).toContain('"e2e:documents": "tsx scripts/e2e/documents.ts"')
+    expect(documentsE2e).toContain('document-chat-summary.json')
+    expect(documentsE2e).toContain('document-ingest-summary.json')
+    expect(documentsE2e).toContain('documents-summary.json')
+    expect(documentsE2e).toContain('E2E_SUMMARY_PATH')
+    expect(documentsE2e).toContain('e2e:doc-chat')
+    expect(documentsE2e).toContain('e2e:doc-ingest')
   })
 
   it('keeps the documentary release checklist aligned with the live gates', () => {
@@ -158,6 +167,7 @@ describe('critical eval coverage contract', () => {
 
     for (const required of [
       'npm run eval:openai-health -- release-openai-health',
+      '--out',
       'npm run eval:release-readiness',
       '--e2e-dir /tmp/gemswell-e2e-documents-prod',
       '--live-evidence-summary /tmp/gemswell-e2e-documents-prod/live-evidence-summary.json',

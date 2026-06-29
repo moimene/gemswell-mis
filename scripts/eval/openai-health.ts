@@ -1,15 +1,44 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { config } from 'dotenv'
 config({ path: '.env.local' })
 import OpenAI from 'openai'
 import { isOpenAIQuotaError, sanitizeOpenAIError } from '../../src/lib/openai-error'
 
-const label = process.argv[2] || new Date().toISOString().replace(/[:.]/g, '-')
+type Options = {
+  label: string
+  outPath: string | null
+}
+
+function parseArgs(argv = process.argv.slice(2)): Options {
+  let label: string | null = null
+  let outPath: string | null = null
+
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]
+    if (arg === '--out') {
+      outPath = argv[index + 1] ?? null
+      index++
+    } else if (arg.startsWith('--out=')) {
+      outPath = arg.slice('--out='.length)
+    } else if (!arg.startsWith('--') && !label) {
+      label = arg
+    }
+  }
+
+  return {
+    label: label || new Date().toISOString().replace(/[:.]/g, '-'),
+    outPath: outPath ? resolve(outPath) : null,
+  }
+}
+
+const options = parseArgs()
+const label = options.label
 const model = process.env.OPENAI_CHAT_MODEL || 'gpt-5.5'
 const outDir = resolve('scripts/eval/results')
 mkdirSync(outDir, { recursive: true })
-const outPath = resolve(outDir, `openai-health-${label}.json`)
+const outPath = options.outPath ?? resolve(outDir, `openai-health-${label}.json`)
+mkdirSync(dirname(outPath), { recursive: true })
 
 type HealthResult = {
   label: string

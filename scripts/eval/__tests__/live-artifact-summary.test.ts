@@ -120,6 +120,27 @@ describe('live artifact summary', () => {
     expect(summary.classification.productFailures.map((item) => item.gate)).toContain('document-ingest')
   })
 
+  it('prefers suite-specific documentary summaries over a newer generic summary', () => {
+    const { resultsDir, e2eDir } = makeRoot()
+    const label = 'live-specific-summary-1'
+    writePassingArtifacts(resultsDir, e2eDir, label)
+    writeJson(join(e2eDir, 'summary.json'), {
+      ok: false,
+      results: [
+        { step: 'chat-answer-santander-bbva', ok: false },
+        { step: 'rag-search-recovers-newly-ingested-document', ok: false },
+      ],
+      failedRequests: [],
+      consoleMessages: [],
+    })
+
+    const summary = buildLiveArtifactSummary({ resultsDirs: [resultsDir], e2eDirs: [e2eDir], label, outPath: null })
+
+    expect(summary.artifacts['document-chat']).toContain('document-chat-summary.json')
+    expect(summary.artifacts['document-ingest']).toContain('document-ingest-summary.json')
+    expect(summary.productOk).toBe(true)
+  })
+
   it('treats smart-search critical rank #1 misses as product failures even when row pass is true', () => {
     const { resultsDir, e2eDir } = makeRoot()
     const label = 'live-4-1'

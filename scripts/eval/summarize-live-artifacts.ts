@@ -155,7 +155,13 @@ function selectArtifact(gate: typeof REQUIRED_GATES[number], artifacts: Artifact
       if (gate === 'document-ingest' && artifact.name === 'summary.json') return isLikelyIngestSummary(artifact.path, artifact.data)
       return true
     })
-    .sort((a, b) => b.mtimeMs - a.mtimeMs || b.path.localeCompare(a.path))
+    .sort((a, b) => {
+      if ((gate === 'document-chat' || gate === 'document-ingest') && a.name !== b.name) {
+        if (a.name === 'summary.json') return 1
+        if (b.name === 'summary.json') return -1
+      }
+      return b.mtimeMs - a.mtimeMs || b.path.localeCompare(a.path)
+    })
   return matches[0] ?? null
 }
 
