@@ -46,6 +46,7 @@ type ChatSourceLinkScenario = {
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
+const serverMode = process.env.E2E_SERVER_MODE === 'start' ? 'start' : 'dev'
 const artifactDir = process.env.E2E_ARTIFACT_DIR || join(tmpdir(), 'gemswell-mis-e2e-doc-chat')
 const allowSmartModelFallback = process.env.E2E_ALLOW_SMART_MODEL_FALLBACK === 'true'
 
@@ -188,7 +189,7 @@ async function findFreePort(startAt = 3102): Promise<number> {
 }
 
 function startNextServer(port: number): ChildProcess {
-  const child = spawn('npm', ['run', 'dev', '--', '-p', String(port)], {
+  const child = spawn('npm', ['run', serverMode, '--', '-p', String(port)], {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',

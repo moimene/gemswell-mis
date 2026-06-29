@@ -85,6 +85,8 @@ npm run start -- -p 3127
 E2E_BASE_URL=http://localhost:3127 E2E_ARTIFACT_DIR=/tmp/gemswell-e2e-documents-prod E2E_SUMMARY_DIR=/tmp/gemswell-e2e-documents-prod npm run e2e:documents
 ```
 
+El workflow `live-rag-e2e` debe ejecutar los scripts E2E con `E2E_SERVER_MODE=start` para que el autoarranque use `next start` sobre el build de produccion, no `next dev`.
+
 Resultado esperado:
 
 - `dms-smart-search-santander-bbva`: `ok: true`, `graphUsed: true`, `rerankOrModelUsed: true`, `topExpectedDoc: true`.

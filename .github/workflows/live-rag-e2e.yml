@@ -37,6 +37,7 @@ jobs:
       RAG_OCR_ENABLED: ${{ vars.RAG_OCR_ENABLED || secrets.RAG_OCR_ENABLED }}
       E2E_ARTIFACT_DIR: /tmp/gemswell-e2e-artifacts
       E2E_SUMMARY_DIR: /tmp/gemswell-e2e-artifacts
+      E2E_SERVER_MODE: start
     steps:
       - uses: actions/checkout@v7
 

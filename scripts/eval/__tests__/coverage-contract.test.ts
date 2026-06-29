@@ -100,6 +100,7 @@ describe('critical eval coverage contract', () => {
       'Documentary browser E2E - chat/search',
       'Documentary browser E2E - ingest/governance',
       'E2E_SUMMARY_DIR',
+      'E2E_SERVER_MODE: start',
     ]) {
       expect(workflow).toContain(step)
     }
@@ -127,11 +128,13 @@ describe('critical eval coverage contract', () => {
     expect(documentChatE2e).toContain('502705bf-da6d-44bd-9871-38b1e1a8ab73')
     expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
     expect(documentChatE2e).toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
+    expect(documentChatE2e).toContain('E2E_SERVER_MODE')
     expect(documentChatE2e).toContain('document-chat-summary.json')
     expect(documentChatE2e).toContain('Ranking local')
     expect(documentChatE2e).toContain('acceptableRankingMode')
     expect(documentIngestE2e).toContain('chat-source-link-opens-newly-ingested-document')
     expect(documentIngestE2e).toContain('urlHasDocumentId')
+    expect(documentIngestE2e).toContain('E2E_SERVER_MODE')
     expect(documentIngestE2e).toContain('document-ingest-summary.json')
   })
 
