@@ -6,13 +6,6 @@ name: live-rag-e2e
 # the nightly schedule catch drift in providers, corpus metadata, RPCs, and RAG.
 on:
   workflow_dispatch:
-    inputs:
-      run_e2e:
-        description: 'Run browser E2E document chat + ingest'
-        required: true
-        default: 'true'
-        type: choice
-        options: ['true', 'false']
   schedule:
     - cron: '17 3 * * *'
 
@@ -32,14 +25,14 @@ jobs:
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_CHAT_MODEL || 'gpt-5.5' }}
-      OPENAI_VERIFIER_MODEL: ${{ vars.OPENAI_VERIFIER_MODEL || vars.OPENAI_CHAT_MODEL || 'gpt-5.5' }}
+      OPENAI_CHAT_MODEL: gpt-5.5
+      OPENAI_VERIFIER_MODEL: gpt-5.5
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
       LLAMA_CLOUD_API_KEY: ${{ secrets.LLAMA_CLOUD_API_KEY }}
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/gemswell-e2e-artifacts
+      E2E_ARTIFACT_DIR: /tmp/gemswell-e2e-artifacts
     steps:
       - uses: actions/checkout@v4
 
@@ -102,7 +95,6 @@ jobs:
           --concurrency 1
 
       - name: Documentary browser E2E
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.run_e2e == 'true' }}
         run: npm run e2e:documents
 
       - name: Upload eval and E2E artifacts
@@ -114,4 +106,4 @@ jobs:
           retention-days: 14
           path: |
             scripts/eval/results/*.json
-            ${{ runner.temp }}/gemswell-e2e-artifacts/**
+            /tmp/gemswell-e2e-artifacts/**
