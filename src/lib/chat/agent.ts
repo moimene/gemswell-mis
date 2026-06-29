@@ -7,6 +7,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createApiClient } from '@/lib/supabase-server'
 import { buildKnowledgeSource, sourceHeader, type KnowledgeSource } from '@/lib/knowledge/source-reference'
+import { providerErrorSummary } from '@/lib/provider-error'
 import { retrieveDocuments, emptyResultMessage, type GroundingMode } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
 import { formatFoundDocuments, significantTokens, tokenScore, deburr, type FoundDocRow } from './find-document'
@@ -968,7 +969,7 @@ export async function runAgentLoop(
             toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: false, source_count: sources?.length ?? 0, result_preview: result.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: result }
           } catch (err: unknown) {
-            console.error(`Tool ${block.name} failed:`, err)
+            console.error(`Tool ${block.name} failed:`, providerErrorSummary(err, 'Tool execution failed'))
             const message = err instanceof Error ? err.message : 'Unknown tool error'
             toolCalls.push({ iteration: iteration + 1, name: block.name, input: block.input, is_error: true, source_count: 0, result_preview: message.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
             return { type: 'tool_result' as const, tool_use_id: block.id, content: `Error executing ${block.name}: ${message}`, is_error: true }
@@ -1061,7 +1062,7 @@ export async function verifyAnswer(
     if (verifiedText) return { text: verifiedText, verified: true }
     return { text: input.draft, verified: false }
   } catch (err) {
-    console.warn('Chat verifier failed, returning draft answer (unverified):', err)
+    console.warn('Chat verifier failed, returning draft answer (unverified):', providerErrorSummary(err, 'Verifier failed'))
     return { text: input.draft, verified: false }
   }
 }

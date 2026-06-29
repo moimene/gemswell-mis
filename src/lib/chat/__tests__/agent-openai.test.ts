@@ -203,11 +203,28 @@ describe('runAgentLoopOpenAIPrimary', () => {
   })
 
   it('falls back to Anthropic/Gemini only for OpenAI availability errors', async () => {
-    const client = { responses: { create: vi.fn(async () => { throw Object.assign(new Error('rate limit'), { status: 429 }) }) } }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const client = {
+      responses: {
+        create: vi.fn(async () => {
+          throw Object.assign(
+            new Error('rate limit req_openaiSecret123 https://platform.openai.com/docs/guides/error-codes/api-errors'),
+            { status: 429 },
+          )
+        }),
+      },
+    }
     const anthropic = { messages: { create: vi.fn(async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok from claude' }] })) } } as never
     const r = await runAgentLoopOpenAIPrimary(anthropic, [{ role: 'user', content: 'q' }], 'sys', 'claude-sonnet-4-6', undefined, undefined, { client: client as never })
     expect(r.provider).toBe('anthropic')
     expect(r.message).toBe('ok from claude')
+    const logged = warn.mock.calls.flat().join(' ')
+    expect(logged).toContain('status=429')
+    expect(logged).toContain('[redacted-request-id]')
+    expect(logged).toContain('[link]')
+    expect(logged).not.toContain('req_openaiSecret123')
+    expect(logged).not.toContain('https://platform.openai.com')
+    warn.mockRestore()
   })
 
   it('rethrows non-availability OpenAI errors instead of masking configuration bugs', async () => {

@@ -11,6 +11,7 @@ import type {
 } from 'openai/resources/responses/responses'
 import type { GroundingMode } from '@/lib/rag/retrieve'
 import { openAIErrorSummary } from '@/lib/openai-error'
+import { providerErrorSummary } from '@/lib/provider-error'
 import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
   CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED, systemPromptForGrounding, detectEntities,
@@ -161,7 +162,7 @@ export async function runOpenAIAgentLoop(
         return { type: 'function_call_output', call_id: call.call_id, output: result }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown tool error'
-        console.error(`Tool ${call.name} failed (openai):`, err)
+        console.error(`Tool ${call.name} failed (openai):`, providerErrorSummary(err, 'Tool execution failed'))
         acc.toolCalls.push({ iteration: iteration + 1, name: call.name, input: args, is_error: true, source_count: 0, result_preview: message.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
         return { type: 'function_call_output', call_id: call.call_id, output: `Error executing ${call.name}: ${message}` }
       }
@@ -284,8 +285,7 @@ export async function runAgentLoopOpenAIPrimary(
       return { ...r, provider: 'openai' }
     } catch (err) {
       if (!isOpenAIUnavailable(err)) throw err
-      const e = err as { error?: { message?: string }; message?: string }
-      console.warn('[chat] OpenAI unavailable - falling back to legacy providers:', e?.error?.message || e?.message)
+      console.warn('[chat] OpenAI unavailable - falling back to legacy providers:', openAIErrorSummary(err))
       onProgress?.('fallback', 'legacy providers')
     }
   }

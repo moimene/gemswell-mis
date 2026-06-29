@@ -26,6 +26,21 @@ describe('OpenAI error helpers', () => {
     expect(openAIErrorSummary(err)).not.toContain('req-secret')
   })
 
+  it('redacts OpenAI support URLs and request ids from plain SDK messages', () => {
+    const summary = openAIErrorSummary({
+      status: 429,
+      message: 'You exceeded your current quota. Request id req_secret123. See https://platform.openai.com/docs/guides/error-codes/api-errors.',
+      code: 'insufficient_quota',
+    })
+
+    expect(summary).toContain('status=429')
+    expect(summary).toContain('code=insufficient_quota')
+    expect(summary).toContain('[redacted-request-id]')
+    expect(summary).toContain('[link]')
+    expect(summary).not.toContain('req_secret123')
+    expect(summary).not.toContain('https://platform.openai.com')
+  })
+
   it('classifies exhausted API credits separately from ordinary errors', () => {
     expect(isOpenAIQuotaError({ status: 429, error: { code: 'insufficient_quota', message: 'current quota exceeded' } })).toBe(true)
     expect(isOpenAIQuotaError({ status: 429, error: { message: 'rate_limit_exceeded' } })).toBe(false)

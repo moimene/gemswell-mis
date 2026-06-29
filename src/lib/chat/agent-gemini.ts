@@ -5,6 +5,7 @@
 // embeddings) — no new provider/key. Anthropic stays the primary; Gemini is only the degraded backstop.
 import type Anthropic from '@anthropic-ai/sdk'
 import { GoogleGenAI } from '@google/genai'
+import { providerErrorSummary } from '@/lib/provider-error'
 import type { GroundingMode } from '@/lib/rag/retrieve'
 import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
@@ -111,7 +112,7 @@ export async function runGeminiAgentLoop(
         return { functionResponse: { name, response: { result } } }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown tool error'
-        console.error(`Tool ${name} failed (gemini):`, err)
+        console.error(`Tool ${name} failed (gemini):`, providerErrorSummary(err, 'Tool execution failed'))
         acc.toolCalls.push({ iteration: iteration + 1, name, input: args, is_error: true, source_count: 0, result_preview: message.slice(0, TOOL_RESULT_PREVIEW_CHARS) })
         return { functionResponse: { name, response: { error: `Error executing ${name}: ${message}` } } }
       }
@@ -139,7 +140,7 @@ export async function verifyAnswerGemini(
     if (text) return { text, verified: true }
     return { text: input.draft, verified: false }
   } catch (err) {
-    console.warn('Gemini verifier failed, returning draft (unverified):', err)
+    console.warn('Gemini verifier failed, returning draft (unverified):', providerErrorSummary(err, 'Verifier failed'))
     return { text: input.draft, verified: false }
   }
 }
@@ -180,8 +181,7 @@ export async function runAgentLoopResilient(
     return { ...r, provider: 'anthropic' }
   } catch (err) {
     if (!GEMINI_FALLBACK_ENABLED || !isAnthropicUnavailable(err)) throw err
-    const e = err as { error?: { message?: string }; message?: string }
-    console.warn('[chat] Anthropic unavailable — falling back to Gemini:', e?.error?.message || e?.message)
+    console.warn('[chat] Anthropic unavailable — falling back to Gemini:', providerErrorSummary(err, 'Anthropic request failed'))
     onProgress?.('fallback', GEMINI_CHAT_MODEL)
     const r = await runGeminiAgentLoop(messages, systemPrompt, { onProgress, signal, groundingMode: opts.groundingMode })
     return { ...r, provider: 'gemini' }
