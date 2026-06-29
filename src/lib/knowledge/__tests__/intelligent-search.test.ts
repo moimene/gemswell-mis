@@ -176,6 +176,50 @@ describe('searchDocumentsIntelligently', () => {
     })
   })
 
+  it('falls back to deterministic ranking when the model reranker is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    ;(retrieveDocuments as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ranked: [
+        chunk('c1', 'd1', 'Contrato financiacion Santander BBVA EURIBOR margen', 0.8),
+        chunk('c2', 'd2', 'Mandato preparatorio Santander', 0.6),
+      ],
+      diagnostics: { degraded: false, vectorFailed: false, keywordFailed: false, graphCount: 2, graphEntities: [], modelRerankUsed: false },
+    })
+
+    try {
+      const result = await searchDocumentsIntelligently(fakeSupabase([
+        doc('d1', { title: '4140-7692-5542 Contrato de financiacion.pdf' }),
+        doc('d2', { title: 'Mandato Madrid Playa Surf.docx' }),
+      ]), {
+        query: 'reranker outage Santander BBVA',
+        cacheEnabled: false,
+        reranker: async () => {
+          throw {
+            status: 429,
+            headers: { authorization: 'Bearer sk-secret', 'set-cookie': 'secret-cookie' },
+            requestID: 'req-secret',
+            error: { code: 'insufficient_quota', type: 'insufficient_quota', message: 'You exceeded your current quota.' },
+          }
+        },
+      })
+
+      expect(result.items.map((item) => item.id)).toEqual(['d1', 'd2'])
+      expect(result.modelUsed).toBe(false)
+      expect(result.model).toBeNull()
+      expect(result.modelRerankUsed).toBe(false)
+      expect(result.graphUsed).toBe(true)
+
+      const warning = warn.mock.calls.map((call) => call.join(' ')).join('\n')
+      expect(warning).toContain('status=429')
+      expect(warning).toContain('code=insufficient_quota')
+      expect(warning).not.toContain('sk-secret')
+      expect(warning).not.toContain('secret-cookie')
+      expect(warning).not.toContain('req-secret')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('returns cache hits for repeated equivalent searches', async () => {
     ;(retrieveDocuments as ReturnType<typeof vi.fn>).mockResolvedValue({
       ranked: [chunk('cache-c1', 'cache-d1', 'Contrato financiacion EURIBOR margen 4,00', 0.7)],
