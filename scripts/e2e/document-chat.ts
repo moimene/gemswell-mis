@@ -135,6 +135,7 @@ function startNextServer(port: number): ChildProcess {
   const child = spawn('npm', ['run', 'dev', '--', '-p', String(port)], {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' },
   })
   child.stdout?.on('data', (chunk) => {
@@ -144,6 +145,41 @@ function startNextServer(port: number): ChildProcess {
     if (process.env.E2E_VERBOSE_SERVER === 'true') process.stderr.write(chunk)
   })
   return child
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+}
+
+function killServerProcess(child: ChildProcess, signal: NodeJS.Signals) {
+  if (process.platform !== 'win32' && child.pid) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch {
+      // Fall back to the npm process if the process group has already exited.
+    }
+  }
+  try {
+    child.kill(signal)
+  } catch {
+    // Process already gone.
+  }
+}
+
+async function stopNextServer(child: ChildProcess): Promise<void> {
+  child.stdout?.destroy()
+  child.stderr?.destroy()
+  if (child.exitCode !== null || child.signalCode !== null) return
+
+  const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()))
+  killServerProcess(child, 'SIGTERM')
+  await Promise.race([exited, sleep(1_500)])
+
+  if (child.exitCode === null && child.signalCode === null) {
+    killServerProcess(child, 'SIGKILL')
+    await Promise.race([exited, sleep(500)])
+  }
 }
 
 function newestCachedHeadlessShell(): string | null {
@@ -181,6 +217,22 @@ async function screenshot(page: Page, name: string): Promise<string> {
 
 function assertText(text: string, checks: Array<[string, RegExp]>): Record<string, boolean> {
   return Object.fromEntries(checks.map(([name, re]) => [name, re.test(text)]))
+}
+
+function attachProgressLogger(results: StepResult[], label: string): void {
+  const push = results.push.bind(results)
+  results.push = (...items: StepResult[]) => {
+    for (const item of items) {
+      console.log(JSON.stringify({
+        e2e: label,
+        step: item.step,
+        ok: item.ok,
+        details: item.details ?? null,
+        screenshot: item.screenshot ?? null,
+      }))
+    }
+    return push(...items)
+  }
 }
 
 async function ensureSmartSearchMode(page: Page) {
@@ -291,6 +343,7 @@ async function main() {
   let browser: Browser | null = null
   let page: Page | null = null
   const results: StepResult[] = []
+  attachProgressLogger(results, 'document-chat')
   const consoleMessages: string[] = []
   const failedRequests: string[] = []
   let failure: Record<string, unknown> | null = null
@@ -358,9 +411,7 @@ async function main() {
     if (browser) await browser.close().catch(() => undefined)
     if (tempUserId) await supabase.auth.admin.deleteUser(tempUserId).catch(() => undefined)
     if (server) {
-      server.kill('SIGTERM')
-      await new Promise((resolveKill) => setTimeout(resolveKill, 500))
-      if (!server.killed) server.kill('SIGKILL')
+      await stopNextServer(server)
     }
   }
 
@@ -383,7 +434,7 @@ async function main() {
     artifactDir,
   }
   console.log(JSON.stringify(summary, null, 2))
-  if (!summary.ok) process.exitCode = 1
+  process.exit(summary.ok ? 0 : 1)
 }
 
 main().catch((err) => {
