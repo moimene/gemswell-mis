@@ -35,6 +35,14 @@ type ChatScenario = {
   screenshot: string
 }
 
+type ChatSourceLinkScenario = {
+  step: string
+  expectedDocId: string
+  expectedTitle: RegExp
+  checks: Array<[string, RegExp]>
+  screenshot: string
+}
+
 const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : null
 let baseUrl = process.env.E2E_BASE_URL || ''
 const startServer = process.env.E2E_START_SERVER !== 'false' && !process.env.E2E_BASE_URL
@@ -94,6 +102,21 @@ const chatScenarios: ChatScenario[] = [
       ['hasSourceTitle', /4148-6073-6102|Contrato de Cr[eé]dito Participativo/i],
     ],
     screenshot: 'chat-buenavista',
+  },
+]
+
+const chatSourceLinkScenarios: ChatSourceLinkScenario[] = [
+  {
+    step: 'chat-source-link-opens-santander-bbva-document',
+    expectedDocId: 'becaff10-41f7-4175-950d-d70e9a1d3b6b',
+    expectedTitle: /4140-7692-5542/,
+    checks: [
+      ['hasLibrary', /Biblioteca documental/i],
+      ['hasContract', /4140-7692-5542/],
+      ['hasDocumentPanel', /MARKDOWN|FRAGMENTOS|HISTORIAL/i],
+      ['hasFundingMeta', /funding|financiaci/i],
+    ],
+    screenshot: 'chat-source-link-santander-bbva-document',
   },
 ]
 
@@ -330,6 +353,42 @@ async function sendChatQuestion(page: Page, scenario: ChatScenario): Promise<Ste
   }
 }
 
+async function openChatSourceDeepLink(page: Page, scenario: ChatSourceLinkScenario): Promise<StepResult> {
+  const sourceLink = page
+    .locator('a[href*="/admin/documents?doc="]')
+    .filter({ hasText: scenario.expectedTitle })
+    .first()
+  await sourceLink.waitFor({ state: 'visible', timeout: 60_000 })
+
+  const popupPromise = page.context().waitForEvent('page', { timeout: 60_000 })
+  await sourceLink.click()
+  const docPage = await popupPromise
+
+  try {
+    await docPage.waitForURL(/\/admin\/documents\?doc=/, { timeout: 60_000 })
+    await docPage.waitForSelector('text=Biblioteca documental', { timeout: 60_000 })
+    await docPage.waitForFunction(
+      (pattern) => new RegExp(pattern, 'i').test(document.body.innerText),
+      scenario.expectedTitle.source,
+      { timeout: 60_000 },
+    )
+    const text = await docPage.locator('body').innerText()
+    const visibleChecks = assertText(text, scenario.checks)
+    const details = {
+      ...visibleChecks,
+      urlHasExpectedDocId: docPage.url().includes(`doc=${scenario.expectedDocId}`),
+    }
+    return {
+      step: scenario.step,
+      ok: Object.values(details).every(Boolean),
+      details,
+      screenshot: await screenshot(docPage, scenario.screenshot),
+    }
+  } finally {
+    await docPage.close().catch(() => undefined)
+  }
+}
+
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -397,6 +456,9 @@ async function main() {
 
     for (const scenario of chatScenarios) {
       results.push(await sendChatQuestion(page, scenario))
+      if (scenario.step === 'chat-answer-santander-bbva') {
+        results.push(await openChatSourceDeepLink(page, chatSourceLinkScenarios[0]))
+      }
     }
   } catch (err) {
     const bodyText = page ? await page.locator('body').innerText().catch(() => '') : ''
@@ -421,7 +483,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 2 + smartSearchScenarios.length + chatScenarios.length &&
+      results.length === 2 + smartSearchScenarios.length + chatScenarios.length + chatSourceLinkScenarios.length &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0,

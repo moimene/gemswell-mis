@@ -82,6 +82,7 @@ describe('critical eval coverage contract', () => {
 
   it('keeps live-rag-e2e wired to the critical eval and browser gates', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/live-rag-e2e.yml'), 'utf8')
+    const documentChatE2e = readFileSync(resolve(root, 'scripts/e2e/document-chat.ts'), 'utf8')
 
     for (const id of criticalAnswerIds) {
       expect(workflow, id).toContain(id)
@@ -110,6 +111,10 @@ describe('critical eval coverage contract', () => {
     ]) {
       expect(workflow).toContain(script)
     }
+
+    expect(documentChatE2e).toContain('chat-source-link-opens-santander-bbva-document')
+    expect(documentChatE2e).toContain('becaff10-41f7-4175-950d-d70e9a1d3b6b')
+    expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
   })
 
   it('keeps prompt-behavior adversarial cases in the live checker', () => {
