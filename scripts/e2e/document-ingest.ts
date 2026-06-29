@@ -372,7 +372,7 @@ async function waitForPatch(page: Page, documentId: string, action: () => Promis
   await responsePromise
 }
 
-async function askChatAboutIndexedUpload(page: Page, fileName: string, token: string): Promise<StepResult> {
+async function askChatAboutIndexedUpload(page: Page, documentId: string, fileName: string, token: string): Promise<StepResult> {
   const question = `Que condicion de prueba indica el documento temporal ${token} y cual es su margen documental? Cita el documento fuente.`
   const checks: Array<[string, RegExp]> = [
     ['hasUniqueToken', new RegExp(escapeRegExp(token), 'i')],
@@ -402,13 +402,31 @@ async function askChatAboutIndexedUpload(page: Page, fileName: string, token: st
     { timeout: 300_000 },
   ).catch(() => undefined)
   const text = await page.locator('body').innerText()
-  const details = assertText(text, checks)
+  const lastAssistantIndex = text.lastIndexOf('\nIA\n')
+  const assistantText = lastAssistantIndex >= 0 ? text.slice(lastAssistantIndex) : text
+  const textChecks = assertText(assistantText, checks)
+  const sourceLinks = await page.locator('a[href*="/admin/documents?doc="]').evaluateAll((links) =>
+    links.map((link) => ({
+      href: link.getAttribute('href') ?? '',
+      text: link.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+    })).slice(0, 8)
+  )
+  const firstSource = sourceLinks[0] ?? null
+  const sourceChecks = {
+    hasExpectedSourceLink: sourceLinks.some((link) => link.href.includes(`doc=${documentId}`) && link.text.includes(fileName)),
+    expectedSourceIsFirst: Boolean(firstSource?.href.includes(`doc=${documentId}`) && firstSource.text.includes(fileName)),
+    allSourceLinksMatchExpectedDocument: sourceLinks.length > 0 && sourceLinks.every((link) => link.href.includes(`doc=${documentId}`)),
+    answerMentionsToken: new RegExp(escapeRegExp(token), 'i').test(assistantText),
+  }
   return {
     step: 'chat-recovers-newly-ingested-document',
-    ok: Object.values(details).every(Boolean),
+    ok: Object.values({ ...textChecks, ...sourceChecks }).every(Boolean),
     details: {
-      ...details,
-      answerTail: text.slice(-900),
+      ...textChecks,
+      ...sourceChecks,
+      firstSourceText: firstSource?.text ?? null,
+      sourceLinkCount: sourceLinks.length,
+      answerTail: assistantText.slice(-900),
     },
     screenshot: await screenshot(page, 'chat-newly-ingested-document'),
   }
@@ -804,7 +822,7 @@ async function main() {
     })
 
     results.push(await waitForIndexedUploadSmartSearch(documentPage, processed.documentId, fileName, token))
-    const chatRecovery = await askChatAboutIndexedUpload(documentPage, fileName, token)
+    const chatRecovery = await askChatAboutIndexedUpload(documentPage, processed.documentId, fileName, token)
     results.push(chatRecovery)
     if (chatRecovery.ok) {
       results.push(await openIndexedUploadChatSourceDeepLink(documentPage, processed.documentId, fileName, token))

@@ -11,6 +11,12 @@ import { providerErrorSummary } from '@/lib/provider-error'
 import { retrieveDocuments, emptyResultMessage, type GroundingMode } from '@/lib/rag/retrieve'
 import { scanForInjection, wrapUntrustedContent } from '@/lib/rag/injection'
 import { formatFoundDocuments, significantTokens, tokenScore, deburr, type FoundDocRow } from './find-document'
+import {
+  buildExactIdentifierRecoveryAnswer,
+  extractExactIdentifierTokens,
+  promoteExactIdentifierSources,
+  sourceMatchesExactIdentifiers,
+} from './source-precision'
 
 // ─── Types ──────────────────────────────────────────────────────────
 export type Source = KnowledgeSource
@@ -1264,6 +1270,30 @@ function appendUnreviewedSourceDisclosure(answer: string, sources: Source[]): st
   return answer.trim() ? `${answer.trimEnd()}\n\n${note}` : note
 }
 
+async function fetchExactSourceChunkEvidence(sources: Source[]): Promise<string> {
+  const documentIds = Array.from(new Set(
+    sources
+      .map((source) => source.documentId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  ))
+  if (documentIds.length === 0) return ''
+
+  try {
+    const { data, error } = await createApiClient()
+      .from('rag_chunks')
+      .select('content')
+      .in('document_id', documentIds)
+      .limit(20)
+    if (error) return ''
+    return (data ?? [])
+      .map((row) => typeof row.content === 'string' ? row.content : '')
+      .filter(Boolean)
+      .join('\n\n')
+  } catch {
+    return ''
+  }
+}
+
 export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Promise<PostAnswerGuardOutput> {
   let answer = input.answer
   const sourceMap = new Map(input.sources.map((source) => [source.id, source]))
@@ -1295,6 +1325,35 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
 
   async function runGuardSearch(args: Record<string, unknown>) {
     return runGuardTool('search_documents', args)
+  }
+
+  const exactIdentifierTokens = extractExactIdentifierTokens(input.query)
+  if (exactIdentifierTokens.length > 0) {
+    let exactEvidence = ''
+    let exactSources = Array.from(sourceMap.values())
+      .filter((source) => sourceMatchesExactIdentifiers(source, exactIdentifierTokens))
+    if (exactSources.length === 0 || !exactIdentifierTokens.every((token) => answer.toUpperCase().includes(token))) {
+      const guard = await runGuardSearch({ query: exactIdentifierTokens.join(' ') })
+      exactEvidence = guard.result
+      exactSources = Array.from(sourceMap.values())
+        .filter((source) => sourceMatchesExactIdentifiers(source, exactIdentifierTokens))
+    }
+    const recovered = buildExactIdentifierRecoveryAnswer(input.query, exactIdentifierTokens, exactSources, exactEvidence)
+    const hydratedEvidence = await fetchExactSourceChunkEvidence(exactSources)
+    const recoveredWithHydratedEvidence = buildExactIdentifierRecoveryAnswer(
+      input.query,
+      exactIdentifierTokens,
+      exactSources,
+      [exactEvidence, hydratedEvidence].filter(Boolean).join('\n\n'),
+    )
+    const exactRecovery = recoveredWithHydratedEvidence ?? recovered
+    if (exactRecovery) {
+      answer = exactRecovery
+      const promoted = promoteExactIdentifierSources(Array.from(sourceMap.values()), exactIdentifierTokens)
+        .filter((source) => sourceMatchesExactIdentifiers(source, exactIdentifierTokens))
+      sourceMap.clear()
+      for (const source of promoted) sourceMap.set(source.id, source)
+    }
   }
 
   if (isGroupOnePowersQuery(input.query)) {
