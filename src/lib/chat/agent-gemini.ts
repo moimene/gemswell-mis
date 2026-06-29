@@ -10,6 +10,7 @@ import {
   TOOLS, executeTool, buildAgentResult, buildVerifierSystemPrompt, buildVerifierUserContent,
   runAgentLoop, verifyAnswer, CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED,
   systemPromptForGrounding, chooseChatModel, detectEntities, enforcePostAnswerGuards, TOOL_RESULT_PREVIEW_CHARS,
+  isUnreviewedSource,
   type AgentLoopResult, type AgentAccumulators, type VerifierInput, type Source, type ChatTurnResult,
 } from './agent'
 
@@ -245,10 +246,7 @@ export async function runChatTurnResilient(
     injectionFlagged: guarded.injectionFlagged,
     truncated: loop.truncated,
     retrievalIncomplete: guarded.retrievalIncomplete,
-    unreviewedUsed: guarded.sources.filter((s) => {
-      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-      return rs === 'needs_review' || rs === 'pending'
-    }).length,
+    unreviewedUsed: guarded.sources.filter(isUnreviewedSource).length,
     model: loop.provider === 'gemini' ? GEMINI_CHAT_MODEL : model,
     entities: detectEntities(query),
     provider: loop.provider,

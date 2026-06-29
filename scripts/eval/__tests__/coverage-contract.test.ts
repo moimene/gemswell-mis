@@ -95,6 +95,7 @@ describe('critical eval coverage contract', () => {
       'Prompt behavior eval',
       'OCR fallback smoke',
       'Critical answer eval',
+      'Governance eval',
       'Documentary browser E2E - chat/search',
       'Documentary browser E2E - ingest/governance',
     ]) {
@@ -107,6 +108,7 @@ describe('critical eval coverage contract', () => {
       'npm run eval:prompt-behavior',
       'npm run eval:ocr-smoke',
       'npm run eval:answers',
+      'npm run eval:governance',
       'npm run e2e:doc-chat',
       'npm run e2e:doc-ingest',
     ]) {
@@ -120,6 +122,18 @@ describe('critical eval coverage contract', () => {
     expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
     expect(documentIngestE2e).toContain('chat-source-link-opens-newly-ingested-document')
     expect(documentIngestE2e).toContain('urlHasDocumentId')
+  })
+
+  it('keeps governance gates wired to deterministic cited-source checks', () => {
+    const runner = readFileSync(resolve(root, 'scripts/eval/run-governance.ts'), 'utf8')
+
+    expect(runner).toContain('governance.superseded_never_cited')
+    expect(runner).toContain('governance.unreviewed_disclosed')
+    expect(runner).toContain('lifecycle=superseded')
+    expect(runner).toContain('status=retired')
+    expect(runner).toContain('review_status=rejected')
+    expect(runner).toContain('classification_source=agent_rejected')
+    expect(runner).toContain('missing_document_metadata')
   })
 
   it('keeps prompt-behavior adversarial cases in the live checker', () => {

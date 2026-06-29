@@ -894,10 +894,7 @@ export function buildAgentResult(message: string, truncated: boolean, acc: Agent
     injectionFlagged: acc.injectionFlagged,
     truncated,
     retrievalIncomplete: acc.retrievalIncomplete,
-    unreviewedUsed: sources.filter((s) => {
-      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-      return rs === 'needs_review' || rs === 'pending'
-    }).length,
+    unreviewedUsed: sources.filter(isUnreviewedSource).length,
     searchEvidence: acc.searchEvidence,
   }
 }
@@ -1239,6 +1236,33 @@ function hasSearchDocumentsCall(toolCalls: ToolCallAudit[]): boolean {
   return toolCalls.some((call) => call.name === 'search_documents' && !call.is_error)
 }
 
+function sourceReviewStatus(source: Source): string {
+  const value = (source.metadata as Record<string, unknown> | undefined)?.review_status
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+export function isUnreviewedSource(source: Source): boolean {
+  const reviewStatus = sourceReviewStatus(source)
+  return reviewStatus === 'needs_review' || reviewStatus === 'pending' || reviewStatus === 'unreviewed'
+}
+
+function hasUnreviewedSourceDisclosure(answer: string): boolean {
+  const folded = normaliseGuardText(answer)
+  return /\b(sin\s+revisar|pendiente\s+de\s+revision|needs[_ -]?review|pending|unreviewed|no\s+revisad[oa]|no\s+auditad[oa]|no\s+validad[oa])\b/i.test(folded)
+}
+
+function appendUnreviewedSourceDisclosure(answer: string, sources: Source[]): string {
+  const unreviewed = sources.filter(isUnreviewedSource)
+  if (!unreviewed.length || hasUnreviewedSourceDisclosure(answer)) return answer
+
+  const statuses = Array.from(new Set(unreviewed.map(sourceReviewStatus).filter(Boolean))).join('/')
+  const labels = Array.from(new Set(unreviewed.map((source) => source.label.replace(/\s*\[SIN REVISAR\]\s*$/i, '').trim()).filter(Boolean))).slice(0, 2)
+  const sourcePart = labels.length ? ` Fuentes: ${labels.join('; ')}.` : ''
+  const statusPart = statuses ? ` (review_status ${statuses})` : ''
+  const note = `Nota de gobernanza: hay fuentes citadas sin revisar${statusPart}; las trato como contexto no confirmado, no como fuente de registro.${sourcePart}`
+  return answer.trim() ? `${answer.trimEnd()}\n\n${note}` : note
+}
+
 export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Promise<PostAnswerGuardOutput> {
   let answer = input.answer
   const sourceMap = new Map(input.sources.map((source) => [source.id, source]))
@@ -1553,6 +1577,7 @@ export async function enforcePostAnswerGuards(input: PostAnswerGuardInput): Prom
   }
 
   const sources = Array.from(sourceMap.values())
+  answer = appendUnreviewedSourceDisclosure(answer, sources)
   return {
     answer,
     sources,
@@ -1613,10 +1638,7 @@ export async function runChatTurn(
     injectionFlagged: guarded.injectionFlagged,
     truncated: loop.truncated,
     retrievalIncomplete: guarded.retrievalIncomplete,
-    unreviewedUsed: guarded.sources.filter((s) => {
-      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-      return rs === 'needs_review' || rs === 'pending'
-    }).length,
+    unreviewedUsed: guarded.sources.filter(isUnreviewedSource).length,
     model,
     entities: detectEntities(query),
   }

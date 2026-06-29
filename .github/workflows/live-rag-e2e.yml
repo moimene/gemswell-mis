@@ -116,6 +116,10 @@ jobs:
           --only mad-dec-capitalcall,cross-project-legal,mad-buenavista-conditions,mad-santander-bbva-bank-cost,named-absent-abstain,zero-ski,ambiguous-cost
           --concurrency 1
 
+      - name: Governance eval
+        timeout-minutes: 10
+        run: npm run eval:governance -- live-${{ github.run_id }}-${{ github.run_attempt }}-critical
+
       - name: Documentary browser E2E - chat/search
         timeout-minutes: 30
         run: npm run e2e:doc-chat

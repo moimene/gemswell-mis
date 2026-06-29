@@ -12,6 +12,7 @@
     "eval:resolve-ids": "tsx scripts/eval/resolve-ids.ts",
     "eval:retrieval": "tsx scripts/eval/run-retrieval.ts",
     "eval:answers": "tsx scripts/eval/run-answers.ts",
+    "eval:governance": "tsx scripts/eval/run-governance.ts",
     "eval:smart-search": "tsx scripts/eval/run-smart-search.ts",
     "eval:prompt-behavior": "tsx scripts/eval/prompt-behavior-check.ts",
     "eval:ocr-smoke": "tsx scripts/eval/ocr-smoke.ts",

@@ -8,6 +8,7 @@ import {
   detectEntities,
   CHAT_VERIFIER_ENABLED,
   enforcePostAnswerGuards,
+  isUnreviewedSource,
   type Source,
   type ToolCallAudit,
 } from '@/lib/chat/agent'
@@ -36,10 +37,7 @@ function isProviderMetadataRejected(error: { code?: string; message?: string } |
 }
 
 function unreviewedSourceCount(sources: Source[]): number {
-  return sources.filter((s) => {
-    const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-    return rs === 'needs_review' || rs === 'pending'
-  }).length
+  return sources.filter(isUnreviewedSource).length
 }
 
 // ─── Persistence (ownership-checked, F7) ─────────────────────────────

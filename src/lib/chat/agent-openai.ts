@@ -15,6 +15,7 @@ import {
   CHAT_MAX_TOKENS, CHAT_VERIFIER_ENABLED, systemPromptForGrounding, detectEntities,
   enforcePostAnswerGuards, chooseChatModel, TOOL_RESULT_PREVIEW_CHARS,
   isBuenavistaFinancingConditionsQuery, isMadridSeniorBankFinancingCostQuery,
+  isUnreviewedSource,
   type AgentLoopResult, type AgentAccumulators, type ChatTurnResult, type Source, type VerifierInput,
 } from './agent'
 import {
@@ -369,10 +370,7 @@ export async function runChatTurnOpenAIPrimary(
     injectionFlagged: guarded.injectionFlagged,
     truncated: loop.truncated,
     retrievalIncomplete: guarded.retrievalIncomplete,
-    unreviewedUsed: guarded.sources.filter((s) => {
-      const rs = (s.metadata as Record<string, unknown> | undefined)?.review_status
-      return rs === 'needs_review' || rs === 'pending'
-    }).length,
+    unreviewedUsed: guarded.sources.filter(isUnreviewedSource).length,
     model: modelForProvider(loop.provider, fallbackModel),
     entities: detectEntities(query),
     provider: loop.provider,

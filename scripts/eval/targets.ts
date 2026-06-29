@@ -41,8 +41,8 @@ export const TARGETS: MetricTarget[] = [
   { metric: 'ambiguous.behavior_correct', bucket: 'ambiguous', current: 1.0, target: 1.0, unit: 'rate', gate: 'hard', higherIsBetter: true, howMeasured: 'ambiguous rows ask to clarify instead of guessing' },
 
   // ── Governance invariants — binary HARD gates (Fase-7 run-governance.ts, deterministic, no LLM judge) ──
-  { metric: 'governance.superseded_never_cited', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'G1: no cited source has lifecycle=superseded or review_status=rejected' },
-  { metric: 'governance.unreviewed_disclosed', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'G2: ChatTurnResult.unreviewedUsed>0 => the answer discloses it' },
+  { metric: 'governance.superseded_never_cited', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'run-governance.ts G1: no cited source is missing metadata or has lifecycle=superseded, status=retired, review_status=rejected, classification_source=agent_rejected' },
+  { metric: 'governance.unreviewed_disclosed', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'run-governance.ts G2: cited needs_review/pending/unreviewed sources require explicit disclosure in the answer' },
   { metric: 'governance.outage_not_governance', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'G4: forced lane failure (RAG_FORCE_*_FAIL) => outage message, never a governance/no-docs message' },
 ]
 
