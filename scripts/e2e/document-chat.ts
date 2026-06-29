@@ -118,6 +118,18 @@ const chatSourceLinkScenarios: ChatSourceLinkScenario[] = [
     ],
     screenshot: 'chat-source-link-santander-bbva-document',
   },
+  {
+    step: 'chat-history-source-link-opens-santander-bbva-document',
+    expectedDocId: 'becaff10-41f7-4175-950d-d70e9a1d3b6b',
+    expectedTitle: /4140-7692-5542/,
+    checks: [
+      ['hasLibrary', /Biblioteca documental/i],
+      ['hasContract', /4140-7692-5542/],
+      ['hasDocumentPanel', /MARKDOWN|FRAGMENTOS|HISTORIAL/i],
+      ['hasFundingMeta', /funding|financiaci/i],
+    ],
+    screenshot: 'chat-history-source-link-santander-bbva-document',
+  },
 ]
 
 function maskEmail(email: string): string {
@@ -389,6 +401,44 @@ async function openChatSourceDeepLink(page: Page, scenario: ChatSourceLinkScenar
   }
 }
 
+async function restoreChatHistoryAndOpenSourceDeepLink(
+  page: Page,
+  chatScenario: ChatScenario,
+  linkScenario: ChatSourceLinkScenario,
+): Promise<StepResult> {
+  const conversationResponse = page.waitForResponse((resp) =>
+    resp.url().includes('/api/chat/conversations/') && resp.status() === 200,
+    { timeout: 60_000 },
+  )
+  await page.reload({ waitUntil: 'networkidle' })
+  await conversationResponse
+  await page.waitForSelector('textarea', { timeout: 60_000 })
+  await page.waitForFunction(
+    (patterns) => {
+      const text = document.body.innerText
+      return (patterns as string[]).every((pattern) => new RegExp(pattern, 'i').test(text))
+    },
+    chatScenario.checks.map(([, re]) => re.source),
+    { timeout: 90_000 },
+  )
+
+  const restoredSourceLink = page
+    .locator('a[href*="/admin/documents?doc="]')
+    .filter({ hasText: linkScenario.expectedTitle })
+    .first()
+  await restoredSourceLink.waitFor({ state: 'visible', timeout: 60_000 })
+
+  const linkResult = await openChatSourceDeepLink(page, linkScenario)
+  return {
+    ...linkResult,
+    details: {
+      ...(linkResult.details ?? {}),
+      restoredAnswer: true,
+      restoredSourceLink: true,
+    },
+  }
+}
+
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -458,6 +508,7 @@ async function main() {
       results.push(await sendChatQuestion(page, scenario))
       if (scenario.step === 'chat-answer-santander-bbva') {
         results.push(await openChatSourceDeepLink(page, chatSourceLinkScenarios[0]))
+        results.push(await restoreChatHistoryAndOpenSourceDeepLink(page, scenario, chatSourceLinkScenarios[1]))
       }
     }
   } catch (err) {

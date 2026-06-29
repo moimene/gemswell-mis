@@ -113,6 +113,8 @@ describe('critical eval coverage contract', () => {
     }
 
     expect(documentChatE2e).toContain('chat-source-link-opens-santander-bbva-document')
+    expect(documentChatE2e).toContain('chat-history-source-link-opens-santander-bbva-document')
+    expect(documentChatE2e).toContain('/api/chat/conversations/')
     expect(documentChatE2e).toContain('becaff10-41f7-4175-950d-d70e9a1d3b6b')
     expect(documentChatE2e).toContain('a[href*="/admin/documents?doc="]')
   })
