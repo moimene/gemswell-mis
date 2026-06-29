@@ -115,6 +115,7 @@ jobs:
         timeout-minutes: 30
         env:
           EVAL_SMART_SEARCH_PHASE_TIMEOUT_MS: '240000'
+          SMART_SEARCH_EVAL_MODEL: ${{ steps.openai_health.outcome == 'success' && 'true' || 'false' }}
         run: npm run eval:smart-search -- live-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Retrieval eval
@@ -164,6 +165,17 @@ jobs:
         continue-on-error: true
         timeout-minutes: 45
         run: npm run e2e:doc-ingest
+
+      - name: Summarize live evidence
+        if: always()
+        id: live_evidence_summary
+        continue-on-error: true
+        run: >
+          npm run eval:live-summary --
+          --label live-${{ github.run_id }}-${{ github.run_attempt }}
+          --results-dir scripts/eval/results
+          --e2e-dir /tmp/gemswell-e2e-artifacts
+          --out /tmp/gemswell-e2e-artifacts/live-evidence-summary.json
 
       - name: Upload eval and E2E artifacts
         if: always()

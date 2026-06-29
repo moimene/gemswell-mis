@@ -99,6 +99,7 @@ describe('critical eval coverage contract', () => {
       'Governance eval',
       'Documentary browser E2E - chat/search',
       'Documentary browser E2E - ingest/governance',
+      'Summarize live evidence',
       'Validate live gate outcomes',
       'E2E_SUMMARY_DIR',
       'E2E_SERVER_MODE: start',
@@ -116,6 +117,7 @@ describe('critical eval coverage contract', () => {
       'npm run eval:governance',
       'npm run e2e:doc-chat',
       'npm run e2e:doc-ingest',
+      'npm run eval:live-summary',
     ]) {
       expect(workflow).toContain(script)
     }
@@ -127,6 +129,9 @@ describe('critical eval coverage contract', () => {
     expect(workflow.indexOf('name: Upload eval and E2E artifacts')).toBeLessThan(workflow.indexOf('name: Validate live gate outcomes'))
     expect(workflow).toContain('E2E_ALLOW_SMART_MODEL_FALLBACK')
     expect(workflow).toContain("steps.openai_health.outcome == 'failure'")
+    expect(workflow).toContain('SMART_SEARCH_EVAL_MODEL')
+    expect(workflow).toContain("steps.openai_health.outcome == 'success'")
+    expect(workflow).toContain('live-evidence-summary.json')
     expect(documentChatE2e).toContain('chat-source-link-opens-santander-bbva-document')
     expect(documentChatE2e).toContain('chat-history-source-link-opens-santander-bbva-document')
     expect(documentChatE2e).toContain('chat-source-link-opens-buenavista-document')

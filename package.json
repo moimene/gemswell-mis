@@ -15,6 +15,7 @@
     "eval:governance": "tsx scripts/eval/run-governance.ts",
     "eval:smart-search": "tsx scripts/eval/run-smart-search.ts",
     "eval:openai-health": "tsx scripts/eval/openai-health.ts",
+    "eval:live-summary": "tsx scripts/eval/summarize-live-artifacts.ts",
     "eval:release-readiness": "tsx scripts/eval/release-readiness.ts",
     "eval:prompt-behavior": "tsx scripts/eval/prompt-behavior-check.ts",
     "eval:ocr-smoke": "tsx scripts/eval/ocr-smoke.ts",
