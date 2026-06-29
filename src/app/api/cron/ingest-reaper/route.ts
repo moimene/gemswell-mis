@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 import { createApiClient } from '@/lib/supabase-server'
+import { isAuthorizedCronRequest } from '@/lib/cron-auth'
 import { reapAndRequeue } from '@/lib/ingest/reaper'
-
-/** Constant-time bearer check (Ronda-1 N2): the endpoint is internet-reachable, so avoid a timing
- *  oracle on CRON_SECRET. Length-guard first (timingSafeEqual throws on unequal lengths). */
-function authorized(authHeader: string | null): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret || !authHeader) return false
-  const expected = Buffer.from(`Bearer ${secret}`)
-  const got = Buffer.from(authHeader)
-  return expected.length === got.length && timingSafeEqual(expected, got)
-}
 
 // F6 ingest reaper — invoked by the Vercel cron in vercel.json. Re-ingest re-runs the full governed
 // pipeline per doc, so give it room (Vercel Pro fluid allows up to 800s).
@@ -24,7 +14,7 @@ export const maxDuration = 800
  * (so it can never be triggered anonymously). Set CRON_SECRET in Vercel to activate.
  */
 export async function GET(request: NextRequest) {
-  if (!authorized(request.headers.get('authorization'))) {
+  if (!isAuthorizedCronRequest(request.headers.get('authorization'))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 

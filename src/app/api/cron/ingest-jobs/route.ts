@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 import { createApiClient } from '@/lib/supabase-server'
 import { processIngestJobs } from '@/lib/ingest/jobs'
+import { isAuthorizedCronRequest } from '@/lib/cron-auth'
 
 export const maxDuration = 800
-
-function authorized(authHeader: string | null): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret || !authHeader) return false
-  const expected = Buffer.from(`Bearer ${secret}`)
-  const got = Buffer.from(authHeader)
-  return expected.length === got.length && timingSafeEqual(expected, got)
-}
 
 function numberEnv(name: string, fallback: number): number {
   const value = Number(process.env[name])
@@ -19,7 +11,7 @@ function numberEnv(name: string, fallback: number): number {
 }
 
 export async function GET(request: NextRequest) {
-  if (!authorized(request.headers.get('authorization'))) {
+  if (!isAuthorizedCronRequest(request.headers.get('authorization'))) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
