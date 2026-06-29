@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { parseDocument } from '@/lib/rag/parse'
-import { chunkFinancialContent, embedBatch, DIMENSIONS, EMBEDDING_MODEL, type ChunkMetadata } from '@/lib/rag/embeddings'
+import { chunkFinancialContent, embedBatchWithModel, DIMENSIONS, EMBEDDING_MODEL, type ChunkMetadata } from '@/lib/rag/embeddings'
 import { buildMarkdownArtifact, type MarkdownFrontmatter } from '@/lib/knowledge/markdown-artifact'
 import { classifyDocument, decideReviewStatus } from '@/lib/knowledge/classify'
 import type {
@@ -312,7 +312,7 @@ async function insertChunkBatch(
   batch: ReturnType<typeof chunkFinancialContent>,
   startIndex: number
 ) {
-  const embeddings = await embedBatch(batch.map(chunk => chunk.content))
+  const { model: embeddingModel, embeddings } = await embedBatchWithModel(batch.map(chunk => chunk.content))
   const validEmbeddings = embeddings.every(embedding => Array.isArray(embedding) && embedding.length === DIMENSIONS)
   if (!validEmbeddings) {
     throw new Error(`Invalid embedding dimensions: ${embeddings.map(embedding => embedding.length).join(', ')}`)
@@ -323,7 +323,8 @@ async function insertChunkBatch(
     chunk_index: startIndex + index,
     content: chunk.content,
     embedding: JSON.stringify(embeddings[index]),
-    metadata: chunk.metadata,
+    metadata: { ...chunk.metadata, embedding_model: embeddingModel },
+    embedding_model: embeddingModel,
     token_count: chunk.tokenEstimate,
   }))
 

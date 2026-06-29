@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock the two external services so the test is deterministic and offline. The merge/dedup/reject
 // logic and the REAL trust-tier sort (rankBySourceTrust) are what we exercise here.
 vi.mock('@/lib/rag/embeddings', () => ({
-  embedText: vi.fn(async () => new Array(768).fill(0.1)),
+  EMBEDDING_MODEL: 'gemini-embedding-001',
+  embedTextCandidates: vi.fn(async () => [{ model: 'gemini-embedding-001', embedding: new Array(768).fill(0.1) }]),
 }))
 vi.mock('@/lib/rag/rerank', () => ({
   // Deterministic reranker: use supplied similarity when a test needs explicit relevance, otherwise
@@ -35,6 +36,7 @@ import {
   RAG_VECTOR_MATCH_COUNT,
 } from '@/lib/rag/retrieve'
 import { rerankRetrievedChunksWithOpenAI } from '@/lib/rag/openai-rerank'
+import { embedTextCandidates } from '@/lib/rag/embeddings'
 
 type Row = { id: string; document_id: string; content: string; metadata: Record<string, unknown>; similarity?: number; rank?: number; chunk_index?: number }
 type DocRow = Record<string, unknown> & { id: string; title?: string; project_id?: string; doc_type?: string }
@@ -411,8 +413,28 @@ describe('retrieveDocuments', () => {
     await retrieveDocuments(client, 'q', { projectFilter: 'MAD', docTypeFilter: 'legal' })
     const matchCall = rpc.mock.calls.find((c) => c[0] === 'match_chunks')
     const kwCall = rpc.mock.calls.find((c) => c[0] === 'keyword_search_chunks')
-    expect(matchCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal', match_threshold: 0.18 })
+    expect(matchCall?.[1]).toMatchObject({
+      filter_project: 'MAD',
+      filter_doc_type: 'legal',
+      match_threshold: 0.18,
+      filter_embedding_model: 'gemini-embedding-001',
+    })
     expect(kwCall?.[1]).toMatchObject({ filter_project: 'MAD', filter_doc_type: 'legal' })
+  })
+
+  it('keeps vector searches model-scoped when Gemini and OpenAI embedding candidates are present', async () => {
+    vi.mocked(embedTextCandidates).mockResolvedValueOnce([
+      { model: 'gemini-embedding-001', embedding: new Array(768).fill(0.1) },
+      { model: 'text-embedding-3-small', embedding: new Array(768).fill(0.2) },
+    ])
+    const { client, rpc } = fakeSupabase([], [])
+    await retrieveDocuments(client, 'q')
+
+    const matchCalls = rpc.mock.calls.filter((c) => c[0] === 'match_chunks')
+    expect(matchCalls.map((call) => call[1]?.filter_embedding_model)).toEqual([
+      'gemini-embedding-001',
+      'text-embedding-3-small',
+    ])
   })
 
   it('bypasses the scoped vector lane for deterministic Santander/BBVA bank-cost retrieval', async () => {

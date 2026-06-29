@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { embedText } from '@/lib/rag/embeddings'
+import { EMBEDDING_MODEL, embedTextCandidates, type EmbeddedTextCandidate } from '@/lib/rag/embeddings'
 import { rerankChunks } from '@/lib/rag/rerank'
 import { rankBySourceTrust, rankForStandardGrounding, trustTier } from '@/lib/rag/rank'
 import { expandDocumentGraph } from '@/lib/rag/graph'
@@ -845,6 +845,62 @@ export function emptyResultMessage(diagnostics: Pick<RetrievalDiagnostics, 'vect
  * (so trust-tier ordering can promote a high-trust chunk Cohere scored modestly), then ordered by
  * trust tier and truncated to the final top-K.
  */
+function isUnknownEmbeddingModelParam(error: { message?: string; details?: string; hint?: string } | null): boolean {
+  const text = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ')
+  return /filter_embedding_model|function .*match_chunks|parameter|argument/i.test(text) &&
+    /not found|could not choose|does not exist|schema cache|unknown/i.test(text)
+}
+
+async function vectorSearchForCandidate(
+  supabase: SupabaseClient,
+  candidate: EmbeddedTextCandidate,
+  params: {
+    vectorMatchCount: number
+    projectFilter: string | null
+    docTypeFilter: string | null
+  }
+): Promise<{ rows: RetrievedChunk[]; failed: boolean; legacyRpc: boolean }> {
+  const baseParams = {
+    query_embedding: candidate.embedding,
+    match_count: params.vectorMatchCount,
+    filter_project: params.projectFilter,
+    filter_doc_type: params.docTypeFilter,
+    match_threshold: RAG_MATCH_THRESHOLD,
+  }
+  const { data, error } = await supabase.rpc('match_chunks', {
+    ...baseParams,
+    filter_embedding_model: candidate.model,
+  })
+  if (error && isUnknownEmbeddingModelParam(error)) {
+    if (candidate.model !== EMBEDDING_MODEL) return { rows: [], failed: true, legacyRpc: true }
+    const retry = await supabase.rpc('match_chunks', baseParams)
+    if (retry.error) return { rows: [], failed: true, legacyRpc: true }
+    return {
+      rows: ((retry.data || []) as RetrievedChunk[]).map((r) => ({
+        id: r.id,
+        document_id: r.document_id,
+        content: r.content,
+        metadata: r.metadata || {},
+        similarity: r.similarity,
+      })),
+      failed: false,
+      legacyRpc: true,
+    }
+  }
+  if (error) return { rows: [], failed: true, legacyRpc: false }
+  return {
+    rows: ((data || []) as RetrievedChunk[]).map((r) => ({
+      id: r.id,
+      document_id: r.document_id,
+      content: r.content,
+      metadata: r.metadata || {},
+      similarity: r.similarity,
+    })),
+    failed: false,
+    legacyRpc: false,
+  }
+}
+
 export async function retrieveDocuments(
   supabase: SupabaseClient,
   query: string,
@@ -874,27 +930,17 @@ export async function retrieveDocuments(
       ? Promise.resolve({ rows: [], failed: false })
       : (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
-        const embedding = await embedText(retrievalQuery, { lane: 'interactive' })
-        const { data, error } = await supabase.rpc('match_chunks', {
-          query_embedding: embedding,
-          match_count: vectorMatchCount,
-          filter_project: projectFilter,
-          filter_doc_type: docTypeFilter,
-          match_threshold: RAG_MATCH_THRESHOLD,
-        })
-        // supabase-js does NOT throw on a PostgREST error (e.g. statement timeout — the silent-death mode
-        // that killed retrieval twice); it returns it in `error`. Treat that as a lane FAILURE (outage),
-        // not a clean empty result, so the chat surfaces degradation instead of "no documents". (adversarial review)
-        if (error) return { rows: [], failed: true }
+        const candidates = await embedTextCandidates(retrievalQuery, { lane: 'interactive' })
+        const matches = await Promise.all(candidates.map((candidate) => vectorSearchForCandidate(supabase, candidate, {
+          vectorMatchCount,
+          projectFilter,
+          docTypeFilter,
+        })))
+        const rows = matches.flatMap((match) => match.rows)
+        const failed = matches.some((match) => match.failed)
         return {
-          rows: ((data || []) as RetrievedChunk[]).map((r) => ({
-            id: r.id,
-            document_id: r.document_id,
-            content: r.content,
-            metadata: r.metadata || {},
-            similarity: r.similarity,
-          })),
-          failed: false,
+          rows,
+          failed,
         }
       } catch {
         return { rows: [], failed: true }

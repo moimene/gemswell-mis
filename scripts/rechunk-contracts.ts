@@ -23,7 +23,7 @@ import { config } from 'dotenv'
 config({ path: '.env.local' })
 import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
-import { chunkFinancialContent, embedBatch, DIMENSIONS, EMBEDDING_MODEL, type ChunkMetadata } from '../src/lib/rag/embeddings'
+import { chunkFinancialContent, embedBatchWithModel, DIMENSIONS, EMBEDDING_MODEL, type ChunkMetadata } from '../src/lib/rag/embeddings'
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -150,11 +150,14 @@ async function main() {
     if (del.error) { console.error(`  ABORT ${d.id}: delete failed ${del.error.message}`); process.exit(3) }
     for (let i = 0; i < re.length; i += EMBED_BATCH) {
       const batch = re.slice(i, i + EMBED_BATCH)
-      const emb = await embedBatch(batch.map(c => c.content), { lane: 'bulk' })
-      if (!emb.every(e => Array.isArray(e) && e.length === DIMENSIONS)) throw new Error(`bad emb dims doc ${d.id}`)
+      const { model: embeddingModel, embeddings } = await embedBatchWithModel(batch.map(c => c.content), { lane: 'bulk' })
+      if (!embeddings.every(e => Array.isArray(e) && e.length === DIMENSIONS)) throw new Error(`bad emb dims doc ${d.id}`)
       const rows = batch.map((c, j) => ({
         document_id: d.id, chunk_index: i + j, content: c.content,
-        embedding: JSON.stringify(emb[j]), metadata: c.metadata, token_count: c.tokenEstimate,
+        embedding: JSON.stringify(embeddings[j]),
+        metadata: { ...c.metadata, embedding_model: embeddingModel },
+        embedding_model: embeddingModel,
+        token_count: c.tokenEstimate,
       }))
       const ins = await sb.from('rag_chunks').insert(rows)
       if (ins.error) { console.error(`  ABORT ${d.id} @${i}: insert failed ${ins.error.message} (restore from ${BAK_TABLE})`); process.exit(4) }

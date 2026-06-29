@@ -1,11 +1,14 @@
 import { GoogleGenAI } from '@google/genai'
+import OpenAI from 'openai'
 
 // ─── Gemini Embedding ───────────────────────────────────────────────
 const MODEL = 'gemini-embedding-001'
+const OPENAI_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small'
 const DIMENSIONS = 768
 const REST_EMBEDDING_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:embedContent`
 
 let genai: GoogleGenAI | null = null
+let openai: OpenAI | null = null
 
 function numberEnv(name: string, fallback: number): number {
   const value = Number(process.env[name])
@@ -30,6 +33,8 @@ export function laneIntervalMs(lane: EmbedLane): number {
     : numberEnv('GEMINI_EMBEDDING_MIN_INTERVAL_MS', 4000)
 }
 export type EmbedOpts = { lane?: EmbedLane }
+export type EmbeddedBatch = { model: string; embeddings: number[][] }
+export type EmbeddedTextCandidate = { model: string; embedding: number[] }
 
 function getApiKey(): string {
   const key = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY
@@ -40,6 +45,17 @@ function getApiKey(): string {
 function getGenAI(): GoogleGenAI {
   if (!genai) genai = new GoogleGenAI({ apiKey: getApiKey() })
   return genai
+}
+
+function getOpenAIApiKey(): string {
+  const key = process.env.OPENAI_API_KEY
+  if (!key) throw new Error('OPENAI_API_KEY not set')
+  return key
+}
+
+function getOpenAI(): OpenAI {
+  if (!openai) openai = new OpenAI({ apiKey: getOpenAIApiKey() })
+  return openai
 }
 
 function sleep(ms: number): Promise<void> {
@@ -91,7 +107,7 @@ async function withEmbeddingRetry<T>(operation: () => Promise<T>, lane: EmbedLan
 function assertEmbeddingDimensions(embeddings: number[][]): number[][] {
   const invalid = embeddings.find(embedding => embedding.length !== DIMENSIONS)
   if (invalid) {
-    throw new Error(`Invalid Gemini embedding dimensions: ${embeddings.map(embedding => embedding.length).join(', ')}`)
+    throw new Error(`Invalid embedding dimensions: ${embeddings.map(embedding => embedding.length).join(', ')}`)
   }
   return embeddings
 }
@@ -134,17 +150,7 @@ async function embedTextWithRest(text: string, lane: EmbedLane): Promise<number[
   return response.embedding?.values ?? []
 }
 
-export async function embedText(text: string, opts: EmbedOpts = {}): Promise<number[]> {
-  return (await embedBatch([text], opts))[0] ?? []
-}
-
-export async function embedBatch(texts: string[], opts: EmbedOpts = {}): Promise<number[][]> {
-  if (!texts.length) return []
-  for (const text of texts) {
-    if (!text.trim()) throw new Error('Cannot embed empty text')
-  }
-
-  const lane: EmbedLane = opts.lane ?? 'bulk'
+async function embedTextsWithGemini(texts: string[], lane: EmbedLane): Promise<number[][]> {
   const transport = process.env.GEMINI_EMBEDDING_TRANSPORT
   const useRest = transport === 'rest' || texts.length === 1
   const embeddings = useRest
@@ -160,6 +166,70 @@ export async function embedBatch(texts: string[], opts: EmbedOpts = {}): Promise
   }
 
   return assertEmbeddingDimensions(embeddings)
+}
+
+async function embedTextsWithOpenAI(texts: string[]): Promise<number[][]> {
+  const result = await getOpenAI().embeddings.create({
+    model: OPENAI_MODEL,
+    input: texts,
+    dimensions: DIMENSIONS,
+  })
+  const embeddings = result.data.map((item) => item.embedding)
+  if (embeddings.length !== texts.length) {
+    throw new Error(`OpenAI embedding count mismatch: expected ${texts.length}, got ${embeddings.length}`)
+  }
+  return assertEmbeddingDimensions(embeddings)
+}
+
+function openAIEmbeddingEnabled(): boolean {
+  return process.env.OPENAI_EMBEDDING_FALLBACK_ENABLED !== 'false' && Boolean(process.env.OPENAI_API_KEY)
+}
+
+function openAIQueryEmbeddingEnabled(): boolean {
+  return process.env.OPENAI_EMBEDDING_QUERY_ENABLED === 'true' && openAIEmbeddingEnabled()
+}
+
+export async function embedText(text: string, opts: EmbedOpts = {}): Promise<number[]> {
+  return (await embedBatch([text], opts))[0] ?? []
+}
+
+export async function embedBatchWithModel(texts: string[], opts: EmbedOpts = {}): Promise<EmbeddedBatch> {
+  if (!texts.length) return { model: MODEL, embeddings: [] }
+  for (const text of texts) {
+    if (!text.trim()) throw new Error('Cannot embed empty text')
+  }
+
+  const lane: EmbedLane = opts.lane ?? 'bulk'
+  try {
+    return { model: MODEL, embeddings: await embedTextsWithGemini(texts, lane) }
+  } catch (err) {
+    if (!openAIEmbeddingEnabled()) throw err
+    return { model: OPENAI_MODEL, embeddings: await embedTextsWithOpenAI(texts) }
+  }
+}
+
+export async function embedBatch(texts: string[], opts: EmbedOpts = {}): Promise<number[][]> {
+  return (await embedBatchWithModel(texts, opts)).embeddings
+}
+
+export async function embedTextCandidates(text: string, opts: EmbedOpts = {}): Promise<EmbeddedTextCandidate[]> {
+  if (!text.trim()) throw new Error('Cannot embed empty text')
+
+  const lane: EmbedLane = opts.lane ?? 'interactive'
+  const candidates: EmbeddedTextCandidate[] = []
+  let geminiError: unknown = null
+  try {
+    candidates.push({ model: MODEL, embedding: (await embedTextsWithGemini([text], lane))[0] ?? [] })
+  } catch (err) {
+    geminiError = err
+  }
+
+  if (openAIQueryEmbeddingEnabled() || (candidates.length === 0 && openAIEmbeddingEnabled())) {
+    candidates.push({ model: OPENAI_MODEL, embedding: (await embedTextsWithOpenAI([text]))[0] ?? [] })
+  }
+
+  if (candidates.length === 0 && geminiError) throw geminiError
+  return candidates
 }
 
 // ─── Financial-Aware Chunking ───────────────────────────────────────
