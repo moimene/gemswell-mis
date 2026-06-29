@@ -930,6 +930,7 @@ export async function retrieveDocuments(
       ? Promise.resolve({ rows: [], failed: false })
       : (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
+        if (process.env.RAG_FORCE_VECTOR_FAIL === 'true') throw new Error('RAG_FORCE_VECTOR_FAIL')
         const candidates = await embedTextCandidates(retrievalQuery, { lane: 'interactive' })
         const matches = await Promise.all(candidates.map((candidate) => vectorSearchForCandidate(supabase, candidate, {
           vectorMatchCount,
@@ -948,6 +949,7 @@ export async function retrieveDocuments(
     })(),
     (async (): Promise<{ rows: RetrievedChunk[]; failed: boolean }> => {
       try {
+        if (process.env.RAG_FORCE_KEYWORD_FAIL === 'true') throw new Error('RAG_FORCE_KEYWORD_FAIL')
         const { data, error } = await supabase.rpc('keyword_search_chunks', {
           query_text: retrievalQuery,
           filter_project: projectFilter,

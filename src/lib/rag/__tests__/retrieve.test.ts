@@ -628,6 +628,32 @@ describe('retrieveDocuments — superseded exclusion + degradation diagnostics',
     expect(diagnostics.vectorFailed).toBe(false)
   })
 
+  it('supports RAG_FORCE_*_FAIL flags for outage governance regression tests', async () => {
+    const previousVector = process.env.RAG_FORCE_VECTOR_FAIL
+    const previousKeyword = process.env.RAG_FORCE_KEYWORD_FAIL
+    process.env.RAG_FORCE_VECTOR_FAIL = 'true'
+    process.env.RAG_FORCE_KEYWORD_FAIL = 'true'
+    try {
+      const { client } = fakeSupabase([], [])
+      const { ranked, diagnostics } = await retrieveDocuments(client, 'q')
+      const msg = emptyResultMessage(diagnostics)
+
+      expect(ranked).toEqual([])
+      expect(diagnostics.vectorFailed).toBe(true)
+      expect(diagnostics.keywordFailed).toBe(true)
+      expect(msg).toMatch(/temporarily degraded/i)
+      expect(msg).toMatch(/transient retrieval failure/i)
+      expect(msg).toMatch(/retrying/i)
+      expect(msg).not.toMatch(/no relevant documents/i)
+      expect(msg).not.toMatch(/governance|rejected|withheld/i)
+    } finally {
+      if (previousVector === undefined) delete process.env.RAG_FORCE_VECTOR_FAIL
+      else process.env.RAG_FORCE_VECTOR_FAIL = previousVector
+      if (previousKeyword === undefined) delete process.env.RAG_FORCE_KEYWORD_FAIL
+      else process.env.RAG_FORCE_KEYWORD_FAIL = previousKeyword
+    }
+  })
+
   it('flags vectorFailed when the vector RPC RETURNS a PostgREST error (does NOT throw)', async () => {
     // supabase-js .rpc() resolves to { data, error } on a server error (e.g. statement timeout) WITHOUT
     // throwing — the exact silent-degradation mode that killed retrieval in prod twice. Must set failed.
@@ -744,8 +770,13 @@ describe('applyRelevanceFloor', () => {
 describe('emptyResultMessage', () => {
   it('signals an outage (NOT governance) when a retrieval lane failed', () => {
     const msg = emptyResultMessage({ vectorFailed: true, keywordFailed: false } as never)
-    expect(msg).toMatch(/unavailable|degraded|partial|temporar/i)
-    expect(msg).not.toMatch(/rejected/i)
+    expect(msg).toMatch(/temporarily degraded/i)
+    expect(msg).toMatch(/did not respond/i)
+    expect(msg).toMatch(/transient retrieval failure/i)
+    expect(msg).toMatch(/NOT an absence of relevant documents/i)
+    expect(msg).toMatch(/retrying/i)
+    expect(msg).not.toMatch(/No relevant documents were found/i)
+    expect(msg).not.toMatch(/governance|rejected|withheld/i)
   })
   it('says no relevant documents (neutral) when both lanes ran and found nothing', () => {
     const msg = emptyResultMessage({ vectorFailed: false, keywordFailed: false } as never)

@@ -136,6 +136,19 @@ describe('critical eval coverage contract', () => {
     expect(runner).toContain('missing_document_metadata')
   })
 
+  it('keeps outage-vs-governance behavior covered by forced retrieval failures', () => {
+    const retrieve = readFileSync(resolve(root, 'src/lib/rag/retrieve.ts'), 'utf8')
+    const tests = readFileSync(resolve(root, 'src/lib/rag/__tests__/retrieve.test.ts'), 'utf8')
+    const targets = readFileSync(resolve(root, 'scripts/eval/targets.ts'), 'utf8')
+
+    expect(targets).toContain('governance.outage_not_governance')
+    expect(retrieve).toContain('RAG_FORCE_VECTOR_FAIL')
+    expect(retrieve).toContain('RAG_FORCE_KEYWORD_FAIL')
+    expect(tests).toContain('supports RAG_FORCE_*_FAIL flags for outage governance regression tests')
+    expect(tests).toContain('transient retrieval failure')
+    expect(tests).toContain('not.toMatch(/governance|rejected|withheld/i)')
+  })
+
   it('keeps prompt-behavior adversarial cases in the live checker', () => {
     const checker = readFileSync(resolve(root, 'scripts/eval/prompt-behavior-check.ts'), 'utf8')
 

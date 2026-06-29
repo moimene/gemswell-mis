@@ -43,7 +43,7 @@ export const TARGETS: MetricTarget[] = [
   // ── Governance invariants — binary HARD gates (Fase-7 run-governance.ts, deterministic, no LLM judge) ──
   { metric: 'governance.superseded_never_cited', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'run-governance.ts G1: no cited source is missing metadata or has lifecycle=superseded, status=retired, review_status=rejected, classification_source=agent_rejected' },
   { metric: 'governance.unreviewed_disclosed', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'run-governance.ts G2: cited needs_review/pending/unreviewed sources require explicit disclosure in the answer' },
-  { metric: 'governance.outage_not_governance', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'G4: forced lane failure (RAG_FORCE_*_FAIL) => outage message, never a governance/no-docs message' },
+  { metric: 'governance.outage_not_governance', bucket: 'governance', current: null, target: 1.0, unit: 'bool', gate: 'hard', higherIsBetter: true, howMeasured: 'retrieve.test.ts G4: forced lane failure (RAG_FORCE_VECTOR_FAIL/RAG_FORCE_KEYWORD_FAIL) => outage message, never a governance/no-docs message' },
 ]
 
 export function targetFor(metric: string): MetricTarget | undefined {
