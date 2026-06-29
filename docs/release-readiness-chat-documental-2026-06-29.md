@@ -65,10 +65,11 @@ Verificar la evidencia agregada antes de liberar:
 
 ```bash
 gh run view <live-run-id> --repo moimene/gemswell-mis --json databaseId,workflowName,status,conclusion,headSha > /tmp/live-rag-e2e-latest.json
-npm run eval:release-readiness -- --health scripts/eval/results/openai-health-release-openai-health.json --live-run /tmp/live-rag-e2e-latest.json --expected-sha <release-sha> --e2e-dir /tmp/gemswell-e2e-documents-prod --smart-search-eval scripts/eval/results/smart-search-<label>.json --retrieval-eval scripts/eval/results/retrieval-<label>.json
+npm run eval:release-readiness -- --health scripts/eval/results/openai-health-release-openai-health.json --live-run /tmp/live-rag-e2e-latest.json --expected-sha <release-sha> --e2e-dir /tmp/gemswell-e2e-documents-prod --live-evidence-summary /tmp/gemswell-e2e-documents-prod/live-evidence-summary.json --smart-search-eval scripts/eval/results/smart-search-<label>.json --retrieval-eval scripts/eval/results/retrieval-<label>.json
 ```
 
 Este verificador debe devolver `ok: true`. Si devuelve `quota_or_billing`, falta un `live-rag-e2e` verde para el SHA de release, falta `--expected-sha`, los resumenes E2E no prueban `rerankOrModelUsed: true`, o faltan las evidencias `smart-search`/`retrieval`, no liberar.
+Cuando el workflow live queda rojo solo por OpenAI, `live-evidence-summary.json` debe mostrar `productOk: true`, `productFailures: []` y `providerBlockers` con `openai-health`; eso es evidencia diagnostica, no criterio de release.
 
 ## Ultima evidencia offline
 
@@ -103,6 +104,7 @@ Resultado esperado:
 - `consoleMessages: []`.
 - `/tmp/gemswell-e2e-documents-prod/document-chat-summary.json`: `ok: true`.
 - `/tmp/gemswell-e2e-documents-prod/document-ingest-summary.json`: `ok: true`.
+- `/tmp/gemswell-e2e-documents-prod/live-evidence-summary.json`: `productOk: true`, `classification.productFailures: []`.
 - `scripts/eval/results/smart-search-<label>.json`: todos los casos `pass: true`, Santander/BBVA y Buenavista `rank: 1`.
 - `scripts/eval/results/retrieval-<label>.json`: `summary.ok: true`, `summary.documentary.cross.recallAt1: 1`, `summary.documentary.cross.recallAt5: 1`.
 

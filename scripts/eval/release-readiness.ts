@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 type OpenAIHealthResult = {
@@ -66,6 +66,18 @@ type RetrievalEval = {
   }
 }
 
+type LiveEvidenceSummary = {
+  ok?: boolean
+  productOk?: boolean
+  classification?: {
+    providerBlockers?: unknown[]
+    transientProviderFailures?: unknown[]
+    productFailures?: unknown[]
+    missing?: unknown[]
+    passed?: Array<{ gate?: string } | string>
+  }
+}
+
 export type ReleaseReadinessInput = {
   health: OpenAIHealthResult
   liveRun?: GithubRunResult | null
@@ -73,6 +85,7 @@ export type ReleaseReadinessInput = {
   docIngestE2E?: E2ESummary | null
   smartSearchEval?: SmartSearchEval | null
   retrievalEval?: RetrievalEval | null
+  liveEvidence?: LiveEvidenceSummary | null
   expectedModel?: string
   expectedSha?: string
 }
@@ -95,6 +108,10 @@ export type ReleaseReadinessResult = {
     docIngestArtifact?: boolean
     smartSearchArtifact?: boolean
     retrievalArtifact?: boolean
+    liveEvidenceArtifact?: boolean
+    liveEvidenceProductOk?: boolean
+    liveEvidenceProviderBlockers?: number
+    liveEvidenceProductFailures?: number
   }
 }
 
@@ -160,6 +177,12 @@ function retrievalRecallStrong(evalResult: RetrievalEval | null | undefined): bo
     evalResult.summary.documentary.cross.recallAt5 === 1
 }
 
+function liveEvidenceProductOk(summary: LiveEvidenceSummary | null | undefined): boolean {
+  return summary?.productOk === true &&
+    (summary.classification?.productFailures?.length ?? 0) === 0 &&
+    (summary.classification?.missing?.length ?? 0) === 0
+}
+
 export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseReadinessResult {
   const expectedModel = input.expectedModel ?? 'gpt-5.5'
   const liveRun = input.liveRun ?? null
@@ -167,6 +190,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   const docIngest = input.docIngestE2E ?? null
   const smartSearch = input.smartSearchEval ?? null
   const retrieval = input.retrievalEval ?? null
+  const liveEvidence = input.liveEvidence ?? null
   const checks = {
     expectedShaProvided: Boolean(input.expectedSha),
     openAIHealthOk: input.health.ok === true,
@@ -191,6 +215,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
     retrievalEvalProvided: Boolean(retrieval),
     retrievalEvalOk: retrievalEvalOk(retrieval),
     retrievalRecallStrong: retrievalRecallStrong(retrieval),
+    liveEvidenceProductOk: !liveEvidence || liveEvidenceProductOk(liveEvidence),
   }
 
   const failures: string[] = []
@@ -217,6 +242,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
   if (!checks.retrievalEvalProvided) failures.push('Retrieval eval evidence was not provided.')
   if (retrieval && !checks.retrievalEvalOk) failures.push('Retrieval eval summary was not ok.')
   if (retrieval && !checks.retrievalRecallStrong) failures.push('Retrieval eval did not prove documentary recall@1 and recall@5 at 100%.')
+  if (liveEvidence && !checks.liveEvidenceProductOk) failures.push('Live evidence summary has product failures or missing gates.')
 
   const nextActions = failures.length === 0
     ? ['Proceed to strict local production E2E without E2E_ALLOW_SMART_MODEL_FALLBACK, then release if it passes.']
@@ -238,6 +264,7 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
           !checks.retrievalEvalProvided || !checks.retrievalEvalOk || !checks.retrievalRecallStrong
           ? 'Run eval:smart-search and eval:retrieval, then provide their JSON evidence.'
           : null,
+        liveEvidence && !checks.liveEvidenceProductOk ? 'Inspect live-evidence-summary.json productFailures before release.' : null,
         'Do not use E2E_ALLOW_SMART_MODEL_FALLBACK as release evidence.',
       ].filter((action): action is string => Boolean(action))
 
@@ -259,6 +286,10 @@ export function evaluateReleaseReadiness(input: ReleaseReadinessInput): ReleaseR
       docIngestArtifact: Boolean(docIngest),
       smartSearchArtifact: Boolean(smartSearch),
       retrievalArtifact: Boolean(retrieval),
+      liveEvidenceArtifact: Boolean(liveEvidence),
+      liveEvidenceProductOk: liveEvidence ? liveEvidenceProductOk(liveEvidence) : undefined,
+      liveEvidenceProviderBlockers: liveEvidence?.classification?.providerBlockers?.length,
+      liveEvidenceProductFailures: liveEvidence?.classification?.productFailures?.length,
     },
   }
 }
@@ -280,6 +311,8 @@ async function main() {
   const e2eDir = arg('e2e-dir')
   const docChatE2EPath = arg('doc-chat-e2e') ?? (e2eDir ? join(e2eDir, 'document-chat-summary.json') : undefined)
   const docIngestE2EPath = arg('doc-ingest-e2e') ?? (e2eDir ? join(e2eDir, 'document-ingest-summary.json') : undefined)
+  const defaultLiveEvidencePath = e2eDir ? join(e2eDir, 'live-evidence-summary.json') : undefined
+  const liveEvidencePath = arg('live-evidence-summary') ?? (defaultLiveEvidencePath && existsSync(defaultLiveEvidencePath) ? defaultLiveEvidencePath : undefined)
   const smartSearchEvalPath = arg('smart-search-eval')
   const retrievalEvalPath = arg('retrieval-eval')
   const outPath = arg('out')
@@ -287,6 +320,7 @@ async function main() {
   const liveRun = liveRunPath ? firstRun(readJson<unknown>(liveRunPath)) : null
   const docChatE2E = docChatE2EPath ? readJson<E2ESummary>(docChatE2EPath) : null
   const docIngestE2E = docIngestE2EPath ? readJson<E2ESummary>(docIngestE2EPath) : null
+  const liveEvidence = liveEvidencePath ? readJson<LiveEvidenceSummary>(liveEvidencePath) : null
   const smartSearchEval = smartSearchEvalPath ? readJson<SmartSearchEval>(smartSearchEvalPath) : null
   const retrievalEval = retrievalEvalPath ? readJson<RetrievalEval>(retrievalEvalPath) : null
   const result = evaluateReleaseReadiness({
@@ -294,6 +328,7 @@ async function main() {
     liveRun,
     docChatE2E,
     docIngestE2E,
+    liveEvidence,
     smartSearchEval,
     retrievalEval,
     expectedModel: arg('expected-model') ?? process.env.OPENAI_CHAT_MODEL ?? 'gpt-5.5',

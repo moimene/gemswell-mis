@@ -49,6 +49,26 @@ const strictRetrievalEval = {
   },
 }
 
+const productOkLiveEvidence = {
+  ok: false,
+  productOk: true,
+  classification: {
+    providerBlockers: [{ gate: 'openai-health' }],
+    transientProviderFailures: [],
+    productFailures: [],
+    missing: [],
+    passed: [
+      { gate: 'smart-search' },
+      { gate: 'retrieval' },
+      { gate: 'prompt-behavior' },
+      { gate: 'answers' },
+      { gate: 'governance' },
+      { gate: 'document-chat' },
+      { gate: 'document-ingest' },
+    ],
+  },
+}
+
 describe('release readiness evaluator', () => {
   it('blocks release when OpenAI is quota blocked even if a prior live run was green', () => {
     const result = evaluateReleaseReadiness({
@@ -77,6 +97,70 @@ describe('release readiness evaluator', () => {
     expect(result.failures).toContain('OpenAI health is blocked by quota_or_billing.')
     expect(result.nextActions).toContain('Resolve OpenAI billing/limits before investigating RAG.')
     expect(result.nextActions).toContain('Do not use E2E_ALLOW_SMART_MODEL_FALLBACK as release evidence.')
+  })
+
+  it('keeps product-green live evidence separate from strict provider release blockers', () => {
+    const result = evaluateReleaseReadiness({
+      health: {
+        ok: false,
+        model: 'gpt-5.5',
+        failure: { class: 'quota_or_billing', status: 429, code: 'insufficient_quota' },
+      },
+      liveRun: {
+        workflowName: 'live-rag-e2e',
+        status: 'completed',
+        conclusion: 'failure',
+        headSha: 'release-sha',
+        databaseId: 28403619381,
+      },
+      expectedSha: 'release-sha',
+      docChatE2E: strictDocChatE2E,
+      docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
+      liveEvidence: productOkLiveEvidence,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.checks.liveEvidenceProductOk).toBe(true)
+    expect(result.evidence.liveEvidenceArtifact).toBe(true)
+    expect(result.evidence.liveEvidenceProductOk).toBe(true)
+    expect(result.evidence.liveEvidenceProviderBlockers).toBe(1)
+    expect(result.evidence.liveEvidenceProductFailures).toBe(0)
+    expect(result.failures).toContain('OpenAI health is blocked by quota_or_billing.')
+    expect(result.failures).toContain('live-rag-e2e did not conclude success.')
+    expect(result.failures).not.toContain('Live evidence summary has product failures or missing gates.')
+  })
+
+  it('fails release readiness when live evidence reports product failures', () => {
+    const result = evaluateReleaseReadiness({
+      health: { ok: true, model: 'gpt-5.5' },
+      liveRun: {
+        workflowName: 'live-rag-e2e',
+        status: 'completed',
+        conclusion: 'success',
+        headSha: 'release-sha',
+        databaseId: 28403619381,
+      },
+      expectedSha: 'release-sha',
+      docChatE2E: strictDocChatE2E,
+      docIngestE2E: strictDocIngestE2E,
+      smartSearchEval: strictSmartSearchEval,
+      retrievalEval: strictRetrievalEval,
+      liveEvidence: {
+        ...productOkLiveEvidence,
+        productOk: false,
+        classification: {
+          ...productOkLiveEvidence.classification,
+          productFailures: [{ gate: 'document-chat' }],
+        },
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.checks.liveEvidenceProductOk).toBe(false)
+    expect(result.failures).toContain('Live evidence summary has product failures or missing gates.')
+    expect(result.nextActions).toContain('Inspect live-evidence-summary.json productFailures before release.')
   })
 
   it('passes only when health and latest live run evidence are both green', () => {
