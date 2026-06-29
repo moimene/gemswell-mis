@@ -128,6 +128,24 @@ describe('critical eval coverage contract', () => {
     expect(documentIngestE2e).toContain('urlHasDocumentId')
   })
 
+  it('keeps the documentary release checklist aligned with the live gates', () => {
+    const readiness = readFileSync(resolve(root, 'docs/release-readiness-chat-documental-2026-06-29.md'), 'utf8')
+
+    for (const required of [
+      'npm run eval:openai-health -- release-openai-health',
+      'gh api -X POST repos/moimene/gemswell-mis/actions/workflows/303814927/dispatches -f ref=main',
+      'E2E_BASE_URL=http://localhost:3127',
+      'npm run e2e:documents',
+      'rerankOrModelUsed: true',
+      'quota_or_billing',
+      'no investigar RAG primero',
+      '28380967059',
+      '28385163901',
+    ]) {
+      expect(readiness).toContain(required)
+    }
+  })
+
   it('keeps governance gates wired to deterministic cited-source checks', () => {
     const runner = readFileSync(resolve(root, 'scripts/eval/run-governance.ts'), 'utf8')
 
