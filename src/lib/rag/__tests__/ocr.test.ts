@@ -60,11 +60,26 @@ describe('extractWithMistralOcr', () => {
   })
   beforeEach(() => {
     vi.stubEnv('MISTRAL_API_KEY', 'test-key')
+    vi.stubEnv('MISTRAL_APIKEY_OCR', '')
+    vi.stubEnv('MISTRAL_API_KEY_OCR', '')
   })
 
-  it('is default-OFF: throws a terminal error when MISTRAL_API_KEY is absent', async () => {
+  it('is default-OFF: throws a terminal error when no Mistral OCR key is present', async () => {
     vi.stubEnv('MISTRAL_API_KEY', '')
+    vi.stubEnv('MISTRAL_APIKEY_OCR', '')
+    vi.stubEnv('MISTRAL_API_KEY_OCR', '')
     await expect(extractWithMistralOcr(buf, 'application/pdf')).rejects.toSatisfy(isOcrTerminalError)
+  })
+
+  it('accepts the legacy/local MISTRAL_APIKEY_OCR alias', async () => {
+    vi.stubEnv('MISTRAL_API_KEY', '')
+    vi.stubEnv('MISTRAL_APIKEY_OCR', 'test-key')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ pages: [{ markdown: 'OCR via alias' }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )))
+    const res = await extractWithMistralOcr(buf, 'application/pdf')
+    expect(res.markdown).toContain('OCR via alias')
   })
 
   it('returns concatenated markdown + page count on success', async () => {

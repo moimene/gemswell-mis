@@ -2,10 +2,10 @@
  * Mistral OCR fallback adapter (Fase 3 / WS2-T7/T8/T10 — audit A2).
  *
  * Ported from mdl-patrimonio `src/lib/agent/ocr.ts` (D-OCR-01). Standalone: depends only on
- * `MISTRAL_API_KEY` + `fetch`. Gemswell wiring: when LlamaParse extracts little/garbage text from a
+ * `MISTRAL_API_KEY` (or legacy/local `MISTRAL_APIKEY_OCR`) + `fetch`. Gemswell wiring: when LlamaParse extracts little/garbage text from a
  * scanned PDF/image (low-text-quality trigger, see `isLowTextQuality`), the ingest calls
  * `extractWithMistralOcr(buffer, mime)` and uses its markdown instead of throwing the "scanned document"
- * error. Default-OFF: with no `MISTRAL_API_KEY` the adapter throws `OcrTerminalError('mistral_api_key_missing')`
+ * error. Default-OFF: with no Mistral OCR key the adapter throws `OcrTerminalError('mistral_api_key_missing')`
  * which the caller swallows, so behavior is identical to today until a key + RAG_OCR_ENABLED are set.
  *
  * Mistral OCR API: POST https://api.mistral.ai/v1/ocr
@@ -79,6 +79,10 @@ export interface OcrResult {
   confidence?: number
   latencyMs: number
   provider: OcrProvider
+}
+
+export function mistralOcrApiKey(): string | undefined {
+  return process.env.MISTRAL_API_KEY || process.env.MISTRAL_APIKEY_OCR || process.env.MISTRAL_API_KEY_OCR || undefined
 }
 
 // ─── Typed errors ─────────────────────────────────────────────────────────────
@@ -155,8 +159,8 @@ function toDataUri(buf: Buffer, mimeType: string): string {
  * Throws OcrTerminalError (no retry), MistralRateLimitError (retryable), or generic Error (retryable).
  */
 export async function extractWithMistralOcr(buf: Buffer, mimeType: string): Promise<OcrResult> {
-  const apiKey = process.env.MISTRAL_API_KEY
-  if (!apiKey) throw new OcrTerminalError('mistral_api_key_missing', 'MISTRAL_API_KEY env var not set')
+  const apiKey = mistralOcrApiKey()
+  if (!apiKey) throw new OcrTerminalError('mistral_api_key_missing', 'MISTRAL_API_KEY or MISTRAL_APIKEY_OCR env var not set')
   if (buf.byteLength === 0) throw new OcrTerminalError('empty_buffer', 'Empty buffer, nothing to OCR')
   if (buf.byteLength > MISTRAL_OCR_MAX_BYTES) {
     throw new OcrTerminalError('file_too_large', `Buffer ${buf.byteLength}B exceeds Mistral OCR hard limit ${MISTRAL_OCR_MAX_BYTES}B`)

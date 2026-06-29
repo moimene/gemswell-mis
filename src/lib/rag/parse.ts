@@ -14,7 +14,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { extractWithMistralOcr, isGarbledText, isOcrSupportedMime } from '@/lib/rag/ocr'
+import { extractWithMistralOcr, isGarbledText, isOcrSupportedMime, mistralOcrApiKey } from '@/lib/rag/ocr'
 
 const LLAMA_PARSE_API = 'https://api.cloud.llamaindex.ai/api/v1/parsing'
 
@@ -33,13 +33,13 @@ type ParseResult = {
 
 /**
  * OCR fallback (audit A2). Returns a ParseResult from Mistral OCR, or null when OCR is disabled/unavailable
- * or fails — so the caller keeps today's behavior. Default-OFF: requires MISTRAL_API_KEY and is suppressed
+ * or fails — so the caller keeps today's behavior. Default-OFF: requires a Mistral OCR key and is suppressed
  * by RAG_OCR_ENABLED='false'. Any OCR error (incl. missing key) is swallowed to null; the caller then throws
  * its existing "scanned document" message, never a raw OCR error.
  */
 async function tryOcrFallback(buffer: Buffer, mimeType: string, fileName: string): Promise<ParseResult | null> {
   // True opt-in: requires BOTH a key AND RAG_OCR_ENABLED='true' (default-off posture; matches the runbook).
-  if (!process.env.MISTRAL_API_KEY || process.env.RAG_OCR_ENABLED !== 'true') return null
+  if (!mistralOcrApiKey() || process.env.RAG_OCR_ENABLED !== 'true') return null
   if (!isOcrSupportedMime(mimeType)) return null
   try {
     const ocr = await extractWithMistralOcr(buffer, mimeType)
