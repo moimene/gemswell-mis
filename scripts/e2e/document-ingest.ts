@@ -337,6 +337,19 @@ async function processJobById(sb: SupabaseClient, jobId: string, opts: { allowEr
   }
 }
 
+async function probeCronEndpointRejectsUnauthorized(): Promise<StepResult> {
+  const res = await fetch(`${baseUrl}/api/cron/ingest-jobs`, { redirect: 'manual' })
+  const body = await res.json().catch(() => null) as { error?: string } | null
+  return {
+    step: 'cron-ingest-endpoint-rejects-unauthorized',
+    ok: res.status === 401 && body?.error === 'unauthorized',
+    details: {
+      status: res.status,
+      error: body?.error ?? null,
+    },
+  }
+}
+
 async function fetchGovernanceSnapshot(sb: SupabaseClient, documentId: string): Promise<DocumentGovernanceSnapshot> {
   const { data, error } = await sb
     .from('rag_documents')
@@ -680,6 +693,7 @@ async function main() {
     await page.waitForURL(/\/admin\/ingest/)
     await page.waitForSelector('text=Ingesta documental')
     results.push({ step: 'login-form-temp-admin', ok: true, details: { email: maskEmail(tempEmail) } })
+    results.push(await probeCronEndpointRejectsUnauthorized())
 
     const signResponsePromise = page.waitForResponse((resp) =>
       resp.url().includes('/api/knowledge/upload/sign') && resp.request().method() === 'POST',
@@ -1061,7 +1075,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 18 &&
+      results.length === 19 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&

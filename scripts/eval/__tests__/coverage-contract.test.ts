@@ -145,6 +145,7 @@ describe('critical eval coverage contract', () => {
     expect(documentChatE2e).toContain('Ranking local')
     expect(documentChatE2e).toContain('acceptableRankingMode')
     expect(documentIngestE2e).toContain('chat-source-link-opens-newly-ingested-document')
+    expect(documentIngestE2e).toContain('cron-ingest-endpoint-rejects-unauthorized')
     expect(documentIngestE2e).toContain('rag-search-recovers-newly-ingested-document')
     expect(documentIngestE2e).toContain('urlHasDocumentId')
     expect(documentIngestE2e).toContain('E2E_SERVER_MODE')
