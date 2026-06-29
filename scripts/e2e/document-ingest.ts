@@ -371,6 +371,51 @@ async function askChatAboutIndexedUpload(page: Page, fileName: string, token: st
   }
 }
 
+async function openIndexedUploadChatSourceDeepLink(page: Page, documentId: string, fileName: string, token: string): Promise<StepResult> {
+  const sourceLink = page
+    .locator(`a[href*="/admin/documents?doc=${documentId}"]`)
+    .filter({ hasText: fileName })
+    .first()
+  await sourceLink.waitFor({ state: 'visible', timeout: 60_000 })
+
+  const popupPromise = page.context().waitForEvent('page', { timeout: 60_000 })
+  await sourceLink.click()
+  const docPage = await popupPromise
+
+  try {
+    await docPage.waitForURL(/\/admin\/documents\?doc=/, { timeout: 60_000 })
+    await docPage.waitForSelector('text=Biblioteca documental', { timeout: 60_000 })
+    await docPage.waitForSelector(`text=${fileName}`, { timeout: 60_000 })
+
+    const fragments = docPage.getByText(/Fragmentos \(/i).first()
+    if (await fragments.count()) await fragments.click().catch(() => undefined)
+    await docPage.waitForFunction(
+      (needle) => document.body.innerText.includes(needle),
+      token,
+      { timeout: 60_000 },
+    )
+
+    const text = await docPage.locator('body').innerText()
+    const visibleChecks = assertText(text, [
+      ['hasFileTitle', new RegExp(escapeRegExp(fileName))],
+      ['hasDocumentPanel', /MARKDOWN|FRAGMENTOS|HISTORIAL/i],
+      ['hasIndexedContent', new RegExp(escapeRegExp(token))],
+    ])
+    const details = {
+      ...visibleChecks,
+      urlHasDocumentId: docPage.url().includes(`doc=${documentId}`),
+    }
+    return {
+      step: 'chat-source-link-opens-newly-ingested-document',
+      ok: Object.values(details).every(Boolean),
+      details,
+      screenshot: await screenshot(docPage, 'chat-source-link-newly-ingested-document'),
+    }
+  } finally {
+    await docPage.close().catch(() => undefined)
+  }
+}
+
 async function cleanupConversations(sb: SupabaseClient, userKey: string): Promise<Record<string, unknown>> {
   const { data, error } = await sb
     .from('rag_conversations')
@@ -639,6 +684,7 @@ async function main() {
     })
 
     results.push(await askChatAboutIndexedUpload(documentPage, fileName, token))
+    results.push(await openIndexedUploadChatSourceDeepLink(documentPage, processed.documentId, fileName, token))
     await documentPage.goto(`${baseUrl}/admin/documents?doc=${processed.documentId}`, { waitUntil: 'networkidle' })
     await documentPage.waitForSelector(`text=${fileName}`, { timeout: 60_000 })
 
@@ -899,7 +945,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 16 &&
+      results.length === 17 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&
