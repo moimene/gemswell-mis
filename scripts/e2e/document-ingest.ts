@@ -76,6 +76,10 @@ function assertText(text: string, checks: Array<[string, RegExp]>): Record<strin
   return Object.fromEntries(checks.map(([name, re]) => [name, re.test(text)]))
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function extOf(fileName: string): string {
   const dot = fileName.lastIndexOf('.')
   return dot >= 0 ? fileName.slice(dot).toLowerCase() : ''
@@ -278,6 +282,67 @@ async function waitForPatch(page: Page, documentId: string, action: () => Promis
   await responsePromise
 }
 
+async function askChatAboutIndexedUpload(page: Page, fileName: string, token: string): Promise<StepResult> {
+  const question = `Que condicion de prueba indica el documento temporal ${token} y cual es su margen documental? Cita el documento fuente.`
+  const checks: Array<[string, RegExp]> = [
+    ['hasUniqueToken', new RegExp(escapeRegExp(token), 'i')],
+    ['hasMargin', /7[.,]31\s*(?:por ciento|%)/i],
+    ['hasSourceTitle', new RegExp(escapeRegExp(fileName), 'i')],
+  ]
+
+  await page.goto(`${baseUrl}/chat`, { waitUntil: 'networkidle' })
+  await page.waitForSelector('textarea')
+  const newConversation = page.getByRole('button', { name: /Nueva conversación/i })
+  if (await newConversation.count()) await newConversation.click()
+  await page.locator('textarea').fill(question)
+  await page.locator('textarea').evaluate((el) => {
+    const wrapper = el.closest('.flex.items-end')
+    const button = wrapper?.querySelector('button') as HTMLButtonElement | null
+    if (!button) throw new Error('send button not found')
+    button.click()
+  })
+  await page.waitForFunction(
+    (patterns) => {
+      const text = document.body.innerText
+      return (patterns as string[]).every((pattern) => new RegExp(pattern, 'i').test(text))
+    },
+    checks.map(([, re]) => re.source),
+    { timeout: 300_000 },
+  )
+  const text = await page.locator('body').innerText()
+  const details = assertText(text, checks)
+  return {
+    step: 'chat-recovers-newly-ingested-document',
+    ok: Object.values(details).every(Boolean),
+    details,
+    screenshot: await screenshot(page, 'chat-newly-ingested-document'),
+  }
+}
+
+async function cleanupConversations(sb: SupabaseClient, userKey: string): Promise<Record<string, unknown>> {
+  const { data, error } = await sb
+    .from('rag_conversations')
+    .select('id')
+    .eq('user_id', userKey)
+  if (error) return { ok: false, error: error.message }
+
+  const ids = (data ?? [])
+    .map((row) => typeof row.id === 'string' ? row.id : null)
+    .filter((id): id is string => Boolean(id))
+  if (ids.length === 0) return { ok: true, conversationDeleted: true, messageDeleted: true, conversationCount: 0 }
+
+  const messages = await sb.from('rag_messages').delete().in('conversation_id', ids)
+  const conversations = await sb.from('rag_conversations').delete().in('id', ids)
+  return {
+    ok: !messages.error && !conversations.error,
+    messageDeleted: !messages.error,
+    conversationDeleted: !conversations.error,
+    conversationCount: ids.length,
+    messageDeleteError: messages.error?.message,
+    conversationDeleteError: conversations.error?.message,
+  }
+}
+
 async function cleanupUpload(sb: SupabaseClient, state: CleanupState): Promise<Record<string, unknown>> {
   const details: Record<string, unknown> = { jobDeleted: false, documentDeleted: false, storageRemoved: 0 }
 
@@ -367,6 +432,7 @@ async function main() {
   const failedRequests: string[] = []
   let failure: Record<string, unknown> | null = null
   let cleanup: Record<string, unknown> | null = null
+  let conversationCleanup: Record<string, unknown> | null = null
 
   try {
     if (startServer) {
@@ -518,6 +584,10 @@ async function main() {
       details: { ...approvedChecks, approvedState },
       screenshot: await screenshot(documentPage, 'documents-governance-approved'),
     })
+
+    results.push(await askChatAboutIndexedUpload(documentPage, fileName, token))
+    await documentPage.goto(`${baseUrl}/admin/documents?doc=${processed.documentId}`, { waitUntil: 'networkidle' })
+    await documentPage.waitForSelector(`text=${fileName}`, { timeout: 60_000 })
 
     await documentPage.getByRole('button', { name: /Reclasificar/i }).click()
     await documentPage.locator('aside select').nth(0).selectOption('legal')
@@ -753,9 +823,14 @@ async function main() {
         !result.jobDeleteError &&
         !result.storageRemoveError
     })
+    conversationCleanup = await cleanupConversations(supabase, tempEmail).catch((err) => ({
+      ok: false,
+      error: errorMessage(err),
+    }))
     cleanup = {
-      ok: cleanupOk,
+      ok: cleanupOk && conversationCleanup.ok === true,
       items: cleanupResults,
+      conversations: conversationCleanup,
     }
     if (tempUserId) await supabase.auth.admin.deleteUser(tempUserId).catch(() => undefined)
     rmSync(tempFile, { force: true })
@@ -773,7 +848,7 @@ async function main() {
 
   const summary = {
     ok: !failure &&
-      results.length === 15 &&
+      results.length === 16 &&
       results.every((result) => result.ok) &&
       failedRequests.length === 0 &&
       relevantConsoleMessages.length === 0 &&
