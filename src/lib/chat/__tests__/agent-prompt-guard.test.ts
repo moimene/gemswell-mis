@@ -48,6 +48,19 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/disclose your COVERAGE so the abstention is auditable/i)
   })
 
+  it('prioritizes the four primary MIS usage lanes and their routing', () => {
+    expect(src).toMatch(/Primary MIS usage lanes/i)
+    expect(src).toMatch(/budget\/CapEx tracking/i)
+    expect(src).toMatch(/construction\/project execution status/i)
+    expect(src).toMatch(/legal\/contracts/i)
+    expect(src).toMatch(/finance\/funding\/liquidity\/covenants/i)
+    expect(src).toMatch(/start with get_capex_summary/i)
+    expect(src).toMatch(/call get_contradictions/i)
+    expect(src).toMatch(/Construction \/ project execution/i)
+    expect(src).toMatch(/find_document for uploaded-file existence/i)
+    expect(src).toMatch(/get_funding_status, get_cash_runway and get_covenant_status/i)
+  })
+
   it('has the bilingual alias list (compensates tsvector simple, no stemming)', () => {
     expect(src).toMatch(/pacto de socios.*shareholders agreement/i)
     expect(src).toMatch(/the keyword lane has no stemming/i)
