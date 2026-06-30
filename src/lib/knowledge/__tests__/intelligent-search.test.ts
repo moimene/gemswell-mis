@@ -174,6 +174,10 @@ describe('searchDocumentsIntelligently', () => {
       smart_role: 'contrato',
       smart_reason: 'Contiene EURIBOR y margen.',
     })
+    expect(result.items[0].smart_entities).toEqual(expect.arrayContaining([
+      { kind: 'bank', value: 'Banco Santander' },
+      { kind: 'bank', value: 'BBVA' },
+    ]))
   })
 
   it('falls back to deterministic ranking when the model reranker is unavailable', async () => {

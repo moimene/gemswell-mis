@@ -237,6 +237,7 @@ export function aggregateSmartDocumentResults(
     .map((result) => ({
       ...result,
       smart_entities: extractSmartEntities([
+        query,
         result.title,
         result.project_id,
         result.doc_type,

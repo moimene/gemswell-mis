@@ -45,6 +45,11 @@ type HealthResult = {
   at: string
   ok: boolean
   model: string
+  observed?: {
+    status?: string
+    outputText?: string
+    outputTypes?: string[]
+  }
   failure?: {
     status?: number
     code?: string
@@ -82,12 +87,24 @@ async function main() {
     const response = await openai.responses.create({
       model,
       store: false,
-      max_output_tokens: 16,
+      max_output_tokens: 32,
       instructions: 'Health check. Reply with exactly OK.',
       input: 'Return OK.',
     })
     const ok = /ok/i.test(response.output_text ?? '')
-    const result: HealthResult = { label, at: new Date().toISOString(), ok, model }
+    const result: HealthResult = {
+      label,
+      at: new Date().toISOString(),
+      ok,
+      model,
+      ...(ok ? {} : {
+        observed: {
+          status: response.status ?? undefined,
+          outputText: response.output_text?.trim().slice(0, 120) || undefined,
+          outputTypes: response.output?.map((item) => item.type).filter(Boolean),
+        },
+      }),
+    }
     write(result)
     if (!ok) {
       console.error(`[openai-health] model responded unexpectedly; wrote ${outPath}`)
