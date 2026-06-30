@@ -125,4 +125,13 @@ describe('agent system prompt — entity-existence orchestration guard', () => {
     expect(src).toMatch(/Do not rely only on capital-call memo chunks/i)
     expect(src).toMatch(/run a second targeted search_documents query/i)
   })
+
+  it('forces follow-up gap checks for separate fee letters and CAP documents through fresh searches', () => {
+    expect(src).toMatch(/FOLLOW-UP DOCUMENTARY GAP CHECKS/i)
+    expect(src).toMatch(/fee letters, commission letters, side letters, annexes, CAP\/hedging contracts/i)
+    expect(src).toMatch(/run separate search_documents calls for each missing document family/i)
+    expect(src).toMatch(/comision de estructuracion/i)
+    expect(src).toMatch(/contrato de cobertura CAP/i)
+    expect(src).toMatch(/Do not infer absence merely because the primary contract says amounts are in separate letters/i)
+  })
 })

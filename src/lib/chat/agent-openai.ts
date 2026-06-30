@@ -39,7 +39,10 @@ type OpenAIClient = {
 
 function openAIKey(): string {
   const k = process.env.OPENAI_API_KEY
-  if (!k) throw new Error('OPENAI_API_KEY not set (required for the OpenAI primary chat provider)')
+  if (!k) throw Object.assign(
+    new Error('OPENAI_API_KEY not set (required for the OpenAI primary chat provider)'),
+    { code: 'missing_openai_api_key' },
+  )
   return k
 }
 
@@ -109,6 +112,7 @@ export function isOpenAIUnavailable(err: unknown): boolean {
   const name = `${e?.name ?? ''} ${e?.constructor?.name ?? ''}`.toLowerCase()
   const msg = `${e?.error?.message ?? ''} ${e?.message ?? ''} ${e?.error?.code ?? ''} ${e?.code ?? ''}`.toLowerCase()
   if (/apiconnectionerror|apiconnectiontimeouterror/.test(name)) return true
+  if (/missing_openai_api_key|openai_api_key.*(not set|missing|required)|api key.*missing.*openai/.test(msg)) return true
   if (status === 400 && /(usage limit|credit balance|billing|quota|insufficient_quota|rate.?limit|temporarily unavailable)/.test(msg)) return true
   if (status === 401 && /(credit|billing|quota|usage)/.test(msg)) return true
   if (status === 402 || status === 408 || status === 409 || status === 429) return true

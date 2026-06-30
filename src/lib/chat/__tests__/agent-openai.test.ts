@@ -38,6 +38,7 @@ describe('isOpenAIUnavailable', () => {
     expect(isOpenAIUnavailable({ message: 'fetch failed' })).toBe(true)
     expect(isOpenAIUnavailable({ name: 'APIConnectionError', message: 'Connection error.' })).toBe(true)
     expect(isOpenAIUnavailable({ constructor: { name: 'APIConnectionTimeoutError' }, message: 'Request timed out.' })).toBe(true)
+    expect(isOpenAIUnavailable(Object.assign(new Error('OPENAI_API_KEY not set (required for the OpenAI primary chat provider)'), { code: 'missing_openai_api_key' }))).toBe(true)
   })
 
   it('FALSE for bad request/config errors that should not be masked by fallback', () => {
@@ -225,6 +226,28 @@ describe('runAgentLoopOpenAIPrimary', () => {
     expect(logged).not.toContain('req_openaiSecret123')
     expect(logged).not.toContain('https://platform.openai.com')
     warn.mockRestore()
+  })
+
+  it('falls back instead of failing the chat when the OpenAI key is absent at runtime', async () => {
+    const previous = process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_API_KEY
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const anthropic = { messages: { create: vi.fn(async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok without openai env' }] })) } } as never
+      const r = await runAgentLoopOpenAIPrimary(
+        anthropic,
+        [{ role: 'user', content: 'q' }],
+        'sys',
+        'claude-sonnet-4-6',
+      )
+      expect(r.provider).toBe('anthropic')
+      expect(r.message).toBe('ok without openai env')
+      expect(warn.mock.calls.flat().join(' ')).toContain('missing_openai_api_key')
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = previous
+      warn.mockRestore()
+    }
   })
 
   it('rethrows non-availability OpenAI errors instead of masking configuration bugs', async () => {
