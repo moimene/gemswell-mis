@@ -4,6 +4,7 @@ import { isAbstentionText, isClarificationText, isTransientEvalErrorMessage } fr
 describe('prompt behavior abstention detector', () => {
   it('recognizes English no-evidence abstentions', () => {
     expect(isAbstentionText('Based on a search of the document corpus, there is no evidence of a specific treasury or hedging policy related to crypto.')).toBe(true)
+    expect(isAbstentionText('Based on the available documents, there is no mention of a cryptocurrency treasury or hedging policy.')).toBe(true)
     expect(isAbstentionText('I found no documentary evidence for that policy.')).toBe(true)
   })
 
