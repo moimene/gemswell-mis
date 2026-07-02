@@ -10,7 +10,19 @@ import { createApiClient, requireUser } from '@/lib/supabase-server'
 const BUCKET = process.env.KNOWLEDGE_ARTIFACT_BUCKET ?? 'documents'
 const SIGNED_TTL_SECONDS = 300
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+function fallbackNameFromPath(path: string): string {
+  return path.split('/').pop() || 'document'
+}
+
+function safeDownloadName(title: unknown, path: string): string {
+  const name = typeof title === 'string' && title.trim() ? title.trim() : fallbackNameFromPath(path)
+  return name
+    .replace(/[\\/:*?"<>|\r\n]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 180) || 'document'
+}
+
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (!(await requireUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await params
 
@@ -26,7 +38,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'no original artifact stored for this document' }, { status: 404 })
   }
 
-  const { data: signed, error: signErr } = await supabase.storage.from(BUCKET).createSignedUrl(path, SIGNED_TTL_SECONDS)
+  const forceDownload = request.nextUrl.searchParams.get('download') === '1'
+  const { data: signed, error: signErr } = await supabase.storage.from(BUCKET).createSignedUrl(
+    path,
+    SIGNED_TTL_SECONDS,
+    forceDownload ? { download: safeDownloadName(doc.title, path) } : undefined
+  )
   if (signErr || !signed?.signedUrl) {
     console.error('[documents/download] createSignedUrl failed:', signErr?.message)
     return NextResponse.json({ error: 'could not sign download' }, { status: 500 })

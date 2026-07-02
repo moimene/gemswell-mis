@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ShieldCheck, ChevronDown, ChevronRight, AlertTriangle, Trash2 } from 'lucide-react'
+import { X, Check, Ban, Tag, Archive, RotateCcw, GitMerge, ShieldCheck, ChevronDown, ChevronRight, AlertTriangle, Trash2, ExternalLink, Download } from 'lucide-react'
 import { ReviewBadge, AuthorityBadge, VerificationBadge } from './badges'
 import { SupersedePicker } from './SupersedePicker'
 import { AUTHORITY_TIER_SCORE, DOC_TYPE_OPTIONS } from '@/lib/knowledge/contracts'
@@ -20,6 +20,7 @@ type DocDetail = {
   authority_score: number | null
   authority_tier: string | null
   status: string
+  source_type: string | null
   summary: string | null
   review_reason: string | null
   storage_path: string | null
@@ -60,10 +61,22 @@ async function patch(id: string, body: PatchBody): Promise<boolean> {
 const DOCTYPES = DOC_TYPE_OPTIONS
 const TIERS = ['audited', 'executed', 'controller', 'board_pack', 'dd_memo', 'internal', 'narrative', 'unverified']
 
+function originalDocumentHref(docId: string, download = false): string {
+  const href = `/api/knowledge/documents/${encodeURIComponent(docId)}/download`
+  return download ? `${href}?download=1` : href
+}
+
+function isPdfOriginal(doc: DocDetail): boolean {
+  const sourceType = doc.source_type?.toLowerCase()
+  const title = doc.title?.toLowerCase() ?? ''
+  const storagePath = doc.storage_path?.toLowerCase() ?? ''
+  return sourceType === 'pdf' || title.endsWith('.pdf') || storagePath.endsWith('.pdf')
+}
+
 export function DocumentPanel({ docId, targetChunkIndex, onClose, onChanged }: { docId: string; targetChunkIndex?: number | null; onClose: () => void; onChanged: () => void }) {
   const [d, setD] = useState<Detail | null>(null)
   const [loadErr, setLoadErr] = useState<number | null>(null)
-  const [open, setOpen] = useState({ md: false, chunks: targetChunkIndex != null, history: false, reclass: false })
+  const [open, setOpen] = useState({ original: false, md: false, chunks: targetChunkIndex != null, history: false, reclass: false })
   const [supersedeOpen, setSupersedeOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
@@ -149,6 +162,9 @@ export function DocumentPanel({ docId, targetChunkIndex, onClose, onChanged }: {
   const doc = d.document
   const retired = doc.status === 'retired'
   const failed = doc.status === 'error'
+  const originalHref = originalDocumentHref(docId)
+  const originalDownloadHref = originalDocumentHref(docId, true)
+  const pdfOriginal = Boolean(doc.storage_path && isPdfOriginal(doc))
   // Endorse ("fuente oficial") eligibility (audit C2): a live, authoritative doc that is not ALREADY a
   // source of record. Mirrors verificationFromGovernance: authority≥90 ∧ approved ∧ human-validated source.
   const score = doc.authority_score ?? 0
@@ -181,6 +197,21 @@ export function DocumentPanel({ docId, targetChunkIndex, onClose, onChanged }: {
           <dt className="font-mono uppercase tracking-wide text-slate-400">Versión</dt><dd className="col-span-2 font-mono tabular-nums">{doc.current_version}</dd>
         </dl>
         {doc.summary && <p className="rounded bg-slate-50 p-2 text-xs text-slate-700">{doc.summary}</p>}
+        {doc.storage_path && (
+          <div className="space-y-2 rounded border border-slate-200 bg-slate-50 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate font-mono text-[10px] uppercase tracking-wide text-slate-500">Original: {doc.storage_path}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <a href={originalHref} target="_blank" rel="noreferrer" className="flex items-center justify-center gap-1 rounded bg-slate-900 px-2 py-1.5 text-xs font-medium text-white hover:bg-slate-800">
+                <ExternalLink className="h-3.5 w-3.5" /> Abrir
+              </a>
+              <a href={originalDownloadHref} className="flex items-center justify-center gap-1 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                <Download className="h-3.5 w-3.5" /> Descargar
+              </a>
+            </div>
+          </div>
+        )}
         {failed && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
             <div className="mb-1 flex items-center gap-2 font-medium">
@@ -265,6 +296,15 @@ export function DocumentPanel({ docId, targetChunkIndex, onClose, onChanged }: {
         )}
 
         {/* Collapsibles */}
+        {pdfOriginal && (
+          <Section title="Original" open={open.original} onToggle={() => setOpen(o => ({ ...o, original: !o.original }))}>
+            <iframe
+              title={`Original: ${doc.title ?? docId}`}
+              src={originalHref}
+              className="h-[520px] w-full rounded border border-slate-200 bg-white"
+            />
+          </Section>
+        )}
         <Section title="Markdown (reconstruido)" open={open.md} onToggle={() => setOpen(o => ({ ...o, md: !o.md }))}>
           <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-slate-400">
             {d.markdown.source === 'artifact_path'
